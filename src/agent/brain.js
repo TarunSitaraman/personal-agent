@@ -28,7 +28,8 @@ Intent detection rules:
 - If Tarun says "remember to X", "todo: X", "add task X", "remind me to X" → ADD_TODO
 - If Tarun says "note: X", "save this: X", "jot down X" → ADD_NOTE
 - If Tarun says "learned X", "learning: X", "concept: X", "understood X" → ADD_LEARNING
-- If Tarun asks "what do I have", "my todos", "what's pending" → LIST_TODOS
+- If Tarun says "what do I have", "my todos", "what's pending" → LIST_TODOS
+- If Tarun says "done: X", "completed X", "mark X done", "finished X" → COMPLETE_TODO (put the keyword in data.content)
 - If Tarun asks "my notes", "what did I save" → LIST_NOTES
 - If Tarun asks "my learnings", "what have I learned" → LIST_LEARNINGS
 - Otherwise → NONE (just chat)
@@ -36,7 +37,7 @@ Intent detection rules:
 CRITICAL: Always respond with valid JSON in this exact format:
 {
   "reply": "your natural WhatsApp message here",
-  "action": "add_todo | add_note | add_learning | list_todos | list_notes | list_learnings | none",
+  "action": "add_todo | add_note | add_learning | list_todos | complete_todo | list_notes | list_learnings | none",
   "data": {
     "content": "extracted content if action requires it",
     "topic": "topic if learning",
@@ -82,10 +83,17 @@ async function handleIncoming(userMessage) {
     ? `Open Issues (${openIssues.length}):\n${openIssues.join('\n')}`
     : 'Open Issues: none';
 
+  const todoBlock = [
+    ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
+    ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
+  ];
+
   const contextBlock = `Current mode: ${mode}
 ${modeDesc}
 
-Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
+Pending todos (${todoBlock.length}):
+${todoBlock.length ? todoBlock.join('\n') : 'none'}
+
 Unreviewed learnings: ${stats.unreviewed.length}
 ${prBlock}
 ${issueBlock}`;
@@ -134,6 +142,9 @@ async function executeAction(action, data, currentMode) {
       case "add_learning":
         if (data?.topic && data?.content)
           await memory.addLearning(data.topic, data.content, data.source);
+        break;
+      case "complete_todo":
+        if (data?.content) await memory.completeTodoByContent(data.content);
         break;
     }
   } catch (err) {

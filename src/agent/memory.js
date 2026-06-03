@@ -30,6 +30,16 @@ async function completeTodo(id) {
   );
 }
 
+async function completeTodoByContent(keyword) {
+  const { rows } = await pool.query(
+    `UPDATE todos SET done = true, completed_at = NOW()
+     WHERE done = false AND content ILIKE $1
+     RETURNING content`,
+    [`%${keyword}%`]
+  );
+  return rows;
+}
+
 // --- Notes ---
 
 async function addNote(content, context, tags = []) {
@@ -103,7 +113,7 @@ async function getSummaryStats() {
 }
 
 module.exports = {
-  addTodo, getPendingTodos, completeTodo,
+  addTodo, getPendingTodos, completeTodo, completeTodoByContent,
   addNote, getRecentNotes,
   addLearning, getUnreviewedLearnings, markLearningReviewed,
   saveMessage, getRecentHistory,
