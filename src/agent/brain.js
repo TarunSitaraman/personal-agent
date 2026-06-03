@@ -72,11 +72,13 @@ CRITICAL: Always respond with ONLY a single valid JSON object. No text before or
   }
 }`;
 
-async function callGroq(messages) {
+async function callGroq(messages, jsonMode = false) {
   try {
+    const body = { model: GROQ_MODEL, messages };
+    if (jsonMode) body.response_format = { type: 'json_object' };
     const response = await axios.post(
       GROQ_URL,
-      { model: GROQ_MODEL, messages },
+      body,
       { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` } }
     );
     return response.data.choices[0].message.content;
@@ -134,25 +136,13 @@ ${insightsBlock}`;
     { role: "user", content: `${contextBlock}\n\nUser message: ${userMessage}` },
   ];
 
-  const raw = await callGroq(messages);
+  // JSON mode forces the model to return only valid JSON — no leakage possible
+  const raw = await callGroq(messages, true);
 
   let parsed;
   try {
-    // Extract the outermost JSON object reliably
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start === -1 || end === -1) throw new Error('No JSON found');
-    parsed = JSON.parse(raw.slice(start, end + 1));
-
-    // Ensure reply is a plain string — if model leaked JSON into reply, strip it
-    if (typeof parsed.reply !== 'string') {
-      parsed.reply = String(parsed.reply);
-    }
-    const replyJsonStart = parsed.reply.indexOf('{');
-    if (replyJsonStart !== -1) {
-      parsed.reply = parsed.reply.slice(0, replyJsonStart).trim();
-    }
-    if (!parsed.reply) parsed.reply = 'Done.';
+    parsed = JSON.parse(raw);
+    if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
   } catch {
     await memory.saveMessage("user", userMessage);
     await memory.saveMessage("model", raw);
