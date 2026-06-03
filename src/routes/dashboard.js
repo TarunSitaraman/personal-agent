@@ -775,145 +775,128 @@ header {
 
   document.addEventListener('click', closePopup);
 
-  // ── CHAT ───────────────────────────────────────────────────────
-  var chatPending = false;
-  var HISTORY = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
-  (function() {
-    var token = new URLSearchParams(window.location.search).get('token');
-    var msgsEl   = document.getElementById('chat-msgs');
-    var inputEl  = document.getElementById('chat-input');
-    var sendBtn  = document.getElementById('chat-send-btn');
-    var voiceBtn = document.getElementById('chat-voice-btn');
-    var imgBtn   = document.getElementById('chat-img-btn');
-    var imgInput = document.getElementById('chat-img-input');
-    var typing   = document.getElementById('chat-typing');
-
-    // Render initial history from JSON (safe — no template literal escaping issues)
-    HISTORY.forEach(function(m) {
-      var div = document.createElement('div');
-      div.className = 'chat-msg ' + (m.role === 'user' ? 'user' : 'blu');
-      var text = (m.content || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-      div.innerHTML = '<div class="chat-bubble">' + text + '</div>';
-      msgsEl.insertBefore(div, typing);
-    });
-    msgsEl.scrollTop = msgsEl.scrollHeight;
-
-    // Auto-resize textarea
-    inputEl.addEventListener('input', function() {
-      this.style.height = 'auto';
-      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-    });
-
-    inputEl.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-    });
-
-    function esc(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
-
-    function addMsg(role, text, imgSrc) {
-      typing.classList.remove('visible');
-      var div = document.createElement('div');
-      div.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
-      var html = imgSrc ? '<img class="chat-img-preview" src="' + imgSrc + '">' : '';
-      html += '<div class="chat-bubble">' + esc(text) + '</div>';
-      div.innerHTML = html;
-      msgsEl.insertBefore(div, typing);
-      msgsEl.scrollTop = msgsEl.scrollHeight;
-    }
-
-    function setBusy(busy) {
-      sendBtn.style.opacity = busy ? '0.4' : '1';
-      sendBtn.style.pointerEvents = busy ? 'none' : '';
-      chatPending = busy;
-    }
-
-    function showTyping() { typing.classList.add('visible'); msgsEl.scrollTop = msgsEl.scrollHeight; }
-
-    async function send() {
-      var text = inputEl.value.trim();
-      if (!text || chatPending) return;
-      addMsg('user', text);
-      inputEl.value = ''; inputEl.style.height = '';
-      showTyping();
-      setBusy(true);
-      try {
-        var res = await fetch('/dashboard/chat?token=' + token, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
-        });
-        var data = await res.json();
-        addMsg('blu', data.reply || data.error || 'No response');
-      } catch(e) { addMsg('blu', 'Connection error. Try again.'); }
-      setBusy(false);
-    }
-
-    sendBtn.addEventListener('click', send);
-
-    // Image attach
-    imgBtn.addEventListener('click', function() { imgInput.click(); });
-    imgInput.addEventListener('change', async function() {
-      var file = this.files[0];
-      if (!file) return;
-      var reader = new FileReader();
-      reader.onload = async function(e) {
-        var dataUrl = e.target.result;
-        var base64 = dataUrl.split(',')[1];
-        var mimeType = file.type;
-        var caption = inputEl.value.trim();
-        var previewSrc = dataUrl;
-        addMsg('user', caption || '📎 Image', previewSrc);
-        inputEl.value = ''; inputEl.style.height = '';
-        showTyping(); setBusy(true);
-        try {
-          var res = await fetch('/dashboard/chat/image?token=' + token, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64, mimeType, caption }),
-          });
-          var data = await res.json();
-          addMsg('blu', data.reply || data.error || 'No response');
-          chatPending = false;
-        } catch(e) { addMsg('blu', 'Image upload failed.'); chatPending = false; }
-      };
-      reader.readAsDataURL(file);
-      imgInput.value = '';
-    });
-
-    // Voice — Web Speech API
-    var recognition = null;
-    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognition = new SpeechRecognition();
-      recognition.lang = 'en-IN';
-      recognition.interimResults = false;
-      recognition.onresult = function(e) {
-        var transcript = e.results[0][0].transcript;
-        inputEl.value = transcript;
-        inputEl.dispatchEvent(new Event('input'));
-        voiceBtn.classList.remove('recording');
-      };
-      recognition.onend = function() { voiceBtn.classList.remove('recording'); };
-      recognition.onerror = function() { voiceBtn.classList.remove('recording'); };
-    }
-
-    var listening = false;
-    voiceBtn.addEventListener('click', function() {
-      if (!recognition) { alert('Voice not supported in this browser. Try Chrome.'); return; }
-      if (listening) { recognition.stop(); listening = false; voiceBtn.classList.remove('recording'); }
-      else { recognition.start(); listening = true; voiceBtn.classList.add('recording'); }
-    });
-  })();
-
-  // Live refresh via SSE — reloads instantly when a WhatsApp message is processed
+  // Live refresh via SSE
   (function() {
     var token = new URLSearchParams(window.location.search).get('token');
     var es = new EventSource('/dashboard/stream?token=' + token);
-    es.addEventListener('refresh', function() { if (!chatPending) window.location.reload(); });
-    es.onerror = function() {
-      es.close();
-      // SSE dropped (deploy/restart) — fall back to polling every 30s
-      setTimeout(function() { window.location.reload(); }, 30000);
-    };
+    es.addEventListener('refresh', function() { if (!window._bluChatBusy) window.location.reload(); });
+    es.onerror = function() { es.close(); setTimeout(function() { window.location.reload(); }, 30000); };
   })();
+})();
+</script>
+
+<script>
+// Chat — isolated script block so outer JS errors can't affect it
+(function() {
+  var TOKEN = (window.location.search.match(/token=([^&]+)/) || [])[1] || '';
+  var msgsEl  = document.getElementById('chat-msgs');
+  var inputEl = document.getElementById('chat-input');
+  var sendBtn = document.getElementById('chat-send-btn');
+  var voiceBtn= document.getElementById('chat-voice-btn');
+  var imgBtn  = document.getElementById('chat-img-btn');
+  var imgInput= document.getElementById('chat-img-input');
+  var typing  = document.getElementById('chat-typing');
+  var busy    = false;
+
+  // Load history
+  var HISTORY = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
+  HISTORY.forEach(function(m) { appendMsg(m.role, m.content); });
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  }
+
+  function appendMsg(role, text, imgSrc) {
+    typing.classList.remove('visible');
+    var d = document.createElement('div');
+    d.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
+    d.innerHTML = (imgSrc ? '<img class="chat-img-preview" src="'+imgSrc+'">' : '') +
+                  '<div class="chat-bubble">' + esc(text) + '</div>';
+    msgsEl.insertBefore(d, typing);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    window._bluChatBusy = v;
+    sendBtn.style.opacity = v ? '0.5' : '1';
+  }
+
+  async function doSend() {
+    var text = (inputEl.value || '').trim();
+    if (!text || busy) return;
+    appendMsg('user', text);
+    inputEl.value = ''; inputEl.style.height = '';
+    typing.classList.add('visible');
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    setBusy(true);
+    try {
+      var r = await fetch('/dashboard/chat?token=' + TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      });
+      var d = await r.json();
+      appendMsg('blu', d.reply || d.error || '(no response)');
+    } catch(e) {
+      appendMsg('blu', 'Connection error — ' + e.message);
+    }
+    setBusy(false);
+  }
+
+  sendBtn.onclick = doSend;
+
+  inputEl.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  });
+  inputEl.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+  });
+
+  // Image
+  imgBtn.onclick = function() { imgInput.click(); };
+  imgInput.addEventListener('change', async function() {
+    var file = this.files[0]; if (!file) return;
+    var reader = new FileReader();
+    reader.onload = async function(ev) {
+      var dataUrl = ev.target.result;
+      var caption = (inputEl.value || '').trim();
+      appendMsg('user', caption || '📎 Image', dataUrl);
+      inputEl.value = ''; inputEl.style.height = '';
+      typing.classList.add('visible'); setBusy(true);
+      try {
+        var r = await fetch('/dashboard/chat/image?token=' + TOKEN, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ base64: dataUrl.split(',')[1], mimeType: file.type, caption: caption })
+        });
+        var d = await r.json();
+        appendMsg('blu', d.reply || d.error || '(no response)');
+      } catch(e) { appendMsg('blu', 'Image error — ' + e.message); }
+      setBusy(false);
+    };
+    reader.readAsDataURL(file);
+    this.value = '';
+  });
+
+  // Voice
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recog = SR ? new SR() : null;
+  var listening = false;
+  if (recog) {
+    recog.lang = 'en-IN'; recog.interimResults = false;
+    recog.onresult = function(e) {
+      inputEl.value = e.results[0][0].transcript;
+      inputEl.dispatchEvent(new Event('input'));
+      listening = false; voiceBtn.classList.remove('recording');
+    };
+    recog.onend = function() { listening = false; voiceBtn.classList.remove('recording'); };
+  }
+  voiceBtn.onclick = function() {
+    if (!recog) { alert('Voice not supported. Try Chrome.'); return; }
+    if (listening) { recog.stop(); } else { recog.start(); listening = true; voiceBtn.classList.add('recording'); }
+  };
 })();
 </script>
 </body>
