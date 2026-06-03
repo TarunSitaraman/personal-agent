@@ -43,9 +43,9 @@ INTENT DETECTION:
 - "remind me in X to Y" → SET_REMINDER (data.minutes = duration in minutes, data.content = task)
 - Otherwise → NONE
 
-CRITICAL: Always respond with valid JSON:
+CRITICAL: Always respond with ONLY a single valid JSON object. No text before or after it. The "reply" field must be a plain conversational string — never put JSON, curly braces, or code inside "reply".
 {
-  "reply": "formatted WhatsApp message",
+  "reply": "formatted WhatsApp message — plain text only, no JSON",
   "action": "add_todo | ask_context | add_note | add_learning | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | none",
   "data": {
     "content": "extracted content or search query",
@@ -116,8 +116,21 @@ ${insightsBlock}`;
 
   let parsed;
   try {
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    parsed = JSON.parse(jsonMatch[0]);
+    // Extract the outermost JSON object reliably
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('No JSON found');
+    parsed = JSON.parse(raw.slice(start, end + 1));
+
+    // Ensure reply is a plain string — if model leaked JSON into reply, strip it
+    if (typeof parsed.reply !== 'string') {
+      parsed.reply = String(parsed.reply);
+    }
+    const replyJsonStart = parsed.reply.indexOf('{');
+    if (replyJsonStart !== -1) {
+      parsed.reply = parsed.reply.slice(0, replyJsonStart).trim();
+    }
+    if (!parsed.reply) parsed.reply = 'Done.';
   } catch {
     await memory.saveMessage("user", userMessage);
     await memory.saveMessage("model", raw);
