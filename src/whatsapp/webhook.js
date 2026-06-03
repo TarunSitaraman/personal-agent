@@ -2,6 +2,7 @@ const express = require('express');
 const { handleIncoming } = require('../agent/brain');
 const { sendMessage } = require('./send');
 const { transcribeAudio } = require('../integrations/whisper');
+const { analyzeImage } = require('../integrations/vision');
 
 const router = express.Router();
 
@@ -34,13 +35,20 @@ router.post('/', async (req, res) => {
     if (message.type === 'text') {
       text = message.text.body;
     } else if (message.type === 'audio') {
-      const mediaId = message.audio.id;
-      const transcription = await transcribeAudio(mediaId);
+      const transcription = await transcribeAudio(message.audio.id);
       if (!transcription) {
         await sendMessage(from, "Couldn't transcribe the voice message. Try again or type it.");
         return;
       }
       text = transcription;
+    } else if (message.type === 'image') {
+      const caption = message.image?.caption || '';
+      const description = await analyzeImage(message.image.id, caption);
+      if (!description) {
+        await sendMessage(from, "Couldn't process the image. Try again.");
+        return;
+      }
+      text = `[Image received] ${description}${caption ? `\nCaption: ${caption}` : ''}`;
     } else {
       return;
     }
