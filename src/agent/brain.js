@@ -1,17 +1,23 @@
-const axios = require('axios');
-const { getCurrentMode, getModeDescription } = require('./context');
-const memory = require('./memory');
+const axios = require("axios");
+const { getCurrentMode, getModeDescription } = require("./context");
+const memory = require("./memory");
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.1-8b-instant';
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
-const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
+const SYSTEM_PROMPT = `You are Blu, Tarun's personal AI agent accessible via WhatsApp.
 
 About Tarun:
 - Intern at Hexaware (10am–6pm weekdays)
 - Founder/tech lead of SmartResQ — a healthcare emergency response startup (works evenings)
 - Learning GenAI and agentic AI actively
 - Wants low-friction capture and proactive intelligence
+
+CRITICAL DATA RULES:
+- You only know what is in the context block (todos, notes, learnings counts)
+- You do NOT have access to GitHub, calendars, emails, or any external systems
+- If asked about PRs, commits, or GitHub data — say "I don't have GitHub access yet, that's coming in Phase 2"
+- NEVER make up numbers or data you don't have. Only report what's in the context block.
 
 Your job:
 1. Respond naturally and concisely (WhatsApp messages, not essays)
@@ -46,11 +52,14 @@ async function callGroq(messages) {
     const response = await axios.post(
       GROQ_URL,
       { model: GROQ_MODEL, messages },
-      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` } }
+      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` } },
     );
     return response.data.choices[0].message.content;
   } catch (err) {
-    console.error('Groq API error:', JSON.stringify(err.response?.data || err.message));
+    console.error(
+      "Groq API error:",
+      JSON.stringify(err.response?.data || err.message),
+    );
     throw err;
   }
 }
@@ -68,9 +77,15 @@ Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodo
 Unreviewed learnings: ${stats.unreviewed.length}`;
 
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
-    { role: 'user', content: `${contextBlock}\n\nUser message: ${userMessage}` },
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map((h) => ({
+      role: h.role === "user" ? "user" : "assistant",
+      content: h.content,
+    })),
+    {
+      role: "user",
+      content: `${contextBlock}\n\nUser message: ${userMessage}`,
+    },
   ];
 
   const raw = await callGroq(messages);
@@ -80,14 +95,14 @@ Unreviewed learnings: ${stats.unreviewed.length}`;
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    await memory.saveMessage('user', userMessage);
-    await memory.saveMessage('model', raw);
+    await memory.saveMessage("user", userMessage);
+    await memory.saveMessage("model", raw);
     return raw;
   }
 
   await executeAction(parsed.action, parsed.data, mode);
-  await memory.saveMessage('user', userMessage);
-  await memory.saveMessage('model', parsed.reply);
+  await memory.saveMessage("user", userMessage);
+  await memory.saveMessage("model", parsed.reply);
 
   return parsed.reply;
 }
@@ -96,19 +111,19 @@ async function executeAction(action, data, currentMode) {
   const context = data?.context || currentMode;
   try {
     switch (action) {
-      case 'add_todo':
+      case "add_todo":
         if (data?.content) await memory.addTodo(data.content, context);
         break;
-      case 'add_note':
+      case "add_note":
         if (data?.content) await memory.addNote(data.content, context);
         break;
-      case 'add_learning':
+      case "add_learning":
         if (data?.topic && data?.content)
           await memory.addLearning(data.topic, data.content, data.source);
         break;
     }
   } catch (err) {
-    console.error('Action execution error:', action, err.message);
+    console.error("Action execution error:", action, err.message);
   }
 }
 
@@ -116,22 +131,22 @@ async function generateBrief(type) {
   const stats = await memory.getSummaryStats();
 
   let prompt;
-  if (type === 'morning') {
+  if (type === "morning") {
     prompt = `Generate a concise morning brief for Tarun in plain text (no markdown).
 He is starting his Hexaware intern day.
-Pending Hexaware todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
-Pending SmartResQ todos from last night: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
+Pending Hexaware todos: ${stats.hexTodos.map((t) => t.content).join(", ") || "none"}
+Pending SmartResQ todos from last night: ${stats.srqTodos.map((t) => t.content).join(", ") || "none"}
 Unreviewed learnings: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and practical.`;
   } else {
     prompt = `Generate a concise evening mode-switch message for Tarun in plain text (no markdown).
 He is switching from Hexaware to SmartResQ work.
-Pending SmartResQ todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
+Pending SmartResQ todos: ${stats.srqTodos.map((t) => t.content).join(", ") || "none"}
 Unreviewed learnings captured today: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and motivating.`;
   }
 
-  return await callGroq([{ role: 'user', content: prompt }]);
+  return await callGroq([{ role: "user", content: prompt }]);
 }
 
 module.exports = { handleIncoming, generateBrief };
