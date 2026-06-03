@@ -90,12 +90,13 @@ async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
-  const [history, stats, openPRs, openIssues, insights, msgCount] = await Promise.all([
+  const [history, stats, openPRs, openIssues, insights, knowledge, msgCount] = await Promise.all([
     memory.getRecentHistory(30),
     memory.getSummaryStats(),
     getOpenPRs(),
     getOpenIssues(),
     memory.getRecentInsights(5),
+    memory.getAllKnowledge(),
     memory.getMessageCount(),
   ]);
 
@@ -103,6 +104,10 @@ async function handleIncoming(userMessage) {
     ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
     ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
   ];
+
+  const knowledgeBlock = knowledge.length
+    ? `What I know about Tarun's world:\n${knowledge.join('\n')}`
+    : '';
 
   const insightsBlock = insights.length
     ? `Behavioural insights:\n${insights.join('\n')}`
@@ -117,6 +122,7 @@ ${todoBlock.length ? todoBlock.join('\n') : 'none'}
 Unreviewed learnings: ${stats.unreviewed.length}
 Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
 Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
+${knowledgeBlock}
 ${insightsBlock}`;
 
   const messages = [
@@ -196,7 +202,7 @@ async function executeAction(action, data, currentMode, defaultReply) {
         return defaultReply;
 
       case "learn_context":
-        if (data?.content) await memory.saveInsight(`[context] ${data.content}`);
+        if (data?.content) await memory.saveKnowledge(data.content);
         return defaultReply;
 
       case "complete_todo":

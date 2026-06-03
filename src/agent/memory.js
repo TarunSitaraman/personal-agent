@@ -87,6 +87,25 @@ async function markLearningReviewed(id) {
   );
 }
 
+// --- Permanent knowledge store ---
+
+async function saveKnowledge(fact) {
+  await pool.query('INSERT INTO knowledge (subject, fact) VALUES ($1, $2)', ['general', fact]);
+}
+
+async function getAllKnowledge() {
+  const { rows } = await pool.query('SELECT fact FROM knowledge ORDER BY created_at ASC');
+  return rows.map(r => r.fact);
+}
+
+async function trimConversations(keep = 200) {
+  await pool.query(`
+    DELETE FROM conversations WHERE id NOT IN (
+      SELECT id FROM conversations ORDER BY created_at DESC LIMIT $1
+    )
+  `, [keep]);
+}
+
 // --- Conversation history ---
 
 async function saveMessage(role, content) {
@@ -310,6 +329,7 @@ module.exports = {
   saveMessage, getRecentHistory,
   addReminder, getDueReminders,
   saveInsight, getRecentInsights, getMessageCount,
+  saveKnowledge, getAllKnowledge, trimConversations,
   searchMemory, getYesterdayActivity,
   getStaleTodos, getWeeklyActivity,
   getAnalytics, getRecentContent,

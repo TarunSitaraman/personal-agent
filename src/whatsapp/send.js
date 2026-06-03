@@ -51,7 +51,10 @@ async function sendButtonMessage(to, body, buttons) {
       }
     );
   } catch (err) {
-    console.error('WhatsApp button send error:', err.response?.data || err.message);
+    // Interactive messages not supported on test numbers — fall back to text
+    console.error('Button send failed, using text fallback:', err.response?.data?.error?.message || err.message);
+    const options = buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n');
+    await sendMessage(to, `${body}\n\n${options}`);
   }
 }
 

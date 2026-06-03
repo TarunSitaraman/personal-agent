@@ -56,9 +56,10 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // Sunday 8:00 PM IST — weekly review
+  // Sunday 8:00 PM IST — weekly review + conversation trim
   cron.schedule('0 20 * * 0', async () => {
     try {
+      await memory.trimConversations(200);
       const review = await generateWeeklyReview();
       await sendMessage(myNumber, review);
     } catch (err) {
