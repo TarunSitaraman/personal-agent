@@ -92,6 +92,14 @@ router.get('/', async (req, res) => {
   --t2:      #71717a;
   --t3:      #3f3f46;
   --acc:     ${modeConf.color};
+
+  /* Spotlight — updated via JS */
+  --mx: 0;
+  --my: 0;
+  --mxp: 0;
+  --myp: 0;
+  --hue-base: ${mode === 'hexaware' ? 220 : mode === 'smartresq' ? 152 : 265};
+  --spot-hue: calc(var(--hue-base) + var(--mxp) * 60);
 }
 
 body {
@@ -147,6 +155,32 @@ header {
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
+  background-color: var(--s1);
+  background-image: radial-gradient(
+    320px 320px at calc(var(--mx) * 1px) calc(var(--my) * 1px),
+    hsl(var(--spot-hue) 80% 65% / 0.07),
+    transparent 70%
+  );
+  background-attachment: fixed;
+  position: relative;
+}
+.stats::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: radial-gradient(
+    260px 260px at calc(var(--mx) * 1px) calc(var(--my) * 1px),
+    hsl(var(--spot-hue) 90% 65% / 0.45),
+    transparent 75%
+  );
+  background-attachment: fixed;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
 }
 .stat {
   padding: 20px 18px;
@@ -193,7 +227,40 @@ header {
 .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
 
 /* ── PANEL ────────────────────────────────── */
-.panel { background: var(--s1); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.panel {
+  background-color: var(--s1);
+  background-image: radial-gradient(
+    320px 320px at calc(var(--mx) * 1px) calc(var(--my) * 1px),
+    hsl(var(--spot-hue) 80% 65% / 0.07),
+    transparent 70%
+  );
+  background-attachment: fixed;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px 20px;
+  position: relative;
+}
+
+/* Glowing border that follows cursor */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: radial-gradient(
+    260px 260px at calc(var(--mx) * 1px) calc(var(--my) * 1px),
+    hsl(var(--spot-hue) 90% 65% / 0.55),
+    transparent 75%
+  );
+  background-attachment: fixed;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
 .panel .sec-head { border-color: var(--s2); }
 
 /* ── ROWS ─────────────────────────────────── */
@@ -359,6 +426,18 @@ header {
   </main>
 
 </div>
+
+<script>
+(function() {
+  const r = document.documentElement.style;
+  document.addEventListener('pointermove', function(e) {
+    r.setProperty('--mx', e.clientX.toFixed(1));
+    r.setProperty('--my', e.clientY.toFixed(1));
+    r.setProperty('--mxp', (e.clientX / window.innerWidth).toFixed(3));
+    r.setProperty('--myp', (e.clientY / window.innerHeight).toFixed(3));
+  });
+})();
+</script>
 </body>
 </html>`);
 
