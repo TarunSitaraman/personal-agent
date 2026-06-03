@@ -400,22 +400,6 @@ header {
       </div>
     </div>
 
-    <div class="two-col">
-      <div class="panel">
-        <div class="sec-head">
-          <span class="sec-title">Recent Commits</span>
-        </div>
-        ${renderCommits()}
-      </div>
-      <div class="panel">
-        <div class="sec-head">
-          <span class="sec-title">Unreviewed Learnings</span>
-          <span class="sec-count">${learnings.length}</span>
-        </div>
-        ${renderLearnings()}
-      </div>
-    </div>
-
     <div class="panel">
       <div class="sec-head">
         <span class="sec-title">Recent Notes</span>
