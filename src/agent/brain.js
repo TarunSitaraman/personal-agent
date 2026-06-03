@@ -1,8 +1,10 @@
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { getCurrentMode, getModeDescription } = require('./context');
 const memory = require('./memory');
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, {
+  apiVersion: 'v1',
+});
 
 const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
 
@@ -57,15 +59,15 @@ Unreviewed learnings: ${stats.unreviewed.length}`;
     parts: [{ text: h.content }],
   }));
 
-  const chat = ai.chats.create({
+  const model = genAI.getGenerativeModel({
     model: 'gemini-1.5-flash',
-    history: historyParts,
-    config: { systemInstruction: SYSTEM_PROMPT },
+    systemInstruction: SYSTEM_PROMPT,
   });
 
+  const chat = model.startChat({ history: historyParts });
   const fullMessage = `${contextBlock}\n\nUser message: ${userMessage}`;
-  const result = await chat.sendMessage({ message: fullMessage });
-  const raw = result.text;
+  const result = await chat.sendMessage(fullMessage);
+  const raw = result.response.text();
 
   let parsed;
   try {
@@ -106,6 +108,7 @@ async function executeAction(action, data, currentMode) {
 
 async function generateBrief(type) {
   const stats = await memory.getSummaryStats();
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   let prompt;
   if (type === 'morning') {
@@ -123,11 +126,8 @@ Unreviewed learnings captured today: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and motivating.`;
   }
 
-  const result = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
-    contents: prompt,
-  });
-  return result.text;
+  const result = await model.generateContent(prompt);
+  return result.response.text();
 }
 
 module.exports = { handleIncoming, generateBrief };
