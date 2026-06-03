@@ -202,7 +202,7 @@ async function executeAction(action, data, currentMode, defaultReply) {
       case "set_reminder": {
         const minutes = parseInt(data?.minutes) || 60;
         const remindAt = new Date(Date.now() + minutes * 60 * 1000);
-        if (data?.content) await memory.addReminder(data.content, remindAt);
+        if (data?.content) await memory.addTodo(data.content, context, remindAt);
         return defaultReply;
       }
 
@@ -217,14 +217,21 @@ async function executeAction(action, data, currentMode, defaultReply) {
         const srq = todos.filter(t => t.context === 'smartresq');
         const other = todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
 
+        const fmt = t => {
+          const reminder = t.remind_at
+            ? ` _(reminder: ${new Date(t.remind_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' })})_`
+            : '';
+          return `${t.content}${reminder}`;
+        };
+
         let out = '';
         if (!filterCtx || filterCtx === 'hexaware') {
-          if (hex.length) out += `*Hexaware* (${hex.length})\n${hex.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+          if (hex.length) out += `*Hexaware* (${hex.length})\n${hex.map((t, i) => `${i + 1}. ${fmt(t)}`).join('\n')}\n\n`;
         }
         if (!filterCtx || filterCtx === 'smartresq') {
-          if (srq.length) out += `*SmartResQ* (${srq.length})\n${srq.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+          if (srq.length) out += `*SmartResQ* (${srq.length})\n${srq.map((t, i) => `${i + 1}. ${fmt(t)}`).join('\n')}\n\n`;
         }
-        if (other.length) out += `*Personal* (${other.length})\n${other.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}`;
+        if (other.length) out += `*Personal* (${other.length})\n${other.map((t, i) => `${i + 1}. ${fmt(t)}`).join('\n')}`;
         return out.trim();
       }
 

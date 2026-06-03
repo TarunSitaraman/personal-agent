@@ -26,12 +26,12 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // Every minute — check due reminders
+  // Every minute — check due todo reminders
   cron.schedule('* * * * *', async () => {
     try {
-      const due = await memory.getDueReminders();
-      for (const reminder of due) {
-        await sendButtonMessage(myNumber, `Reminder: ${reminder.content}`, [
+      const due = await memory.getDueTodoReminders();
+      for (const todo of due) {
+        await sendButtonMessage(myNumber, `Reminder: ${todo.content}`, [
           { id: 'reminder_done', title: 'Done ✓' },
           { id: 'reminder_snooze', title: 'Snooze 1hr' },
         ]);

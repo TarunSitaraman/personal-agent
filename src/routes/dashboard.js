@@ -341,7 +341,7 @@ header {
     <div class="stats">
       <div class="stat">
         <div class="stat-n">${analytics.todoStats.open}</div>
-        <div class="stat-l">Open</div>
+        <div class="stat-l">Todos</div>
       </div>
       <div class="stat">
         <div class="stat-n">${openPRs.length}</div>

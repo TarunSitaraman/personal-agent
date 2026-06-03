@@ -7,11 +7,20 @@ const pool = new Pool({
 
 // --- Todos ---
 
-async function addTodo(content, context) {
+async function addTodo(content, context, remindAt = null) {
   await pool.query(
-    'INSERT INTO todos (content, context) VALUES ($1, $2)',
-    [content, context]
+    'INSERT INTO todos (content, context, remind_at) VALUES ($1, $2, $3)',
+    [content, context, remindAt || null]
   );
+}
+
+async function getDueTodoReminders() {
+  const { rows } = await pool.query(
+    `UPDATE todos SET reminded = true
+     WHERE done = false AND reminded = false AND remind_at <= NOW()
+     RETURNING *`
+  );
+  return rows;
 }
 
 async function getPendingTodos(context = null) {
@@ -327,7 +336,7 @@ module.exports = {
   addNote, updateNoteTags, getRecentNotes,
   addLearning, getUnreviewedLearnings, markLearningReviewed,
   saveMessage, getRecentHistory,
-  addReminder, getDueReminders,
+  addReminder, getDueReminders, getDueTodoReminders,
   saveInsight, getRecentInsights, getMessageCount,
   saveKnowledge, getAllKnowledge, trimConversations,
   searchMemory, getYesterdayActivity,
