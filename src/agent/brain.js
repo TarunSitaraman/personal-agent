@@ -41,17 +41,22 @@ CRITICAL: Always respond with valid JSON in this exact format:
 Keep replies short. Use line breaks. No markdown formatting (WhatsApp doesn't render it well). Use plain text only.`;
 
 async function callGemini(contents) {
-  const response = await axios.post(
-    GEMINI_URL,
-    {
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents,
-    },
-    {
-      headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY },
-    }
-  );
-  return response.data.candidates[0].content.parts[0].text;
+  try {
+    const response = await axios.post(
+      GEMINI_URL,
+      {
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents,
+      },
+      {
+        headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY },
+      }
+    );
+    return response.data.candidates[0].content.parts[0].text;
+  } catch (err) {
+    console.error('Gemini API error:', JSON.stringify(err.response?.data || err.message));
+    throw err;
+  }
 }
 
 async function handleIncoming(userMessage) {
