@@ -2,7 +2,7 @@ const axios = require('axios');
 const { getCurrentMode, getModeDescription } = require('./context');
 const memory = require('./memory');
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent';
 
 const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
 
@@ -71,11 +71,17 @@ ${modeDesc}
 Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
 Unreviewed learnings: ${stats.unreviewed.length}`;
 
+  const historyTurns = history.map(h => ({
+    role: h.role === 'user' ? 'user' : 'model',
+    parts: [{ text: h.content }],
+  }));
+
+  // Gemini requires contents to start with a user turn
+  const firstUserIdx = historyTurns.findIndex(h => h.role === 'user');
+  const safeHistory = firstUserIdx > 0 ? historyTurns.slice(firstUserIdx) : historyTurns;
+
   const contents = [
-    ...history.map(h => ({
-      role: h.role === 'user' ? 'user' : 'model',
-      parts: [{ text: h.content }],
-    })),
+    ...safeHistory,
     {
       role: 'user',
       parts: [{ text: `${contextBlock}\n\nUser message: ${userMessage}` }],
