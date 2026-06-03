@@ -6,8 +6,14 @@ const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
 const { sendButtonMessage } = require("../whatsapp/send");
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+const MODEL_CHAIN = [
+  "meta-llama/llama-3.3-70b-instruct",
+  "qwen/qwen-2.5-72b-instruct",
+  "google/gemini-2.0-flash-001",
+  "nvidia/llama-3.1-nemotron-70b-instruct",
+];
 
 const SYSTEM_PROMPT = `You are Blu, Tarun's personal AI agent on WhatsApp.
 
@@ -90,20 +96,38 @@ CRITICAL: Always respond with ONLY a single valid JSON object. No text before or
 
 WHEN UNSURE: If you are uncertain about any detail — context, time, what to save, what was meant — always ask a clarifying question instead of guessing. A wrong action is worse than a clarifying question.`;
 
-async function callGroq(messages, jsonMode = false) {
-  try {
-    const body = { model: GROQ_MODEL, messages };
-    if (jsonMode) body.response_format = { type: 'json_object' };
-    const response = await axios.post(
-      GROQ_URL,
-      body,
-      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` } }
-    );
-    return response.data.choices[0].message.content;
-  } catch (err) {
-    console.error("Groq API error:", JSON.stringify(err.response?.data || err.message));
-    throw err;
+async function callLLM(messages, jsonMode = false) {
+  let lastErr;
+  for (const model of MODEL_CHAIN) {
+    try {
+      const body = { model, messages };
+      if (jsonMode) body.response_format = { type: 'json_object' };
+      const response = await axios.post(
+        OPENROUTER_URL,
+        body,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
+            'X-Title': 'Personal Agent',
+          },
+        }
+      );
+      const content = response.data.choices[0].message.content;
+      if (content) return content;
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 429 || status === 503 || status === 502 || status === 500) {
+        console.warn(`[LLM] ${model} unavailable (${status}), trying next model...`);
+        lastErr = err;
+        continue;
+      }
+      console.error(`[LLM] ${model} error:`, JSON.stringify(err.response?.data || err.message));
+      throw err;
+    }
   }
+  console.error('[LLM] All models exhausted');
+  throw lastErr;
 }
 
 async function handleIncoming(userMessage) {
@@ -163,7 +187,7 @@ ${insightsBlock}`;
   ];
 
   // JSON mode forces the model to return only valid JSON — no leakage possible
-  const raw = await callGroq(messages, true);
+  const raw = await callLLM(messages, true);
 
   let parsed;
   try {
@@ -206,14 +230,14 @@ async function executeAction(action, data, currentMode, defaultReply) {
         if (data?.content) {
           const noteId = await memory.addNote(data.content, context);
           autoTagNote(noteId, data.content).catch(() => {});
-          findConnections(callGroq, data.content, 'note').catch(() => {});
+          findConnections(callLLM, data.content, 'note').catch(() => {});
         }
         return defaultReply;
 
       case "add_learning":
         if (data?.topic && data?.content) {
           await memory.addLearning(data.topic, data.content, data.source);
-          findConnections(callGroq, `${data.topic}: ${data.content}`, 'learning').catch(() => {});
+          findConnections(callLLM, `${data.topic}: ${data.content}`, 'learning').catch(() => {});
         }
         return defaultReply;
 
@@ -354,7 +378,7 @@ async function executeAction(action, data, currentMode, defaultReply) {
           return `${r.title}: ${r.snippet}`;
         }).join('\n\n');
 
-        const synthesis = await callGroq([{
+        const synthesis = await callLLM([{
           role: 'user',
           content: `Query: "${query}"\n\nSearch results:\n${snippets}\n\nAnswer the query in plain text using only these results. Be concise (under 6 lines). No markdown except *bold*. If results are insufficient, say so.`,
         }]);
@@ -398,7 +422,7 @@ Stats: ${stats.hexTodos.length} Hexaware todos, ${stats.srqTodos.length} SmartRe
 
 Return ONLY a JSON array: ["insight 1", "insight 2"]`;
 
-  const raw = await callGroq([{ role: "user", content: prompt }]);
+  const raw = await callLLM([{ role: "user", content: prompt }]);
   try {
     const match = raw.match(/\[[\s\S]*\]/);
     const insights = JSON.parse(match[0]);
@@ -422,7 +446,7 @@ Insights: ${insights.join(', ') || 'none'}
 
 Plain text. Under 4 lines. No markdown.`;
 
-  const result = await callGroq([{ role: "user", content: prompt }]);
+  const result = await callLLM([{ role: "user", content: prompt }]);
   return result.trim() === 'SKIP' ? null : result;
 }
 
@@ -479,11 +503,11 @@ Recent commits: ${recentCommits.slice(0, 3).join(', ') || 'none'}
 Keep each section to 1-3 bullet points. Plain text, no markdown except *bold* headers.`;
   }
 
-  return await callGroq([{ role: "user", content: prompt }]);
+  return await callLLM([{ role: "user", content: prompt }]);
 }
 
 async function autoTagNote(noteId, content) {
-  const raw = await callGroq([{
+  const raw = await callLLM([{
     role: 'user',
     content: `Extract 3-5 short keyword tags from this note. Return ONLY a JSON array of lowercase strings.\nNote: "${content}"\nExample output: ["tag1", "tag2", "tag3"]`,
   }]);
@@ -544,7 +568,7 @@ Recent commits: ${recentCommits.slice(0, 3).join(', ') || 'none'}
 
 Keep it honest, practical, under 15 lines. Plain text only.`;
 
-  return await callGroq([{ role: 'user', content: prompt }]);
+  return await callLLM([{ role: 'user', content: prompt }]);
 }
 
 module.exports = { handleIncoming, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview };
