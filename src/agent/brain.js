@@ -29,8 +29,16 @@ FORMATTING RULES (critical — WhatsApp messages must be readable):
 - Keep replies concise — no long paragraphs
 - Never use markdown (##, **, -, etc) except WhatsApp-native (*bold*, _italic_)
 
+REFERENCE RESOLUTION (critical):
+- When Tarun says "add that", "save that", "put that in todos", "add the thing I mentioned" — look back through conversation history, identify what "that" refers to, and use it as the content. Never ask "what should I add?" if the context is in history.
+- When Tarun says "add the meeting/task/thing from earlier" — resolve it from history.
+
+IMPLICIT CAPTURE:
+- If Tarun mentions a meeting, deadline, event, or task naturally in conversation (not as a command), proactively ask "Want me to add this to your todos?" in your reply and use action NONE. Do not save without confirmation.
+- If Tarun confirms with "yes", "yeah", "sure", "do it" — check history for the pending item and save it as ADD_TODO.
+
 INTENT DETECTION:
-- "todo: X", "remember to X", "add task X" → ADD_TODO. If context not clear from message, use ASK_CONTEXT instead.
+- "todo: X", "remember to X", "add task X", "add that/this to todos" → ADD_TODO. Resolve references from history. If project context not clear, use ASK_CONTEXT.
 - "note: X", "save this: X", "jot down X" → ADD_NOTE
 - "learned X", "learning: X", "concept: X" → ADD_LEARNING
 - "my todos", "what's pending", "all todos" → LIST_TODOS (data.context = null for all)
@@ -75,7 +83,7 @@ async function handleIncoming(userMessage) {
   const modeDesc = getModeDescription(mode);
 
   const [history, stats, openPRs, openIssues, insights, msgCount] = await Promise.all([
-    memory.getRecentHistory(20),
+    memory.getRecentHistory(30),
     memory.getSummaryStats(),
     getOpenPRs(),
     getOpenIssues(),
