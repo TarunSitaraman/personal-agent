@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { getCurrentMode, getModeDescription } = require("./context");
+const { getCurrentMode, getModeDescription, setModeOverride } = require("./context");
 const memory = require("./memory");
 const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { findConnections } = require("../integrations/connections");
@@ -64,12 +64,13 @@ INTENT DETECTION:
 - "my events", "what's on my calendar", "show events", "what do I have [this week/today]" → LIST_EVENTS (data.context = filter or null)
 - "cancel X", "remove X from calendar", "delete the X event/meeting" → DELETE_EVENT (data.title = event name to match)
 - "reschedule X to Y", "move X meeting to Y time", "change X to Yam" → UPDATE_EVENT (data.title = event to find, data.datetime = new ISO datetime if time changed, data.duration = new duration if changed, data.new_title = new name if renamed)
+- Tarun signals a context/life shift: "left office", "heading home", "done with hexaware", "switching to smartresq/personal", "going to sleep", "back at office", "starting work" → SWITCH_MODE (data.mode = 'hexaware' | 'smartresq' | 'personal'). Override lasts until midnight.
 - Otherwise → NONE
 
 CRITICAL: Always respond with ONLY a single valid JSON object. No text before or after it. The "reply" field must be a plain conversational string — never put JSON, curly braces, or code inside "reply".
 {
   "reply": "formatted WhatsApp message — plain text only, no JSON",
-  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | none",
+  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | none",
   "data": {
     "content": "extracted content or search query",
     "topic": "topic if learning",
@@ -362,6 +363,14 @@ async function executeAction(action, data, currentMode, defaultReply) {
         }
 
         return synthesis.trim();
+      }
+
+      case "switch_mode": {
+        const newMode = data?.mode;
+        if (newMode && ['hexaware', 'smartresq', 'personal'].includes(newMode)) {
+          setModeOverride(newMode);
+        }
+        return defaultReply;
       }
 
       default:
