@@ -39,31 +39,32 @@ router.get('/', async (req, res) => {
 
     const renderTodoSection = (todos, label, color) => {
       if (!todos.length) return `<div class="empty-state">No open todos</div>`;
-      return todos.map((t, i) => `
+      return todos.map((t) => `
         <div class="todo-item">
-          <span class="todo-num" style="color:${color}">${i + 1}</span>
+          <span class="todo-ctx">${escHtml(label)}</span>
+          <span class="todo-sep">·</span>
           <span class="todo-text">${escHtml(t.content)}</span>
         </div>`).join('');
     };
 
     const renderPRs = () => openPRs.length
-      ? openPRs.map(pr => `<div class="list-item"><span class="badge badge-green">PR</span>${escHtml(pr)}</div>`).join('')
+      ? openPRs.map(pr => `<div class="list-item"><span class="tag">PR</span><span class="list-text">${escHtml(pr)}</span></div>`).join('')
       : `<div class="empty-state">No open PRs</div>`;
 
     const renderIssues = () => openIssues.slice(0, 6).length
-      ? openIssues.slice(0, 6).map(i => `<div class="list-item"><span class="badge badge-blue">#</span>${escHtml(i)}</div>`).join('')
+      ? openIssues.slice(0, 6).map(i => `<div class="list-item"><span class="tag">#</span><span class="list-text">${escHtml(i)}</span></div>`).join('')
       : `<div class="empty-state">No open issues</div>`;
 
     const renderCommits = () => recentCommits.slice(0, 4).length
-      ? recentCommits.slice(0, 4).map(c => `<div class="list-item"><span class="badge badge-purple">↑</span>${escHtml(c)}</div>`).join('')
+      ? recentCommits.slice(0, 4).map(c => `<div class="list-item"><span class="tag">commit</span><span class="list-text">${escHtml(c)}</span></div>`).join('')
       : `<div class="empty-state">No recent commits</div>`;
 
     const renderNotes = () => recentNotes.length
-      ? recentNotes.map(n => `<div class="list-item"><span class="ctx-tag" style="background:${ctxColor(n.context)}20;color:${ctxColor(n.context)}">${n.context}</span>${escHtml(n.content.slice(0, 80))}${n.content.length > 80 ? '…' : ''}</div>`).join('')
+      ? recentNotes.map(n => `<div class="list-item"><span class="tag">${escHtml(n.context)}</span><span class="list-text">${escHtml(n.content.slice(0, 80))}${n.content.length > 80 ? '…' : ''}</span></div>`).join('')
       : `<div class="empty-state">No notes yet</div>`;
 
     const renderLearnings = () => learnings.length
-      ? learnings.map(l => `<div class="list-item"><span class="badge badge-purple">💡</span><div><div class="learning-topic">${escHtml(l.topic)}</div><div class="learning-content">${escHtml(l.content.slice(0, 60))}${l.content.length > 60 ? '…' : ''}</div></div></div>`).join('')
+      ? learnings.map(l => `<div class="learning-item"><div class="learning-topic">${escHtml(l.topic)}</div><div class="learning-content">${escHtml(l.content.slice(0, 60))}${l.content.length > 60 ? '…' : ''}</div></div>`).join('')
       : `<div class="empty-state">No unreviewed learnings</div>`;
 
     const renderKnowledge = () => knowledge.length
@@ -80,200 +81,195 @@ router.get('/', async (req, res) => {
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #080c14;
-  --surface: #0f1625;
-  --surface2: #141d2e;
-  --border: #1e2a3a;
-  --text: #e2e8f0;
-  --muted: #4a5568;
-  --blue: #3b82f6;
-  --green: #10b981;
-  --purple: #8b5cf6;
-  --orange: #f59e0b;
-  --red: #ef4444;
+  --bg: #0a0b0e;
+  --surface: #111318;
+  --border: #1f2230;
+  --text: #f8fafc;
+  --secondary: #94a3b8;
+  --muted: #3d4663;
+  --accent: #6366f1;
 }
-body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+html, body { background: var(--bg); }
+body {
+  color: var(--text);
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
 
 /* Header */
-.header { display: flex; align-items: center; justify-content: space-between; padding: 20px 28px 16px; border-bottom: 1px solid var(--border); }
-.header-left { display: flex; align-items: center; gap: 12px; }
-.logo { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em; color: #fff; }
-.logo span { color: var(--blue); }
-.mode-pill { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; border: 1px solid; }
-.header-time { font-size: 0.75rem; color: var(--muted); }
+.header { display: flex; align-items: center; justify-content: space-between; height: 48px; padding: 0 28px; border-bottom: 1px solid var(--border); }
+.logo { font-size: 16px; font-weight: 300; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text); }
+.header-time { font-size: 11px; letter-spacing: 0.04em; color: var(--secondary); display: flex; align-items: center; gap: 8px; }
+.refresh-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 rgba(99,102,241,0.6); animation: pulse 2.4s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(99,102,241,0.5); } 70% { box-shadow: 0 0 0 6px rgba(99,102,241,0); } 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); } }
 
 /* Layout */
-.main { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100vh - 57px); overflow: hidden; }
-.sidebar { border-right: 1px solid var(--border); overflow-y: auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
-.content { overflow-y: auto; padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-content: start; }
+.main { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; padding: 24px 28px 40px; max-width: 1500px; margin: 0 auto; }
+.sidebar { display: flex; flex-direction: column; gap: 20px; }
+.content { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-content: start; }
 
 /* Cards */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-.card-header { padding: 12px 16px 8px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
-.card-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-.card-count { font-size: 0.7rem; font-weight: 600; background: var(--surface2); padding: 2px 8px; border-radius: 999px; color: var(--text); }
-.card-body { padding: 10px 16px 12px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
+.card-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.card-count { font-size: 11px; font-weight: 400; color: var(--secondary); }
 
 /* Stats row */
-.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
-.stat-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; }
-.stat-value { font-size: 1.6rem; font-weight: 800; line-height: 1; }
-.stat-sub { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px 18px; }
+.stat-value { font-size: 28px; font-weight: 700; line-height: 1; color: var(--text); }
+.stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--secondary); margin-top: 8px; }
 
 /* Mode card */
-.mode-card { background: linear-gradient(135deg, ${modeConf.bg}, var(--surface)); border: 1px solid ${modeConf.color}40; border-radius: 12px; padding: 16px; }
-.mode-emoji { font-size: 2rem; margin-bottom: 8px; }
-.mode-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: ${modeConf.color}; font-weight: 700; margin-bottom: 4px; }
-.mode-name { font-size: 1.2rem; font-weight: 800; color: #fff; margin-bottom: 6px; }
-.mode-desc { font-size: 0.75rem; color: var(--muted); line-height: 1.5; }
+.mode-card { background: var(--surface); border: 1px solid var(--border); border-left: 2px solid ${modeConf.color}; border-radius: 8px; padding: 24px; }
+.mode-eyebrow { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 12px; }
+.mode-name { font-size: 18px; font-weight: 400; color: var(--text); margin-bottom: 8px; letter-spacing: 0.01em; }
+.mode-desc { font-size: 13px; color: var(--secondary); line-height: 1.55; }
 
 /* Todo items */
-.todo-item { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.todo-group + .todo-group { margin-top: 16px; }
+.todo-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 .todo-item:last-child { border-bottom: none; }
-.todo-num { font-size: 0.7rem; font-weight: 700; min-width: 16px; margin-top: 1px; }
-.todo-text { font-size: 0.82rem; color: var(--text); line-height: 1.4; }
-.context-section { margin-bottom: 4px; }
-.context-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 10px 0 4px; color: var(--muted); }
+.todo-ctx { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.todo-sep { color: var(--muted); }
+.todo-text { font-size: 13px; color: var(--text); flex: 1; }
 
 /* List items */
-.list-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 0.8rem; line-height: 1.4; color: var(--text); }
+.list-item { display: flex; align-items: baseline; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 .list-item:last-child { border-bottom: none; }
-.badge { display: inline-flex; align-items: center; justify-content: center; padding: 1px 7px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
-.badge-green { background: #064e3b; color: #10b981; }
-.badge-blue { background: #1e3a5f; color: #3b82f6; }
-.badge-purple { background: #2e1065; color: #8b5cf6; }
-.ctx-tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
-.learning-topic { font-weight: 600; font-size: 0.8rem; }
-.learning-content { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
-.knowledge-item { font-size: 0.8rem; color: var(--text); padding: 6px 0; border-bottom: 1px solid var(--border); line-height: 1.4; }
+.list-text { font-size: 13px; color: var(--text); line-height: 1.45; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; letter-spacing: 0.06em; text-transform: lowercase; background: #1f2230; color: var(--secondary); white-space: nowrap; flex-shrink: 0; }
+
+/* Learnings */
+.learning-item { padding: 11px 0; border-bottom: 1px solid var(--border); }
+.learning-item:last-child { border-bottom: none; }
+.learning-topic { font-size: 13px; color: var(--text); margin-bottom: 3px; }
+.learning-content { font-size: 12px; color: var(--secondary); line-height: 1.45; }
+
+/* Knowledge */
+.knowledge-item { font-size: 13px; color: var(--secondary); padding: 9px 0 9px 16px; position: relative; border-bottom: 1px solid var(--border); line-height: 1.45; }
 .knowledge-item:last-child { border-bottom: none; }
-.knowledge-item::before { content: '◆ '; color: var(--purple); font-size: 0.5rem; vertical-align: middle; }
-.empty-state { font-size: 0.78rem; color: var(--muted); padding: 8px 0; font-style: italic; }
+.knowledge-item::before { content: ''; position: absolute; left: 0; top: 15px; width: 5px; height: 1px; background: var(--accent); }
+
+.empty-state { font-size: 13px; color: var(--muted); padding: 4px 0; }
 
 /* Full width card in grid */
 .full-width { grid-column: 1 / -1; }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-@media (max-width: 900px) {
-  .main { grid-template-columns: 1fr; height: auto; }
-  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+@media (max-width: 960px) {
+  .main { grid-template-columns: 1fr; }
   .content { grid-template-columns: 1fr; }
 }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="header-left">
-    <div class="logo">blu<span>.</span></div>
-    <div class="mode-pill" style="color:${modeConf.color};border-color:${modeConf.color}40;background:${modeConf.bg}">
-      ${modeConf.emoji} ${modeConf.label} mode
-    </div>
-  </div>
-  <div class="header-time">↻ auto-refresh · ${now} IST</div>
-</div>
+<header class="header">
+  <div class="logo">blu</div>
+  <div class="header-time"><span class="refresh-dot"></span>${now} IST</div>
+</header>
 
 <div class="main">
 
-  <!-- SIDEBAR: Todos -->
-  <div class="sidebar">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
 
     <div class="stats-row">
       <div class="stat-card">
-        <div class="stat-label">Open</div>
-        <div class="stat-value" style="color:var(--orange)">${analytics.todoStats.open}</div>
-        <div class="stat-sub">todos</div>
+        <div class="stat-value">${analytics.todoStats.open}</div>
+        <div class="stat-label">Open todos</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Done</div>
-        <div class="stat-value" style="color:var(--green)">${analytics.todoStats.completed_this_week}</div>
-        <div class="stat-sub">this week</div>
+        <div class="stat-value">${analytics.todoStats.completed_this_week}</div>
+        <div class="stat-label">Done / week</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">PRs</div>
-        <div class="stat-value" style="color:var(--blue)">${openPRs.length}</div>
-        <div class="stat-sub">open</div>
+        <div class="stat-value">${openPRs.length}</div>
+        <div class="stat-label">Open PRs</div>
       </div>
     </div>
 
     <div class="mode-card">
-      <div class="mode-emoji">${modeConf.emoji}</div>
-      <div class="mode-label">Current mode</div>
+      <div class="mode-eyebrow">Current mode</div>
       <div class="mode-name">${modeConf.label}</div>
       <div class="mode-desc">${getModeDescription(mode)}</div>
     </div>
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">Open Todos</div>
         <div class="card-count">${allTodos.length}</div>
       </div>
-      <div class="card-body">
-        ${hexTodos.length ? `<div class="context-label" style="color:var(--blue)">Hexaware</div>${renderTodoSection(hexTodos, 'Hexaware', '#3b82f6')}` : ''}
-        ${srqTodos.length ? `<div class="context-label" style="color:var(--green)">SmartResQ</div>${renderTodoSection(srqTodos, 'SmartResQ', '#10b981')}` : ''}
-        ${personalTodos.length ? `<div class="context-label" style="color:var(--purple)">Personal</div>${renderTodoSection(personalTodos, 'Personal', '#8b5cf6')}` : ''}
+      <div>
+        ${hexTodos.length ? `<div class="todo-group">${renderTodoSection(hexTodos, 'Hexaware', '#3b82f6')}</div>` : ''}
+        ${srqTodos.length ? `<div class="todo-group">${renderTodoSection(srqTodos, 'SmartResQ', '#10b981')}</div>` : ''}
+        ${personalTodos.length ? `<div class="todo-group">${renderTodoSection(personalTodos, 'Personal', '#8b5cf6')}</div>` : ''}
         ${!allTodos.length ? `<div class="empty-state">All clear — no open todos</div>` : ''}
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">What Blu Knows</div>
         <div class="card-count">${knowledge.length}</div>
       </div>
-      <div class="card-body">${renderKnowledge()}</div>
+      <div>${renderKnowledge()}</div>
     </div>
 
-  </div>
+  </aside>
 
   <!-- MAIN CONTENT -->
-  <div class="content">
+  <main class="content">
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">Open PRs</div>
         <div class="card-count">${openPRs.length}</div>
       </div>
-      <div class="card-body">${renderPRs()}</div>
+      <div>${renderPRs()}</div>
     </div>
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">Open Issues</div>
         <div class="card-count">${openIssues.length}</div>
       </div>
-      <div class="card-body">${renderIssues()}</div>
+      <div>${renderIssues()}</div>
     </div>
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">Recent Commits</div>
       </div>
-      <div class="card-body">${renderCommits()}</div>
+      <div>${renderCommits()}</div>
     </div>
 
     <div class="card">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">Unreviewed Learnings</div>
         <div class="card-count">${learnings.length}</div>
       </div>
-      <div class="card-body">${renderLearnings()}</div>
+      <div>${renderLearnings()}</div>
     </div>
 
     <div class="card full-width">
-      <div class="card-header">
+      <div class="card-head">
         <div class="card-title">Recent Notes</div>
         <div class="card-count">${analytics.totalNotes}</div>
       </div>
-      <div class="card-body">${renderNotes()}</div>
+      <div>${renderNotes()}</div>
     </div>
 
-  </div>
+  </main>
 </div>
 
 </body>
