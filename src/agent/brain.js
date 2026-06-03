@@ -1,8 +1,8 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { getCurrentMode, getModeDescription } = require('./context');
 const memory = require('./memory');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
 
@@ -19,7 +19,7 @@ Your job:
 
 Intent detection rules:
 - If Tarun says "remember to X", "todo: X", "add task X", "remind me to X" → ADD_TODO
-- If Tarun says "note: X", "save this: X", "jot down X" → ADD_NOTE  
+- If Tarun says "note: X", "save this: X", "jot down X" → ADD_NOTE
 - If Tarun says "learned X", "learning: X", "concept: X", "understood X" → ADD_LEARNING
 - If Tarun asks "what do I have", "my todos", "what's pending" → LIST_TODOS
 - If Tarun asks "my notes", "what did I save" → LIST_NOTES
@@ -46,46 +46,38 @@ async function handleIncoming(userMessage) {
   const history = await memory.getRecentHistory(20);
   const stats = await memory.getSummaryStats();
 
-  const contextBlock = `
-Current mode: ${mode}
+  const contextBlock = `Current mode: ${mode}
 ${modeDesc}
 
 Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
-Unreviewed learnings: ${stats.unreviewed.length}
-`;
+Unreviewed learnings: ${stats.unreviewed.length}`;
 
   const historyParts = history.map(h => ({
     role: h.role === 'user' ? 'user' : 'model',
     parts: [{ text: h.content }],
   }));
 
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash-latest',
-    systemInstruction: SYSTEM_PROMPT,
+  const chat = ai.chats.create({
+    model: 'gemini-1.5-flash',
+    history: historyParts,
+    config: { systemInstruction: SYSTEM_PROMPT },
   });
 
-  const chat = model.startChat({ history: historyParts });
-
   const fullMessage = `${contextBlock}\n\nUser message: ${userMessage}`;
-  const result = await chat.sendMessage(fullMessage);
-  const raw = result.response.text();
+  const result = await chat.sendMessage({ message: fullMessage });
+  const raw = result.text;
 
-  // Parse Gemini's JSON response
   let parsed;
   try {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    // Fallback if JSON parsing fails
     await memory.saveMessage('user', userMessage);
     await memory.saveMessage('model', raw);
     return raw;
   }
 
-  // Execute the action
   await executeAction(parsed.action, parsed.data, mode);
-
-  // Save to conversation history
   await memory.saveMessage('user', userMessage);
   await memory.saveMessage('model', parsed.reply);
 
@@ -94,7 +86,6 @@ Unreviewed learnings: ${stats.unreviewed.length}
 
 async function executeAction(action, data, currentMode) {
   const context = data?.context || currentMode;
-
   try {
     switch (action) {
       case 'add_todo':
@@ -104,11 +95,8 @@ async function executeAction(action, data, currentMode) {
         if (data?.content) await memory.addNote(data.content, context);
         break;
       case 'add_learning':
-        if (data?.topic && data?.content) {
+        if (data?.topic && data?.content)
           await memory.addLearning(data.topic, data.content, data.source);
-        }
-        break;
-      default:
         break;
     }
   } catch (err) {
@@ -116,10 +104,8 @@ async function executeAction(action, data, currentMode) {
   }
 }
 
-// Used by scheduler for proactive briefs (no history context, just stats)
 async function generateBrief(type) {
   const stats = await memory.getSummaryStats();
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
   let prompt;
   if (type === 'morning') {
@@ -129,7 +115,7 @@ Pending Hexaware todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none
 Pending SmartResQ todos from last night: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
 Unreviewed learnings: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and practical.`;
-  } else if (type === 'evening') {
+  } else {
     prompt = `Generate a concise evening mode-switch message for Tarun in plain text (no markdown).
 He is switching from Hexaware to SmartResQ work.
 Pending SmartResQ todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
@@ -137,8 +123,11 @@ Unreviewed learnings captured today: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and motivating.`;
   }
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const result = await ai.models.generateContent({
+    model: 'gemini-1.5-flash',
+    contents: prompt,
+  });
+  return result.text;
 }
 
 module.exports = { handleIncoming, generateBrief };
