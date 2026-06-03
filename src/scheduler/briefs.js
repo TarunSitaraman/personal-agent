@@ -39,7 +39,7 @@ function startScheduler() {
   });
 
   // 9:00 AM IST daily — stale todo alert
-  cron.schedule('0 9 * * *', async () => {
+  cron.schedule('0 9 * * 1-5', async () => {
     try {
       const alert = await generateStaleAlert();
       if (alert) await sendMessage(myNumber, alert);
