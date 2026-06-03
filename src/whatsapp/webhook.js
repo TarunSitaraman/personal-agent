@@ -1,10 +1,10 @@
 const express = require('express');
 const { handleIncoming } = require('../agent/brain');
 const { sendMessage } = require('./send');
+const { transcribeAudio } = require('../integrations/whisper');
 
 const router = express.Router();
 
-// Webhook verification (Meta handshake)
 router.get('/', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -16,9 +16,8 @@ router.get('/', (req, res) => {
   res.sendStatus(403);
 });
 
-// Incoming messages
 router.post('/', async (req, res) => {
-  res.sendStatus(200); // Acknowledge immediately
+  res.sendStatus(200);
 
   try {
     const entry = req.body?.entry?.[0];
@@ -28,16 +27,20 @@ router.post('/', async (req, res) => {
     if (!message) return;
 
     const from = message.from;
-    const myNumber = process.env.MY_WHATSAPP_NUMBER;
-
-    // Only respond to Tarun's number
-    if (from !== myNumber) return;
+    if (from !== process.env.MY_WHATSAPP_NUMBER) return;
 
     let text = '';
+
     if (message.type === 'text') {
       text = message.text.body;
     } else if (message.type === 'audio') {
-      text = '[Voice message received — voice transcription not yet implemented]';
+      const mediaId = message.audio.id;
+      const transcription = await transcribeAudio(mediaId);
+      if (!transcription) {
+        await sendMessage(from, "Couldn't transcribe the voice message. Try again or type it.");
+        return;
+      }
+      text = transcription;
     } else {
       return;
     }

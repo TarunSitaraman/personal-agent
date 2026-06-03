@@ -101,6 +101,43 @@ async function getRecentHistory(limit = 20) {
   return rows;
 }
 
+// --- Reminders ---
+
+async function addReminder(content, remindAt) {
+  await pool.query(
+    'INSERT INTO reminders (content, remind_at) VALUES ($1, $2)',
+    [content, remindAt]
+  );
+}
+
+async function getDueReminders() {
+  const { rows } = await pool.query(
+    `UPDATE reminders SET sent = true
+     WHERE sent = false AND remind_at <= NOW()
+     RETURNING *`
+  );
+  return rows;
+}
+
+// --- User insights ---
+
+async function saveInsight(insight) {
+  await pool.query('INSERT INTO user_insights (insight) VALUES ($1)', [insight]);
+}
+
+async function getRecentInsights(limit = 10) {
+  const { rows } = await pool.query(
+    'SELECT insight FROM user_insights ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  );
+  return rows.map(r => r.insight);
+}
+
+async function getMessageCount() {
+  const { rows } = await pool.query('SELECT COUNT(*) as count FROM conversations');
+  return parseInt(rows[0].count);
+}
+
 // --- Summary stats (for briefs) ---
 
 async function getSummaryStats() {
@@ -117,5 +154,7 @@ module.exports = {
   addNote, getRecentNotes,
   addLearning, getUnreviewedLearnings, markLearningReviewed,
   saveMessage, getRecentHistory,
+  addReminder, getDueReminders,
+  saveInsight, getRecentInsights, getMessageCount,
   getSummaryStats,
 };
