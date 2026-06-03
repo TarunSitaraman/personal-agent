@@ -2,7 +2,8 @@ const axios = require('axios');
 const { getCurrentMode, getModeDescription } = require('./context');
 const memory = require('./memory');
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.1-8b-instant';
 
 const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
 
@@ -40,21 +41,16 @@ CRITICAL: Always respond with valid JSON in this exact format:
 
 Keep replies short. Use line breaks. No markdown formatting (WhatsApp doesn't render it well). Use plain text only.`;
 
-async function callGemini(contents) {
+async function callGroq(messages) {
   try {
     const response = await axios.post(
-      GEMINI_URL,
-      {
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents,
-      },
-      {
-        headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY },
-      }
+      GROQ_URL,
+      { model: GROQ_MODEL, messages },
+      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` } }
     );
-    return response.data.candidates[0].content.parts[0].text;
+    return response.data.choices[0].message.content;
   } catch (err) {
-    console.error('Gemini API error:', JSON.stringify(err.response?.data || err.message));
+    console.error('Groq API error:', JSON.stringify(err.response?.data || err.message));
     throw err;
   }
 }
@@ -71,24 +67,13 @@ ${modeDesc}
 Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
 Unreviewed learnings: ${stats.unreviewed.length}`;
 
-  const historyTurns = history.map(h => ({
-    role: h.role === 'user' ? 'user' : 'model',
-    parts: [{ text: h.content }],
-  }));
-
-  // Gemini requires contents to start with a user turn
-  const firstUserIdx = historyTurns.findIndex(h => h.role === 'user');
-  const safeHistory = firstUserIdx > 0 ? historyTurns.slice(firstUserIdx) : historyTurns;
-
-  const contents = [
-    ...safeHistory,
-    {
-      role: 'user',
-      parts: [{ text: `${contextBlock}\n\nUser message: ${userMessage}` }],
-    },
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content })),
+    { role: 'user', content: `${contextBlock}\n\nUser message: ${userMessage}` },
   ];
 
-  const raw = await callGemini(contents);
+  const raw = await callGroq(messages);
 
   let parsed;
   try {
@@ -146,8 +131,7 @@ Unreviewed learnings captured today: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and motivating.`;
   }
 
-  const raw = await callGemini([{ role: 'user', parts: [{ text: prompt }] }]);
-  return raw;
+  return await callGroq([{ role: 'user', content: prompt }]);
 }
 
 module.exports = { handleIncoming, generateBrief };
