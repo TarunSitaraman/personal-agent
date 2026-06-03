@@ -6,50 +6,55 @@ const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 
-const SYSTEM_PROMPT = `You are Blu, Tarun's personal AI agent accessible via WhatsApp.
+const SYSTEM_PROMPT = `You are Blu, Tarun's personal AI agent on WhatsApp.
 
 About Tarun:
 - Intern at Hexaware (10am–6pm weekdays)
-- Founder/tech lead of SmartResQ — a healthcare emergency response startup (works evenings)
+- Founder/tech lead of SmartResQ — healthcare emergency response startup (evenings)
 - Learning GenAI and agentic AI actively
 - Wants low-friction capture and proactive intelligence
 
 CRITICAL DATA RULES:
-- You only know what is in the context block (todos, notes, learnings, GitHub PR/issue data, and insights)
-- You do NOT have access to calendars or emails
-- NEVER make up numbers or data not in the context block
+- Only report data present in the context block. Never invent numbers or items.
+- You do NOT have access to calendars or emails.
 
 PROACTIVE BEHAVIOUR:
-- If insights reveal a pattern worth flagging, mention it naturally in your reply
-- If todos are piling up in one context, gently surface it
-- If learnings haven't been reviewed in a while, nudge Tarun
-- Keep it conversational — one proactive observation max per reply, only when relevant
+- If insights reveal a pattern worth flagging, mention it naturally — one observation max, only when relevant.
 
-Intent detection rules:
-- "remember to X", "todo: X", "add task X" → ADD_TODO
+FORMATTING RULES (critical — WhatsApp messages must be readable):
+- Use *bold* for section headers
+- Use numbered lists for todos, notes, learnings (1. 2. 3.)
+- Each item on its own line
+- Separate sections with a blank line
+- Keep replies concise — no long paragraphs
+- Never use markdown (##, **, -, etc) except WhatsApp-native (*bold*, _italic_)
+
+INTENT DETECTION:
+- "todo: X", "remember to X", "add task X" → ADD_TODO. If context not clear from message, use ASK_CONTEXT instead.
 - "note: X", "save this: X", "jot down X" → ADD_NOTE
 - "learned X", "learning: X", "concept: X" → ADD_LEARNING
-- "what's pending", "my todos", "what do I have" → LIST_TODOS
-- "done: X", "completed X", "finished X", "mark X done" → COMPLETE_TODO
+- "my todos", "what's pending", "all todos" → LIST_TODOS (data.context = null for all)
+- "hexaware todos" → LIST_TODOS (data.context = "hexaware")
+- "smartresq todos" → LIST_TODOS (data.context = "smartresq")
+- "done: X", "finished X", "mark X done" → COMPLETE_TODO
 - "my notes", "what did I save" → LIST_NOTES
 - "my learnings", "what have I learned" → LIST_LEARNINGS
-- "remind me in X to Y", "set a reminder" → SET_REMINDER (extract duration in minutes as data.minutes, task as data.content)
+- "find X", "search for X", "did I note X" → SEARCH (data.content = search query)
+- "remind me in X to Y" → SET_REMINDER (data.minutes = duration in minutes, data.content = task)
 - Otherwise → NONE
 
-CRITICAL: Always respond with valid JSON in this exact format:
+CRITICAL: Always respond with valid JSON:
 {
-  "reply": "your natural WhatsApp message here",
-  "action": "add_todo | add_note | add_learning | list_todos | complete_todo | list_notes | list_learnings | set_reminder | none",
+  "reply": "formatted WhatsApp message",
+  "action": "add_todo | ask_context | add_note | add_learning | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | none",
   "data": {
-    "content": "extracted content",
+    "content": "extracted content or search query",
     "topic": "topic if learning",
     "source": "source if mentioned",
-    "context": "hexaware | smartresq | learning | personal",
+    "context": "hexaware | smartresq | learning | personal | null",
     "minutes": 0
   }
-}
-
-Keep replies short. Use line breaks. No markdown. Plain text only.`;
+}`;
 
 async function callGroq(messages) {
   try {
@@ -94,10 +99,8 @@ Pending todos (${todoBlock.length}):
 ${todoBlock.length ? todoBlock.join('\n') : 'none'}
 
 Unreviewed learnings: ${stats.unreviewed.length}
-
 Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
 Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
-
 ${insightsBlock}`;
 
   const messages = [
@@ -121,44 +124,99 @@ ${insightsBlock}`;
     return raw;
   }
 
-  await executeAction(parsed.action, parsed.data, mode);
+  const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
   await memory.saveMessage("user", userMessage);
-  await memory.saveMessage("model", parsed.reply);
+  await memory.saveMessage("model", reply);
 
-  // Run insight analysis every 20 messages
   if ((msgCount + 2) % 20 === 0) {
     analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
   }
 
-  return parsed.reply;
+  return reply;
 }
 
-async function executeAction(action, data, currentMode) {
+async function executeAction(action, data, currentMode, defaultReply) {
   const context = data?.context || currentMode;
   try {
     switch (action) {
       case "add_todo":
         if (data?.content) await memory.addTodo(data.content, context);
-        break;
+        return defaultReply;
+
+      case "ask_context":
+        return defaultReply;
+
       case "add_note":
         if (data?.content) await memory.addNote(data.content, context);
-        break;
+        return defaultReply;
+
       case "add_learning":
         if (data?.topic && data?.content)
           await memory.addLearning(data.topic, data.content, data.source);
-        break;
+        return defaultReply;
+
       case "complete_todo":
         if (data?.content) await memory.completeTodoByContent(data.content);
-        break;
+        return defaultReply;
+
       case "set_reminder": {
         const minutes = parseInt(data?.minutes) || 60;
         const remindAt = new Date(Date.now() + minutes * 60 * 1000);
         if (data?.content) await memory.addReminder(data.content, remindAt);
-        break;
+        return defaultReply;
       }
+
+      case "list_todos": {
+        const filterCtx = data?.context || null;
+        const todos = await memory.getPendingTodos(filterCtx);
+        if (!todos.length) return filterCtx
+          ? `No pending todos for ${filterCtx}.`
+          : 'No pending todos. All clear!';
+
+        const hex = todos.filter(t => t.context === 'hexaware');
+        const srq = todos.filter(t => t.context === 'smartresq');
+        const other = todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
+
+        let out = '';
+        if (!filterCtx || filterCtx === 'hexaware') {
+          if (hex.length) out += `*Hexaware* (${hex.length})\n${hex.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+        }
+        if (!filterCtx || filterCtx === 'smartresq') {
+          if (srq.length) out += `*SmartResQ* (${srq.length})\n${srq.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+        }
+        if (other.length) out += `*Other* (${other.length})\n${other.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}`;
+        return out.trim();
+      }
+
+      case "list_notes": {
+        const notes = await memory.getRecentNotes(data?.context || null, 8);
+        if (!notes.length) return 'No notes saved yet.';
+        return `*Recent Notes* (${notes.length})\n\n` +
+          notes.map((n, i) => `${i + 1}. [${n.context}] ${n.content}`).join('\n');
+      }
+
+      case "list_learnings": {
+        const learnings = await memory.getUnreviewedLearnings(8);
+        if (!learnings.length) return 'No unreviewed learnings. You\'re all caught up!';
+        return `*Unreviewed Learnings* (${learnings.length})\n\n` +
+          learnings.map((l, i) => `${i + 1}. *${l.topic}*\n   ${l.content}`).join('\n\n');
+      }
+
+      case "search": {
+        const query = data?.content;
+        if (!query) return 'What should I search for?';
+        const results = await memory.searchMemory(query);
+        if (!results.length) return `Nothing found for "${query}".`;
+        return `*Search: "${query}"* (${results.length} results)\n\n` +
+          results.map((r, i) => `${i + 1}. [${r.type}][${r.context}] ${r.content}`).join('\n');
+      }
+
+      default:
+        return defaultReply;
     }
   } catch (err) {
     console.error("Action execution error:", action, err.message);
+    return defaultReply;
   }
 }
 
@@ -167,31 +225,21 @@ async function analyzePatterns() {
     memory.getRecentHistory(40),
     memory.getSummaryStats(),
   ]);
-
   const historyText = history.map(h => `${h.role}: ${h.content}`).join('\n');
+  const prompt = `Analyze this conversation history for Tarun's personal AI agent.
+Extract 2-3 short behavioural insights about his patterns and habits.
 
-  const prompt = `Analyze this conversation history and usage data for Tarun's personal AI agent.
-Extract 2-3 short, specific behavioural insights about his patterns, habits, or tendencies.
-Focus on: what he captures most, when he's most active, what he forgets, what context he works in.
-
-Conversation history:
-${historyText}
-
+History: ${historyText}
 Stats: ${stats.hexTodos.length} Hexaware todos, ${stats.srqTodos.length} SmartResQ todos, ${stats.unreviewed.length} unreviewed learnings
 
-Return ONLY a JSON array of insight strings, e.g.:
-["insight 1", "insight 2", "insight 3"]`;
+Return ONLY a JSON array: ["insight 1", "insight 2"]`;
 
   const raw = await callGroq([{ role: "user", content: prompt }]);
   try {
     const match = raw.match(/\[[\s\S]*\]/);
     const insights = JSON.parse(match[0]);
-    for (const insight of insights) {
-      await memory.saveInsight(insight);
-    }
-  } catch {
-    // silently skip if parsing fails
-  }
+    for (const insight of insights) await memory.saveInsight(insight);
+  } catch { /* skip */ }
 }
 
 async function generateProactiveNudge() {
@@ -200,23 +248,21 @@ async function generateProactiveNudge() {
     memory.getRecentInsights(5),
     getOpenPRs(),
   ]);
+  const prompt = `You are Blu, Tarun's AI agent. Based on the data, decide if there's something worth proactively telling Tarun. Be specific. If nothing genuinely worth saying, reply SKIP.
 
-  const prompt = `You are Blu, Tarun's personal AI agent. Based on the data below, decide if there's something worth proactively telling Tarun right now. Be specific and useful, not generic. If there's nothing genuinely worth saying, reply with exactly: SKIP
-
-Data:
 Hexaware todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
 SmartResQ todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
 Unreviewed learnings: ${stats.unreviewed.length}
 Open PRs: ${openPRs.join(', ') || 'none'}
 Insights: ${insights.join(', ') || 'none'}
 
-Plain text only. Under 4 lines. No markdown.`;
+Plain text. Under 4 lines. No markdown.`;
 
   const result = await callGroq([{ role: "user", content: prompt }]);
   return result.trim() === 'SKIP' ? null : result;
 }
 
-async function generateBrief(type) {
+async function generateStandup(type) {
   const [stats, openPRs, recentCommits] = await Promise.all([
     memory.getSummaryStats(),
     getOpenPRs(),
@@ -224,25 +270,52 @@ async function generateBrief(type) {
   ]);
 
   let prompt;
-  if (type === "morning") {
-    prompt = `Generate a concise morning brief for Tarun in plain text (no markdown).
-He is starting his Hexaware intern day.
-Pending Hexaware todos: ${stats.hexTodos.map(t => t.content).join(", ") || "none"}
-Pending SmartResQ todos from last night: ${stats.srqTodos.map(t => t.content).join(", ") || "none"}
-Unreviewed learnings: ${stats.unreviewed.length}
-Open SmartResQ PRs: ${openPRs.join(", ") || "none"}
-Keep it under 6 lines. Be direct and practical.`;
+  if (type === 'hexaware') {
+    const yesterday = await memory.getYesterdayActivity('hexaware');
+    prompt = `Generate Tarun's Hexaware standup in plain text. Format exactly like this:
+
+*Hexaware Standup*
+
+Yesterday:
+[list what was done — use completed todos and notes]
+
+Today:
+[list pending hexaware todos]
+
+Blockers:
+[mention any if evident from notes, else say None]
+
+Data:
+Completed yesterday: ${yesterday.completed.map(t => t.content).join(', ') || 'none'}
+Notes from yesterday: ${yesterday.notes.map(n => n.content).join(', ') || 'none'}
+Today's todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
+
+Keep each section to 1-3 bullet points. Plain text, no markdown except *bold* headers.`;
   } else {
-    prompt = `Generate a concise evening mode-switch message for Tarun in plain text (no markdown).
-He is switching from Hexaware to SmartResQ work.
-Pending SmartResQ todos: ${stats.srqTodos.map(t => t.content).join(", ") || "none"}
-Unreviewed learnings captured today: ${stats.unreviewed.length}
-Open PRs needing review: ${openPRs.join(", ") || "none"}
-Recent commits: ${recentCommits.slice(0, 3).join(", ") || "none"}
-Keep it under 6 lines. Be direct and motivating.`;
+    const yesterday = await memory.getYesterdayActivity('smartresq');
+    prompt = `Generate Tarun's SmartResQ standup in plain text. Format exactly like this:
+
+*SmartResQ Standup*
+
+Shipped / worked on:
+[recent completed todos + commits]
+
+In progress:
+[current open todos]
+
+PRs needing attention:
+[list open PRs]
+
+Data:
+Completed recently: ${yesterday.completed.map(t => t.content).join(', ') || 'none'}
+Open todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
+Open PRs: ${openPRs.join(', ') || 'none'}
+Recent commits: ${recentCommits.slice(0, 3).join(', ') || 'none'}
+
+Keep each section to 1-3 bullet points. Plain text, no markdown except *bold* headers.`;
   }
 
   return await callGroq([{ role: "user", content: prompt }]);
 }
 
-module.exports = { handleIncoming, generateBrief, generateProactiveNudge };
+module.exports = { handleIncoming, generateStandup, generateProactiveNudge };

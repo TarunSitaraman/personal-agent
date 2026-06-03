@@ -101,6 +101,42 @@ async function getRecentHistory(limit = 20) {
   return rows;
 }
 
+// --- Search ---
+
+async function searchMemory(query) {
+  const [todos, notes, learnings] = await Promise.all([
+    pool.query(
+      `SELECT 'todo' as type, content, context FROM todos WHERE content ILIKE $1 AND done = false LIMIT 5`,
+      [`%${query}%`]
+    ),
+    pool.query(
+      `SELECT 'note' as type, content, context FROM notes WHERE content ILIKE $1 LIMIT 5`,
+      [`%${query}%`]
+    ),
+    pool.query(
+      `SELECT 'learning' as type, topic as content, context FROM learnings WHERE topic ILIKE $1 OR content ILIKE $1 LIMIT 5`,
+      [`%${query}%`]
+    ),
+  ]);
+  return [...todos.rows, ...notes.rows, ...learnings.rows];
+}
+
+// --- Standup data ---
+
+async function getYesterdayActivity(context) {
+  const [completed, notes] = await Promise.all([
+    pool.query(
+      `SELECT content FROM todos WHERE context = $1 AND done = true AND completed_at >= NOW() - INTERVAL '24 hours' ORDER BY completed_at DESC LIMIT 10`,
+      [context]
+    ),
+    pool.query(
+      `SELECT content FROM notes WHERE context = $1 AND created_at >= NOW() - INTERVAL '24 hours' ORDER BY created_at DESC LIMIT 5`,
+      [context]
+    ),
+  ]);
+  return { completed: completed.rows, notes: notes.rows };
+}
+
 // --- Reminders ---
 
 async function addReminder(content, remindAt) {
@@ -156,5 +192,6 @@ module.exports = {
   saveMessage, getRecentHistory,
   addReminder, getDueReminders,
   saveInsight, getRecentInsights, getMessageCount,
+  searchMemory, getYesterdayActivity,
   getSummaryStats,
 };

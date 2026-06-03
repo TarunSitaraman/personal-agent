@@ -1,28 +1,28 @@
 const cron = require('node-cron');
-const { generateBrief, generateProactiveNudge } = require('../agent/brain');
+const { generateStandup, generateProactiveNudge } = require('../agent/brain');
 const { sendMessage } = require('../whatsapp/send');
 const memory = require('../agent/memory');
 
 function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
 
-  // 10:00 AM IST — morning brief
-  cron.schedule('0 10 * * 1-5', async () => {
+  // 8:00 AM IST — Hexaware standup
+  cron.schedule('0 8 * * 1-5', async () => {
     try {
-      const brief = await generateBrief('morning');
-      await sendMessage(myNumber, brief);
+      const standup = await generateStandup('hexaware');
+      await sendMessage(myNumber, standup);
     } catch (err) {
-      console.error('Morning brief error:', err.message);
+      console.error('Hexaware standup error:', err.message);
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // 7:00 PM IST — evening switch
-  cron.schedule('0 19 * * *', async () => {
+  // 6:30 PM IST — SmartResQ standup
+  cron.schedule('30 18 * * *', async () => {
     try {
-      const brief = await generateBrief('evening');
-      await sendMessage(myNumber, brief);
+      const standup = await generateStandup('smartresq');
+      await sendMessage(myNumber, standup);
     } catch (err) {
-      console.error('Evening brief error:', err.message);
+      console.error('SmartResQ standup error:', err.message);
     }
   }, { timezone: 'Asia/Kolkata' });
 
@@ -48,7 +48,7 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  console.log('Scheduler started — morning (10am), evening (7pm), reminders (every min), nudge (9pm)');
+  console.log('Scheduler started — Hexaware standup (8am), SmartResQ standup (6:30pm), reminders (every min), nudge (9pm)');
 }
 
 module.exports = { startScheduler };
