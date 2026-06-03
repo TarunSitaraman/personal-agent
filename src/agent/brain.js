@@ -3,6 +3,7 @@ const { getCurrentMode, getModeDescription } = require("./context");
 const memory = require("./memory");
 const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { findConnections } = require("../integrations/connections");
+const { webSearch } = require("../integrations/search");
 const { sendButtonMessage } = require("../whatsapp/send");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -55,7 +56,8 @@ INTENT DETECTION:
 - "done: X", "finished X", "mark X done" → COMPLETE_TODO
 - "my notes", "what did I save" → LIST_NOTES
 - "my learnings", "what have I learned" → LIST_LEARNINGS
-- "find X", "search for X", "did I note X" → SEARCH (data.content = search query)
+- "find X", "search for X", "did I note X", "what did I save about X" → SEARCH (data.content = search query — searches Tarun's own notes/todos/learnings only)
+- "google X", "search the web for X", "look up X", "what is X", "who is X", "how much is X", "latest X", "news about X", or any factual question about the external world → SEARCH_WEB (data.content = search query)
 - "remind me in X to Y" → SET_REMINDER (data.minutes = duration in minutes, data.content = task)
 - Tarun mentions a meeting, call, session, interview with a specific time → ADD_EVENT (data.title = event name, data.datetime = ISO datetime string in IST, data.duration = minutes default 60, data.recurrence = 'none' | 'daily' | 'weekdays' | 'weekly' — detect from phrasing: "every weekday" → 'weekdays', "daily" → 'daily', "every week"/"weekly" → 'weekly', one-off → 'none')
 - "my events", "what's on my calendar", "show events", "what do I have [this week/today]" → LIST_EVENTS (data.context = filter or null)
@@ -66,7 +68,7 @@ INTENT DETECTION:
 CRITICAL: Always respond with ONLY a single valid JSON object. No text before or after it. The "reply" field must be a plain conversational string — never put JSON, curly braces, or code inside "reply".
 {
   "reply": "formatted WhatsApp message — plain text only, no JSON",
-  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | add_event | list_events | delete_event | update_event | none",
+  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | none",
   "data": {
     "content": "extracted content or search query",
     "topic": "topic if learning",
@@ -332,6 +334,27 @@ async function executeAction(action, data, currentMode, defaultReply) {
         if (!results.length) return `Nothing found for "${query}".`;
         return `*Search: "${query}"* (${results.length} results)\n\n` +
           results.map((r, i) => `${i + 1}. [${r.type}][${r.context}] ${r.content}`).join('\n');
+      }
+
+      case "search_web": {
+        const query = data?.content;
+        if (!query) return 'What should I search for?';
+        if (!process.env.SERPER_API_KEY) return 'Web search not configured (SERPER_API_KEY missing).';
+        const results = await webSearch(query);
+        if (!results.length) return `No results found for "${query}".`;
+
+        // Feed results back to LLM to synthesize a clean answer
+        const snippets = results.map(r => {
+          if (r.type === 'answer' || r.type === 'knowledge') return `DIRECT ANSWER: ${r.text}`;
+          return `${r.title}: ${r.snippet}`;
+        }).join('\n\n');
+
+        const synthesis = await callGroq([{
+          role: 'user',
+          content: `Query: "${query}"\n\nSearch results:\n${snippets}\n\nAnswer the query in plain text using only these results. Be concise (under 6 lines). No markdown except *bold*. If results are insufficient, say so.`,
+        }]);
+
+        return synthesis.trim();
       }
 
       default:
