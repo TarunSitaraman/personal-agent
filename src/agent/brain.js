@@ -1,6 +1,7 @@
 const axios = require("axios");
 const { getCurrentMode, getModeDescription } = require("./context");
 const memory = require("./memory");
+const { getOpenPRs, getRecentCommits } = require("../integrations/github");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -67,14 +68,22 @@ async function callGroq(messages) {
 async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
-  const history = await memory.getRecentHistory(20);
-  const stats = await memory.getSummaryStats();
+  const [history, stats, openPRs] = await Promise.all([
+    memory.getRecentHistory(20),
+    memory.getSummaryStats(),
+    getOpenPRs(),
+  ]);
+
+  const prBlock = openPRs.length
+    ? `Open PRs (${openPRs.length}):\n${openPRs.join('\n')}`
+    : 'Open PRs: none';
 
   const contextBlock = `Current mode: ${mode}
 ${modeDesc}
 
 Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
-Unreviewed learnings: ${stats.unreviewed.length}`;
+Unreviewed learnings: ${stats.unreviewed.length}
+${prBlock}`;
 
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -128,7 +137,11 @@ async function executeAction(action, data, currentMode) {
 }
 
 async function generateBrief(type) {
-  const stats = await memory.getSummaryStats();
+  const [stats, openPRs, recentCommits] = await Promise.all([
+    memory.getSummaryStats(),
+    getOpenPRs(),
+    getRecentCommits(),
+  ]);
 
   let prompt;
   if (type === "morning") {
@@ -137,13 +150,16 @@ He is starting his Hexaware intern day.
 Pending Hexaware todos: ${stats.hexTodos.map((t) => t.content).join(", ") || "none"}
 Pending SmartResQ todos from last night: ${stats.srqTodos.map((t) => t.content).join(", ") || "none"}
 Unreviewed learnings: ${stats.unreviewed.length}
-Keep it under 5 lines. Be direct and practical.`;
+Open SmartResQ PRs: ${openPRs.join(", ") || "none"}
+Keep it under 6 lines. Be direct and practical.`;
   } else {
     prompt = `Generate a concise evening mode-switch message for Tarun in plain text (no markdown).
 He is switching from Hexaware to SmartResQ work.
 Pending SmartResQ todos: ${stats.srqTodos.map((t) => t.content).join(", ") || "none"}
 Unreviewed learnings captured today: ${stats.unreviewed.length}
-Keep it under 5 lines. Be direct and motivating.`;
+Open PRs needing review: ${openPRs.join(", ") || "none"}
+Recent commits: ${recentCommits.slice(0, 3).join(", ") || "none"}
+Keep it under 6 lines. Be direct and motivating.`;
   }
 
   return await callGroq([{ role: "user", content: prompt }]);
