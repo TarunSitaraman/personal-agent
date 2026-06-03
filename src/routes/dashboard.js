@@ -636,13 +636,6 @@ header {
       ${!allTodos.length ? '<p class="nil">nothing open — all clear</p>' : ''}
     </div>
 
-    <div class="section">
-      <div class="sec-head">
-        <span class="sec-title">What Blu Knows</span>
-        <span class="sec-count">${knowledge.length}</span>
-      </div>
-      ${renderKnowledge()}
-    </div>
 
   </aside>
 
