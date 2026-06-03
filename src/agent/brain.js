@@ -2,6 +2,7 @@ const axios = require("axios");
 const { getCurrentMode, getModeDescription } = require("./context");
 const memory = require("./memory");
 const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
+const { findConnections } = require("../integrations/connections");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -170,14 +171,16 @@ async function executeAction(action, data, currentMode, defaultReply) {
       case "add_note":
         if (data?.content) {
           const noteId = await memory.addNote(data.content, context);
-          // Auto-tag asynchronously — don't block the reply
           autoTagNote(noteId, data.content).catch(() => {});
+          findConnections(callGroq, data.content, 'note').catch(() => {});
         }
         return defaultReply;
 
       case "add_learning":
-        if (data?.topic && data?.content)
+        if (data?.topic && data?.content) {
           await memory.addLearning(data.topic, data.content, data.source);
+          findConnections(callGroq, `${data.topic}: ${data.content}`, 'learning').catch(() => {});
+        }
         return defaultReply;
 
       case "complete_todo":

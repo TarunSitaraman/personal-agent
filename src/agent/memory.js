@@ -106,6 +106,85 @@ async function getRecentHistory(limit = 20) {
   return rows;
 }
 
+// --- Analytics ---
+
+async function getAnalytics() {
+  const [
+    todoStats, contextBreakdown, weeklyTodos,
+    weeklyLearnings, recentActivity, totalNotes, totalLearnings
+  ] = await Promise.all([
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE done = false) AS open,
+        COUNT(*) FILTER (WHERE done = true) AS completed,
+        COUNT(*) FILTER (WHERE done = true AND completed_at >= NOW() - INTERVAL '7 days') AS completed_this_week,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS added_this_week
+      FROM todos
+    `),
+    pool.query(`
+      SELECT context,
+        COUNT(*) FILTER (WHERE done = false) AS open,
+        COUNT(*) FILTER (WHERE done = true) AS done
+      FROM todos GROUP BY context
+    `),
+    pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('week', created_at), 'Mon DD') AS week,
+        COUNT(*) AS added,
+        COUNT(*) FILTER (WHERE done = true) AS completed
+      FROM todos
+      WHERE created_at >= NOW() - INTERVAL '8 weeks'
+      GROUP BY DATE_TRUNC('week', created_at)
+      ORDER BY DATE_TRUNC('week', created_at)
+    `),
+    pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('week', created_at), 'Mon DD') AS week,
+        COUNT(*) AS count
+      FROM learnings
+      WHERE created_at >= NOW() - INTERVAL '8 weeks'
+      GROUP BY DATE_TRUNC('week', created_at)
+      ORDER BY DATE_TRUNC('week', created_at)
+    `),
+    pool.query(`
+      SELECT * FROM (
+        SELECT 'todo' AS type, content, context, created_at FROM todos ORDER BY created_at DESC LIMIT 5
+      ) t
+      UNION ALL
+      SELECT * FROM (
+        SELECT 'note' AS type, content, context, created_at FROM notes ORDER BY created_at DESC LIMIT 5
+      ) n
+      UNION ALL
+      SELECT * FROM (
+        SELECT 'learning' AS type, topic AS content, null AS context, created_at FROM learnings ORDER BY created_at DESC LIMIT 5
+      ) l
+      ORDER BY created_at DESC LIMIT 15
+    `),
+    pool.query('SELECT COUNT(*) AS count FROM notes'),
+    pool.query('SELECT COUNT(*) AS count FROM learnings'),
+  ]);
+
+  return {
+    todoStats: todoStats.rows[0],
+    contextBreakdown: contextBreakdown.rows,
+    weeklyTodos: weeklyTodos.rows,
+    weeklyLearnings: weeklyLearnings.rows,
+    recentActivity: recentActivity.rows,
+    totalNotes: parseInt(totalNotes.rows[0].count),
+    totalLearnings: parseInt(totalLearnings.rows[0].count),
+  };
+}
+
+// --- Knowledge connections ---
+
+async function getRecentContent(limit = 30) {
+  const [notes, learnings] = await Promise.all([
+    pool.query(`SELECT id, 'note' AS type, content, tags FROM notes ORDER BY created_at DESC LIMIT $1`, [limit]),
+    pool.query(`SELECT id, 'learning' AS type, topic AS content, null AS tags FROM learnings ORDER BY created_at DESC LIMIT $1`, [limit]),
+  ]);
+  return [...notes.rows, ...learnings.rows];
+}
+
 // --- Stale todos ---
 
 async function getStaleTodos(days = 5) {
@@ -233,5 +312,6 @@ module.exports = {
   saveInsight, getRecentInsights, getMessageCount,
   searchMemory, getYesterdayActivity,
   getStaleTodos, getWeeklyActivity,
+  getAnalytics, getRecentContent,
   getSummaryStats,
 };
