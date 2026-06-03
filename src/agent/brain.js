@@ -13,7 +13,6 @@ const SYSTEM_PROMPT = `You are Blu, Tarun's personal AI agent on WhatsApp.
 About Tarun:
 - Intern at Hexaware (10am–6pm weekdays)
 - Founder/tech lead of SmartResQ — healthcare emergency response startup (evenings)
-- Learning GenAI and agentic AI actively
 - Wants low-friction capture and proactive intelligence
 
 CRITICAL DATA RULES:
@@ -68,7 +67,7 @@ CRITICAL: Always respond with ONLY a single valid JSON object. No text before or
     "content": "extracted content or search query",
     "topic": "topic if learning",
     "source": "source if mentioned",
-    "context": "hexaware | smartresq | learning | personal | null",
+    "context": "hexaware | smartresq | personal | null",
     "minutes": 0
   }
 }`;
@@ -229,7 +228,7 @@ async function executeAction(action, data, currentMode, defaultReply) {
         if (!filterCtx || filterCtx === 'smartresq') {
           if (srq.length) out += `*SmartResQ* (${srq.length})\n${srq.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
         }
-        if (other.length) out += `*Other* (${other.length})\n${other.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}`;
+        if (other.length) out += `*Personal* (${other.length})\n${other.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}`;
         return out.trim();
       }
 
