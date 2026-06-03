@@ -50,9 +50,10 @@ INTENT DETECTION:
 - "note: X", "save this: X", "jot down X" → ADD_NOTE
 - Tarun describing people, relationships, facts about his world → LEARN_CONTEXT (data.content = the fact)
 - "learned X", "learning: X", "concept: X" → ADD_LEARNING
-- "my todos", "what's pending", "all todos" → LIST_TODOS (data.context = null for all)
-- "hexaware todos" → LIST_TODOS (data.context = "hexaware")
-- "smartresq todos" → LIST_TODOS (data.context = "smartresq")
+- Any request to see todos — "my todos", "what's pending", "all todos", "show me everything", "can I get all of them" (referring to todos), "list tasks" → LIST_TODOS. data.context = null means ALL todos across all contexts. NEVER set data.context to "all" or any string other than "hexaware", "smartresq", "personal", or null.
+- "hexaware todos" or request scoped to hexaware work → LIST_TODOS (data.context = "hexaware")
+- "smartresq todos" or request scoped to smartresq work → LIST_TODOS (data.context = "smartresq")
+- CRITICAL: Never generate a todo list yourself in the reply field. Always use LIST_TODOS action — the system handles formatting.
 - "done: X", "finished X", "mark X done" → COMPLETE_TODO
 - "my notes", "what did I save" → LIST_NOTES
 - "my learnings", "what have I learned" → LIST_LEARNINGS
@@ -289,7 +290,8 @@ async function executeAction(action, data, currentMode, defaultReply) {
       }
 
       case "list_todos": {
-        const filterCtx = data?.context || null;
+        const VALID_CONTEXTS = ['hexaware', 'smartresq', 'personal'];
+        const filterCtx = VALID_CONTEXTS.includes(data?.context) ? data.context : null;
         const todos = await memory.getPendingTodos(filterCtx);
         if (!todos.length) return filterCtx
           ? `No pending todos for ${filterCtx}.`
