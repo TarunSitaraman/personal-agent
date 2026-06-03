@@ -1,8 +1,15 @@
 const express = require('express');
-const { getAnalytics } = require('../agent/memory');
-const { getOpenPRs, getOpenIssues } = require('../integrations/github');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings } = require('../agent/memory');
+const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
+const { getCurrentMode, getModeDescription } = require('../agent/context');
 
 const router = express.Router();
+
+const MODE_CONFIG = {
+  hexaware: { label: 'Hexaware', color: '#3b82f6', bg: '#1e3a5f', emoji: '💼' },
+  smartresq: { label: 'SmartResQ', color: '#10b981', bg: '#064e3b', emoji: '🚑' },
+  personal: { label: 'Personal', color: '#8b5cf6', bg: '#2e1065', emoji: '🌙' },
+};
 
 router.get('/', async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) {
@@ -10,202 +17,265 @@ router.get('/', async (req, res) => {
   }
 
   try {
-    const [analytics, openPRs, openIssues] = await Promise.all([
+    const mode = getCurrentMode();
+    const modeConf = MODE_CONFIG[mode] || MODE_CONFIG.personal;
+
+    const [analytics, openPRs, openIssues, recentCommits, knowledge, allTodos, recentNotes, learnings] = await Promise.all([
       getAnalytics(),
       getOpenPRs(),
       getOpenIssues(),
+      getRecentCommits(),
+      getAllKnowledge(),
+      getPendingTodos(),
+      getRecentNotes(null, 6),
+      getUnreviewedLearnings(5),
     ]);
 
-    const { todoStats, contextBreakdown, weeklyTodos, weeklyLearnings, recentActivity, totalNotes, totalLearnings } = analytics;
+    const hexTodos = allTodos.filter(t => t.context === 'hexaware');
+    const srqTodos = allTodos.filter(t => t.context === 'smartresq');
+    const personalTodos = allTodos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
 
-    const completionRate = todoStats.completed > 0
-      ? Math.round((parseInt(todoStats.completed_this_week) / Math.max(parseInt(todoStats.added_this_week), 1)) * 100)
-      : 0;
+    const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
 
-    const hexCtx = contextBreakdown.find(c => c.context === 'hexaware') || { open: 0, done: 0 };
-    const srqCtx = contextBreakdown.find(c => c.context === 'smartresq') || { open: 0, done: 0 };
+    const renderTodoSection = (todos, label, color) => {
+      if (!todos.length) return `<div class="empty-state">No open todos</div>`;
+      return todos.map((t, i) => `
+        <div class="todo-item">
+          <span class="todo-num" style="color:${color}">${i + 1}</span>
+          <span class="todo-text">${escHtml(t.content)}</span>
+        </div>`).join('');
+    };
 
-    const weekLabels = JSON.stringify(weeklyTodos.map(w => w.week));
-    const weekAdded = JSON.stringify(weeklyTodos.map(w => parseInt(w.added)));
-    const weekCompleted = JSON.stringify(weeklyTodos.map(w => parseInt(w.completed)));
-    const learningWeekLabels = JSON.stringify(weeklyLearnings.map(w => w.week));
-    const learningCounts = JSON.stringify(weeklyLearnings.map(w => parseInt(w.count)));
+    const renderPRs = () => openPRs.length
+      ? openPRs.map(pr => `<div class="list-item"><span class="badge badge-green">PR</span>${escHtml(pr)}</div>`).join('')
+      : `<div class="empty-state">No open PRs</div>`;
 
-    const activityIcons = { todo: '✓', note: '📝', learning: '💡' };
+    const renderIssues = () => openIssues.slice(0, 6).length
+      ? openIssues.slice(0, 6).map(i => `<div class="list-item"><span class="badge badge-blue">#</span>${escHtml(i)}</div>`).join('')
+      : `<div class="empty-state">No open issues</div>`;
+
+    const renderCommits = () => recentCommits.slice(0, 4).length
+      ? recentCommits.slice(0, 4).map(c => `<div class="list-item"><span class="badge badge-purple">↑</span>${escHtml(c)}</div>`).join('')
+      : `<div class="empty-state">No recent commits</div>`;
+
+    const renderNotes = () => recentNotes.length
+      ? recentNotes.map(n => `<div class="list-item"><span class="ctx-tag" style="background:${ctxColor(n.context)}20;color:${ctxColor(n.context)}">${n.context}</span>${escHtml(n.content.slice(0, 80))}${n.content.length > 80 ? '…' : ''}</div>`).join('')
+      : `<div class="empty-state">No notes yet</div>`;
+
+    const renderLearnings = () => learnings.length
+      ? learnings.map(l => `<div class="list-item"><span class="badge badge-purple">💡</span><div><div class="learning-topic">${escHtml(l.topic)}</div><div class="learning-content">${escHtml(l.content.slice(0, 60))}${l.content.length > 60 ? '…' : ''}</div></div></div>`).join('')
+      : `<div class="empty-state">No unreviewed learnings</div>`;
+
+    const renderKnowledge = () => knowledge.length
+      ? knowledge.map(k => `<div class="knowledge-item">${escHtml(k)}</div>`).join('')
+      : `<div class="empty-state">Nothing taught yet — tell Blu about your world</div>`;
 
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blu — Personal Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<meta http-equiv="refresh" content="60">
+<title>Blu — Command Centre</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px; min-height: 100vh; }
-  h1 { font-size: 1.5rem; font-weight: 700; color: #fff; margin-bottom: 4px; }
-  .subtitle { color: #64748b; font-size: 0.875rem; margin-bottom: 32px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
-  .card { background: #1e2130; border-radius: 12px; padding: 20px; border: 1px solid #2d3148; }
-  .card-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-  .card-value { font-size: 2rem; font-weight: 700; color: #fff; }
-  .card-sub { font-size: 0.8rem; color: #64748b; margin-top: 4px; }
-  .accent-green { color: #34d399; }
-  .accent-blue { color: #60a5fa; }
-  .accent-purple { color: #a78bfa; }
-  .accent-orange { color: #fb923c; }
-  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }
-  .chart-card { background: #1e2130; border-radius: 12px; padding: 20px; border: 1px solid #2d3148; }
-  .chart-title { font-size: 0.875rem; font-weight: 600; color: #94a3b8; margin-bottom: 16px; }
-  .section { margin-bottom: 32px; }
-  .section-title { font-size: 1rem; font-weight: 600; color: #94a3b8; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .context-row { display: flex; gap: 16px; margin-bottom: 16px; }
-  .context-card { flex: 1; background: #1e2130; border-radius: 12px; padding: 16px; border: 1px solid #2d3148; }
-  .context-name { font-weight: 600; font-size: 0.875rem; margin-bottom: 8px; }
-  .context-stats { display: flex; gap: 16px; }
-  .context-stat { font-size: 0.8rem; color: #64748b; }
-  .context-stat span { color: #e2e8f0; font-weight: 600; }
-  .activity-list { background: #1e2130; border-radius: 12px; border: 1px solid #2d3148; overflow: hidden; }
-  .activity-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #2d3148; }
-  .activity-item:last-child { border-bottom: none; }
-  .activity-icon { font-size: 1rem; margin-top: 1px; }
-  .activity-content { flex: 1; min-width: 0; }
-  .activity-text { font-size: 0.875rem; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .activity-meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
-  .github-row { display: flex; gap: 16px; }
-  .github-card { flex: 1; background: #1e2130; border-radius: 12px; padding: 16px; border: 1px solid #2d3148; }
-  .github-title { font-size: 0.8rem; color: #64748b; margin-bottom: 8px; }
-  .github-item { font-size: 0.8rem; color: #94a3b8; padding: 4px 0; border-bottom: 1px solid #2d3148; }
-  .github-item:last-child { border-bottom: none; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; margin-right: 6px; }
-  .badge-green { background: #064e3b; color: #34d399; }
-  .badge-blue { background: #1e3a5f; color: #60a5fa; }
-  .updated { color: #475569; font-size: 0.75rem; text-align: right; margin-top: 24px; }
-  @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } .context-row { flex-direction: column; } .github-row { flex-direction: column; } }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #080c14;
+  --surface: #0f1625;
+  --surface2: #141d2e;
+  --border: #1e2a3a;
+  --text: #e2e8f0;
+  --muted: #4a5568;
+  --blue: #3b82f6;
+  --green: #10b981;
+  --purple: #8b5cf6;
+  --orange: #f59e0b;
+  --red: #ef4444;
+}
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+
+/* Header */
+.header { display: flex; align-items: center; justify-content: space-between; padding: 20px 28px 16px; border-bottom: 1px solid var(--border); }
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em; color: #fff; }
+.logo span { color: var(--blue); }
+.mode-pill { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; border: 1px solid; }
+.header-time { font-size: 0.75rem; color: var(--muted); }
+
+/* Layout */
+.main { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100vh - 57px); overflow: hidden; }
+.sidebar { border-right: 1px solid var(--border); overflow-y: auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+.content { overflow-y: auto; padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-content: start; }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.card-header { padding: 12px 16px 8px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.card-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.card-count { font-size: 0.7rem; font-weight: 600; background: var(--surface2); padding: 2px 8px; border-radius: 999px; color: var(--text); }
+.card-body { padding: 10px 16px 12px; }
+
+/* Stats row */
+.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.stat-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; }
+.stat-value { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+.stat-sub { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+
+/* Mode card */
+.mode-card { background: linear-gradient(135deg, ${modeConf.bg}, var(--surface)); border: 1px solid ${modeConf.color}40; border-radius: 12px; padding: 16px; }
+.mode-emoji { font-size: 2rem; margin-bottom: 8px; }
+.mode-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: ${modeConf.color}; font-weight: 700; margin-bottom: 4px; }
+.mode-name { font-size: 1.2rem; font-weight: 800; color: #fff; margin-bottom: 6px; }
+.mode-desc { font-size: 0.75rem; color: var(--muted); line-height: 1.5; }
+
+/* Todo items */
+.todo-item { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.todo-item:last-child { border-bottom: none; }
+.todo-num { font-size: 0.7rem; font-weight: 700; min-width: 16px; margin-top: 1px; }
+.todo-text { font-size: 0.82rem; color: var(--text); line-height: 1.4; }
+.context-section { margin-bottom: 4px; }
+.context-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 10px 0 4px; color: var(--muted); }
+
+/* List items */
+.list-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 0.8rem; line-height: 1.4; color: var(--text); }
+.list-item:last-child { border-bottom: none; }
+.badge { display: inline-flex; align-items: center; justify-content: center; padding: 1px 7px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
+.badge-green { background: #064e3b; color: #10b981; }
+.badge-blue { background: #1e3a5f; color: #3b82f6; }
+.badge-purple { background: #2e1065; color: #8b5cf6; }
+.ctx-tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
+.learning-topic { font-weight: 600; font-size: 0.8rem; }
+.learning-content { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+.knowledge-item { font-size: 0.8rem; color: var(--text); padding: 6px 0; border-bottom: 1px solid var(--border); line-height: 1.4; }
+.knowledge-item:last-child { border-bottom: none; }
+.knowledge-item::before { content: '◆ '; color: var(--purple); font-size: 0.5rem; vertical-align: middle; }
+.empty-state { font-size: 0.78rem; color: var(--muted); padding: 8px 0; font-style: italic; }
+
+/* Full width card in grid */
+.full-width { grid-column: 1 / -1; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; height: auto; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  .content { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
-<h1>Blu Dashboard</h1>
-<p class="subtitle">Personal productivity overview — Tarun Sitaraman</p>
 
-<div class="grid">
-  <div class="card">
-    <div class="card-label">Open Todos</div>
-    <div class="card-value accent-orange">${todoStats.open}</div>
-    <div class="card-sub">${todoStats.added_this_week} added this week</div>
+<div class="header">
+  <div class="header-left">
+    <div class="logo">blu<span>.</span></div>
+    <div class="mode-pill" style="color:${modeConf.color};border-color:${modeConf.color}40;background:${modeConf.bg}">
+      ${modeConf.emoji} ${modeConf.label} mode
+    </div>
   </div>
-  <div class="card">
-    <div class="card-label">Completion Rate</div>
-    <div class="card-value accent-green">${completionRate}%</div>
-    <div class="card-sub">${todoStats.completed_this_week} done this week</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Learnings</div>
-    <div class="card-value accent-purple">${totalLearnings}</div>
-    <div class="card-sub">${analytics.todoStats ? '' : ''}total captured</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Notes Saved</div>
-    <div class="card-value accent-blue">${totalNotes}</div>
-    <div class="card-sub">across all contexts</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Open PRs</div>
-    <div class="card-value">${openPRs.length}</div>
-    <div class="card-sub">SmartResQ</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Open Issues</div>
-    <div class="card-value">${openIssues.length}</div>
-    <div class="card-sub">SmartResQ</div>
-  </div>
+  <div class="header-time">↻ auto-refresh · ${now} IST</div>
 </div>
 
-<div class="section">
-  <div class="section-title">Context Breakdown</div>
-  <div class="context-row">
-    <div class="context-card">
-      <div class="context-name accent-blue">Hexaware</div>
-      <div class="context-stats">
-        <div class="context-stat">Open <span>${hexCtx.open}</span></div>
-        <div class="context-stat">Done <span>${hexCtx.done}</span></div>
+<div class="main">
+
+  <!-- SIDEBAR: Todos -->
+  <div class="sidebar">
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Open</div>
+        <div class="stat-value" style="color:var(--orange)">${analytics.todoStats.open}</div>
+        <div class="stat-sub">todos</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Done</div>
+        <div class="stat-value" style="color:var(--green)">${analytics.todoStats.completed_this_week}</div>
+        <div class="stat-sub">this week</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">PRs</div>
+        <div class="stat-value" style="color:var(--blue)">${openPRs.length}</div>
+        <div class="stat-sub">open</div>
       </div>
     </div>
-    <div class="context-card">
-      <div class="context-name accent-green">SmartResQ</div>
-      <div class="context-stats">
-        <div class="context-stat">Open <span>${srqCtx.open}</span></div>
-        <div class="context-stat">Done <span>${srqCtx.done}</span></div>
+
+    <div class="mode-card">
+      <div class="mode-emoji">${modeConf.emoji}</div>
+      <div class="mode-label">Current mode</div>
+      <div class="mode-name">${modeConf.label}</div>
+      <div class="mode-desc">${getModeDescription(mode)}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Open Todos</div>
+        <div class="card-count">${allTodos.length}</div>
+      </div>
+      <div class="card-body">
+        ${hexTodos.length ? `<div class="context-label" style="color:var(--blue)">Hexaware</div>${renderTodoSection(hexTodos, 'Hexaware', '#3b82f6')}` : ''}
+        ${srqTodos.length ? `<div class="context-label" style="color:var(--green)">SmartResQ</div>${renderTodoSection(srqTodos, 'SmartResQ', '#10b981')}` : ''}
+        ${personalTodos.length ? `<div class="context-label" style="color:var(--purple)">Personal</div>${renderTodoSection(personalTodos, 'Personal', '#8b5cf6')}` : ''}
+        ${!allTodos.length ? `<div class="empty-state">All clear — no open todos</div>` : ''}
       </div>
     </div>
-  </div>
-</div>
 
-<div class="charts">
-  <div class="chart-card">
-    <div class="chart-title">Todo Activity (8 weeks)</div>
-    <canvas id="todoChart" height="200"></canvas>
-  </div>
-  <div class="chart-card">
-    <div class="chart-title">Learning Velocity (8 weeks)</div>
-    <canvas id="learningChart" height="200"></canvas>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">GitHub — SmartResQ</div>
-  <div class="github-row">
-    <div class="github-card">
-      <div class="github-title">Open PRs (${openPRs.length})</div>
-      ${openPRs.length ? openPRs.map(pr => `<div class="github-item"><span class="badge badge-green">PR</span>${pr}</div>`).join('') : '<div class="github-item">No open PRs</div>'}
-    </div>
-    <div class="github-card">
-      <div class="github-title">Open Issues (${openIssues.length})</div>
-      ${openIssues.slice(0, 8).length ? openIssues.slice(0, 8).map(i => `<div class="github-item"><span class="badge badge-blue">#</span>${i}</div>`).join('') : '<div class="github-item">No open issues</div>'}
-    </div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Recent Activity</div>
-  <div class="activity-list">
-    ${recentActivity.map(a => `
-    <div class="activity-item">
-      <div class="activity-icon">${activityIcons[a.type] || '·'}</div>
-      <div class="activity-content">
-        <div class="activity-text">${a.content}</div>
-        <div class="activity-meta">${a.type}${a.context ? ` · ${a.context}` : ''} · ${new Date(a.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' })}</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">What Blu Knows</div>
+        <div class="card-count">${knowledge.length}</div>
       </div>
-    </div>`).join('')}
+      <div class="card-body">${renderKnowledge()}</div>
+    </div>
+
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="content">
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Open PRs</div>
+        <div class="card-count">${openPRs.length}</div>
+      </div>
+      <div class="card-body">${renderPRs()}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Open Issues</div>
+        <div class="card-count">${openIssues.length}</div>
+      </div>
+      <div class="card-body">${renderIssues()}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Recent Commits</div>
+      </div>
+      <div class="card-body">${renderCommits()}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Unreviewed Learnings</div>
+        <div class="card-count">${learnings.length}</div>
+      </div>
+      <div class="card-body">${renderLearnings()}</div>
+    </div>
+
+    <div class="card full-width">
+      <div class="card-header">
+        <div class="card-title">Recent Notes</div>
+        <div class="card-count">${analytics.totalNotes}</div>
+      </div>
+      <div class="card-body">${renderNotes()}</div>
+    </div>
+
   </div>
 </div>
 
-<div class="updated">Refreshed at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</div>
-
-<script>
-const chartDefaults = { responsive: true, plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#2d3148' } }, y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#2d3148' }, beginAtZero: true } } };
-
-new Chart(document.getElementById('todoChart'), {
-  type: 'bar',
-  data: {
-    labels: ${weekLabels},
-    datasets: [
-      { label: 'Added', data: ${weekAdded}, backgroundColor: '#3b82f620', borderColor: '#3b82f6', borderWidth: 2, borderRadius: 4 },
-      { label: 'Completed', data: ${weekCompleted}, backgroundColor: '#34d39920', borderColor: '#34d399', borderWidth: 2, borderRadius: 4 }
-    ]
-  },
-  options: chartDefaults
-});
-
-new Chart(document.getElementById('learningChart'), {
-  type: 'line',
-  data: {
-    labels: ${learningWeekLabels},
-    datasets: [{ label: 'Learnings', data: ${learningCounts}, borderColor: '#a78bfa', backgroundColor: '#a78bfa20', borderWidth: 2, fill: true, tension: 0.4, pointBackgroundColor: '#a78bfa' }]
-  },
-  options: chartDefaults
-});
-</script>
 </body>
 </html>`);
   } catch (err) {
@@ -213,5 +283,19 @@ new Chart(document.getElementById('learningChart'), {
     res.status(500).send('Error loading dashboard');
   }
 });
+
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function ctxColor(ctx) {
+  if (ctx === 'hexaware') return '#3b82f6';
+  if (ctx === 'smartresq') return '#10b981';
+  return '#8b5cf6';
+}
 
 module.exports = router;
