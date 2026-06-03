@@ -60,7 +60,7 @@ Unreviewed learnings: ${stats.unreviewed.length}
   }));
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-1.5-flash-latest',
     systemInstruction: SYSTEM_PROMPT,
   });
 
@@ -119,7 +119,7 @@ async function executeAction(action, data, currentMode) {
 // Used by scheduler for proactive briefs (no history context, just stats)
 async function generateBrief(type) {
   const stats = await memory.getSummaryStats();
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
   let prompt;
   if (type === 'morning') {
