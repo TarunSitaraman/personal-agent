@@ -6,9 +6,9 @@ const { getCurrentMode, getModeDescription } = require('../agent/context');
 const router = express.Router();
 
 const MODE_CONFIG = {
-  hexaware: { label: 'Hexaware', color: '#3b82f6', bg: '#1e3a5f', emoji: '💼' },
-  smartresq: { label: 'SmartResQ', color: '#10b981', bg: '#064e3b', emoji: '🚑' },
-  personal: { label: 'Personal', color: '#8b5cf6', bg: '#2e1065', emoji: '🌙' },
+  hexaware: { label: 'Hexaware', color: '#4f8ef7', emoji: '💼' },
+  smartresq: { label: 'SmartResQ', color: '#34d399', emoji: '🚑' },
+  personal: { label: 'Personal', color: '#a78bfa', emoji: '🌙' },
 };
 
 router.get('/', async (req, res) => {
@@ -38,242 +38,330 @@ router.get('/', async (req, res) => {
     const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
 
     const renderTodoSection = (todos, label, color) => {
-      if (!todos.length) return `<div class="empty-state">No open todos</div>`;
-      return todos.map((t) => `
-        <div class="todo-item">
-          <span class="todo-ctx">${escHtml(label)}</span>
-          <span class="todo-sep">·</span>
-          <span class="todo-text">${escHtml(t.content)}</span>
+      if (!todos.length) return `<p class="nil">nothing here</p>`;
+      return todos.map((t, i) => `
+        <div class="row">
+          <span class="row-num">${i + 1}</span>
+          <span class="row-tag" style="color:${color}">${label.toLowerCase()}</span>
+          <span class="row-body">${escHtml(t.content)}</span>
         </div>`).join('');
     };
 
     const renderPRs = () => openPRs.length
-      ? openPRs.map(pr => `<div class="list-item"><span class="tag">PR</span><span class="list-text">${escHtml(pr)}</span></div>`).join('')
-      : `<div class="empty-state">No open PRs</div>`;
+      ? openPRs.map(pr => `<div class="row"><span class="pill">PR</span><span class="row-body">${escHtml(pr)}</span></div>`).join('')
+      : `<p class="nil">no open PRs</p>`;
 
     const renderIssues = () => openIssues.slice(0, 6).length
-      ? openIssues.slice(0, 6).map(i => `<div class="list-item"><span class="tag">#</span><span class="list-text">${escHtml(i)}</span></div>`).join('')
-      : `<div class="empty-state">No open issues</div>`;
+      ? openIssues.slice(0, 6).map(i => `<div class="row"><span class="pill">#</span><span class="row-body">${escHtml(i)}</span></div>`).join('')
+      : `<p class="nil">no open issues</p>`;
 
     const renderCommits = () => recentCommits.slice(0, 4).length
-      ? recentCommits.slice(0, 4).map(c => `<div class="list-item"><span class="tag">commit</span><span class="list-text">${escHtml(c)}</span></div>`).join('')
-      : `<div class="empty-state">No recent commits</div>`;
+      ? recentCommits.slice(0, 4).map(c => `<div class="row"><span class="pill">↑</span><span class="row-body">${escHtml(c)}</span></div>`).join('')
+      : `<p class="nil">no recent commits</p>`;
 
     const renderNotes = () => recentNotes.length
-      ? recentNotes.map(n => `<div class="list-item"><span class="tag">${escHtml(n.context)}</span><span class="list-text">${escHtml(n.content.slice(0, 80))}${n.content.length > 80 ? '…' : ''}</span></div>`).join('')
-      : `<div class="empty-state">No notes yet</div>`;
+      ? recentNotes.map(n => `<div class="row"><span class="row-tag">${escHtml(n.context)}</span><span class="row-body">${escHtml(n.content.slice(0, 90))}${n.content.length > 90 ? '…' : ''}</span></div>`).join('')
+      : `<p class="nil">no notes yet</p>`;
 
     const renderLearnings = () => learnings.length
-      ? learnings.map(l => `<div class="learning-item"><div class="learning-topic">${escHtml(l.topic)}</div><div class="learning-content">${escHtml(l.content.slice(0, 60))}${l.content.length > 60 ? '…' : ''}</div></div>`).join('')
-      : `<div class="empty-state">No unreviewed learnings</div>`;
+      ? learnings.map(l => `<div class="learn-row"><div class="learn-topic">${escHtml(l.topic)}</div><div class="learn-body">${escHtml(l.content.slice(0, 70))}${l.content.length > 70 ? '…' : ''}</div></div>`).join('')
+      : `<p class="nil">all caught up</p>`;
 
     const renderKnowledge = () => knowledge.length
-      ? knowledge.map(k => `<div class="knowledge-item">${escHtml(k)}</div>`).join('')
-      : `<div class="empty-state">Nothing taught yet — tell Blu about your world</div>`;
+      ? knowledge.map(k => `<div class="know-row">${escHtml(k)}</div>`).join('')
+      : `<p class="nil">tell Blu about your world</p>`;
 
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="60">
-<title>Blu — Command Centre</title>
+<title>blu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 :root {
-  --bg: #0a0b0e;
-  --surface: #111318;
-  --border: #1f2230;
-  --text: #f8fafc;
-  --secondary: #94a3b8;
-  --muted: #3d4663;
-  --accent: #6366f1;
+  --bg:      #09090b;
+  --s1:      #111115;
+  --s2:      #18181d;
+  --line:    #27272f;
+  --t1:      #fafafa;
+  --t2:      #71717a;
+  --t3:      #3f3f46;
+  --acc:     ${modeConf.color};
 }
-html, body { background: var(--bg); }
+
 body {
-  color: var(--text);
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--t1);
+  font-family: 'Inter', sans-serif;
   font-size: 13px;
-  font-weight: 400;
-  line-height: 1.5;
-  min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Header */
-.header { display: flex; align-items: center; justify-content: space-between; height: 48px; padding: 0 28px; border-bottom: 1px solid var(--border); }
-.logo { font-size: 16px; font-weight: 300; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text); }
-.header-time { font-size: 11px; letter-spacing: 0.04em; color: var(--secondary); display: flex; align-items: center; gap: 8px; }
-.refresh-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 rgba(99,102,241,0.6); animation: pulse 2.4s ease-out infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(99,102,241,0.5); } 70% { box-shadow: 0 0 0 6px rgba(99,102,241,0); } 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); } }
+/* ── HEADER ───────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  height: 52px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+}
+.logo {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  color: var(--t1);
+}
+.logo em { color: var(--acc); font-style: normal; }
+.hdr-right { display: flex; align-items: center; gap: 16px; }
+.mode-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--acc);
+  background: color-mix(in srgb, var(--acc) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 25%, transparent);
+  padding: 3px 10px;
+  border-radius: 4px;
+}
+.hdr-time { font-size: 11px; color: var(--t2); }
 
-/* Layout */
-.main { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; padding: 24px 28px 40px; max-width: 1500px; margin: 0 auto; }
-.sidebar { display: flex; flex-direction: column; gap: 20px; }
-.content { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-content: start; }
+/* ── LAYOUT ───────────────────────────────── */
+.page { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 52px); }
+.sidebar { border-right: 1px solid var(--line); padding: 28px 24px; display: flex; flex-direction: column; gap: 32px; }
+.main { padding: 28px 32px; display: flex; flex-direction: column; gap: 28px; }
 
-/* Cards */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
-.card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
-.card-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
-.card-count { font-size: 11px; font-weight: 400; color: var(--secondary); }
+/* ── STATS ────────────────────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.stat {
+  padding: 20px 18px;
+  border-right: 1px solid var(--line);
+}
+.stat:last-child { border-right: none; }
+.stat-n {
+  font-size: 48px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--t1);
+}
+.stat-l { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t2); margin-top: 6px; }
 
-/* Stats row */
-.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px 18px; }
-.stat-value { font-size: 28px; font-weight: 700; line-height: 1; color: var(--text); }
-.stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--secondary); margin-top: 8px; }
+/* ── MODE ─────────────────────────────────── */
+.mode-block { }
+.mode-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--t3); margin-bottom: 10px; }
+.mode-name {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--acc);
+  line-height: 1;
+  margin-bottom: 10px;
+}
+.mode-desc { font-size: 12px; color: var(--t2); line-height: 1.6; }
 
-/* Mode card */
-.mode-card { background: var(--surface); border: 1px solid var(--border); border-left: 2px solid ${modeConf.color}; border-radius: 8px; padding: 24px; }
-.mode-eyebrow { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 12px; }
-.mode-name { font-size: 18px; font-weight: 400; color: var(--text); margin-bottom: 8px; letter-spacing: 0.01em; }
-.mode-desc { font-size: 13px; color: var(--secondary); line-height: 1.55; }
+/* ── SECTION ──────────────────────────────── */
+.section { }
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.sec-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--t3); }
+.sec-count { font-size: 12px; font-weight: 700; color: var(--t2); }
 
-/* Todo items */
-.todo-group + .todo-group { margin-top: 16px; }
-.todo-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; padding: 9px 0; border-bottom: 1px solid var(--border); }
-.todo-item:last-child { border-bottom: none; }
-.todo-ctx { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
-.todo-sep { color: var(--muted); }
-.todo-text { font-size: 13px; color: var(--text); flex: 1; }
+/* ── GRID ─────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
 
-/* List items */
-.list-item { display: flex; align-items: baseline; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
-.list-item:last-child { border-bottom: none; }
-.list-text { font-size: 13px; color: var(--text); line-height: 1.45; }
-.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; letter-spacing: 0.06em; text-transform: lowercase; background: #1f2230; color: var(--secondary); white-space: nowrap; flex-shrink: 0; }
+/* ── PANEL ────────────────────────────────── */
+.panel { background: var(--s1); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.panel .sec-head { border-color: var(--s2); }
 
-/* Learnings */
-.learning-item { padding: 11px 0; border-bottom: 1px solid var(--border); }
-.learning-item:last-child { border-bottom: none; }
-.learning-topic { font-size: 13px; color: var(--text); margin-bottom: 3px; }
-.learning-content { font-size: 12px; color: var(--secondary); line-height: 1.45; }
+/* ── ROWS ─────────────────────────────────── */
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.panel .row { border-color: var(--s2); }
+.row:last-child { border-bottom: none; }
+.row-num { font-size: 10px; font-weight: 700; color: var(--t3); min-width: 14px; flex-shrink: 0; }
+.row-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t2); flex-shrink: 0; }
+.row-body { color: var(--t1); flex: 1; line-height: 1.5; }
+.pill {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--t2);
+  background: var(--s2);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.panel .pill { background: var(--bg); }
 
-/* Knowledge */
-.knowledge-item { font-size: 13px; color: var(--secondary); padding: 9px 0 9px 16px; position: relative; border-bottom: 1px solid var(--border); line-height: 1.45; }
-.knowledge-item:last-child { border-bottom: none; }
-.knowledge-item::before { content: ''; position: absolute; left: 0; top: 15px; width: 5px; height: 1px; background: var(--accent); }
+/* ── LEARNINGS ────────────────────────────── */
+.learn-row { padding: 8px 0; border-bottom: 1px solid var(--s2); }
+.learn-row:last-child { border-bottom: none; }
+.learn-topic { font-size: 12px; font-weight: 700; color: var(--t1); margin-bottom: 2px; }
+.learn-body { font-size: 11px; color: var(--t2); line-height: 1.5; }
 
-.empty-state { font-size: 13px; color: var(--muted); padding: 4px 0; }
+/* ── KNOWLEDGE ────────────────────────────── */
+.know-row {
+  font-size: 12px;
+  color: var(--t1);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--s2);
+  line-height: 1.5;
+}
+.know-row:last-child { border-bottom: none; }
+.know-row::before { content: '— '; color: var(--acc); font-weight: 700; }
 
-/* Full width card in grid */
-.full-width { grid-column: 1 / -1; }
+/* ── MISC ─────────────────────────────────── */
+.nil { font-size: 12px; color: var(--t3); padding: 6px 0; font-style: italic; }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
 
-@media (max-width: 960px) {
-  .main { grid-template-columns: 1fr; }
-  .content { grid-template-columns: 1fr; }
+@media (max-width: 900px) {
+  .page { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--line); }
+  .two-col, .three-col { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(3, 1fr); }
 }
 </style>
 </head>
 <body>
 
-<header class="header">
-  <div class="logo">blu</div>
-  <div class="header-time"><span class="refresh-dot"></span>${now} IST</div>
+<header>
+  <div class="logo">blu<em>.</em></div>
+  <div class="hdr-right">
+    <span class="mode-badge">${modeConf.label}</span>
+    <span class="hdr-time">${now} IST</span>
+  </div>
 </header>
 
-<div class="main">
+<div class="page">
 
   <!-- SIDEBAR -->
   <aside class="sidebar">
 
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-value">${analytics.todoStats.open}</div>
-        <div class="stat-label">Open todos</div>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-n">${analytics.todoStats.open}</div>
+        <div class="stat-l">Open</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value">${analytics.todoStats.completed_this_week}</div>
-        <div class="stat-label">Done / week</div>
+      <div class="stat">
+        <div class="stat-n">${openPRs.length}</div>
+        <div class="stat-l">PRs</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value">${openPRs.length}</div>
-        <div class="stat-label">Open PRs</div>
+      <div class="stat">
+        <div class="stat-n">${openIssues.length}</div>
+        <div class="stat-l">Issues</div>
       </div>
     </div>
 
-    <div class="mode-card">
-      <div class="mode-eyebrow">Current mode</div>
+    <div class="mode-block">
+      <div class="mode-label">Current mode</div>
       <div class="mode-name">${modeConf.label}</div>
       <div class="mode-desc">${getModeDescription(mode)}</div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">Open Todos</div>
-        <div class="card-count">${allTodos.length}</div>
+    <div class="section">
+      <div class="sec-head">
+        <span class="sec-title">Open Todos</span>
+        <span class="sec-count">${allTodos.length}</span>
       </div>
-      <div>
-        ${hexTodos.length ? `<div class="todo-group">${renderTodoSection(hexTodos, 'Hexaware', '#3b82f6')}</div>` : ''}
-        ${srqTodos.length ? `<div class="todo-group">${renderTodoSection(srqTodos, 'SmartResQ', '#10b981')}</div>` : ''}
-        ${personalTodos.length ? `<div class="todo-group">${renderTodoSection(personalTodos, 'Personal', '#8b5cf6')}</div>` : ''}
-        ${!allTodos.length ? `<div class="empty-state">All clear — no open todos</div>` : ''}
-      </div>
+      ${hexTodos.length ? renderTodoSection(hexTodos, 'Hexaware', '#4f8ef7') : ''}
+      ${srqTodos.length ? renderTodoSection(srqTodos, 'SmartResQ', '#34d399') : ''}
+      ${personalTodos.length ? renderTodoSection(personalTodos, 'Personal', '#a78bfa') : ''}
+      ${!allTodos.length ? '<p class="nil">nothing open — all clear</p>' : ''}
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">What Blu Knows</div>
-        <div class="card-count">${knowledge.length}</div>
+    <div class="section">
+      <div class="sec-head">
+        <span class="sec-title">What Blu Knows</span>
+        <span class="sec-count">${knowledge.length}</span>
       </div>
-      <div>${renderKnowledge()}</div>
+      ${renderKnowledge()}
     </div>
 
   </aside>
 
-  <!-- MAIN CONTENT -->
-  <main class="content">
+  <!-- MAIN -->
+  <main class="main">
 
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">Open PRs</div>
-        <div class="card-count">${openPRs.length}</div>
+    <div class="two-col">
+      <div class="panel">
+        <div class="sec-head">
+          <span class="sec-title">Open PRs</span>
+          <span class="sec-count">${openPRs.length}</span>
+        </div>
+        ${renderPRs()}
       </div>
-      <div>${renderPRs()}</div>
+      <div class="panel">
+        <div class="sec-head">
+          <span class="sec-title">Open Issues</span>
+          <span class="sec-count">${openIssues.length}</span>
+        </div>
+        ${renderIssues()}
+      </div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">Open Issues</div>
-        <div class="card-count">${openIssues.length}</div>
+    <div class="two-col">
+      <div class="panel">
+        <div class="sec-head">
+          <span class="sec-title">Recent Commits</span>
+        </div>
+        ${renderCommits()}
       </div>
-      <div>${renderIssues()}</div>
+      <div class="panel">
+        <div class="sec-head">
+          <span class="sec-title">Unreviewed Learnings</span>
+          <span class="sec-count">${learnings.length}</span>
+        </div>
+        ${renderLearnings()}
+      </div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">Recent Commits</div>
+    <div class="panel">
+      <div class="sec-head">
+        <span class="sec-title">Recent Notes</span>
+        <span class="sec-count">${analytics.totalNotes} total</span>
       </div>
-      <div>${renderCommits()}</div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">Unreviewed Learnings</div>
-        <div class="card-count">${learnings.length}</div>
-      </div>
-      <div>${renderLearnings()}</div>
-    </div>
-
-    <div class="card full-width">
-      <div class="card-head">
-        <div class="card-title">Recent Notes</div>
-        <div class="card-count">${analytics.totalNotes}</div>
-      </div>
-      <div>${renderNotes()}</div>
+      ${renderNotes()}
     </div>
 
   </main>
-</div>
 
+</div>
 </body>
 </html>`);
+
   } catch (err) {
     console.error('Dashboard error:', err.message);
     res.status(500).send('Error loading dashboard');
@@ -289,9 +377,9 @@ function escHtml(str) {
 }
 
 function ctxColor(ctx) {
-  if (ctx === 'hexaware') return '#3b82f6';
-  if (ctx === 'smartresq') return '#10b981';
-  return '#8b5cf6';
+  if (ctx === 'hexaware') return '#4f8ef7';
+  if (ctx === 'smartresq') return '#34d399';
+  return '#a78bfa';
 }
 
 module.exports = router;
