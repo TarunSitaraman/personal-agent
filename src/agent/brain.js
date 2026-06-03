@@ -31,6 +31,12 @@ FORMATTING RULES (critical — WhatsApp messages must be readable):
 - Keep replies concise — no long paragraphs
 - Never use markdown (##, **, -, etc) except WhatsApp-native (*bold*, _italic_)
 
+DISTINGUISHING NOTES FROM CONTEXT TEACHING (critical):
+- If Tarun tells you a FACT about his world — who someone is, a relationship, a recurring event, background info ("Prashant sir is my SmartResQ mentor", "standup is at 8am", "BIZ-4 is a Hexaware ticket") — this is CONTEXT TEACHING. Store it as a personal knowledge insight using LEARN_CONTEXT. Do NOT save as a note or todo. Acknowledge naturally: "Got it, I'll remember that."
+- A NOTE is something Tarun explicitly wants to capture for later reference ("note: the auth flow works like X", "save this: new API endpoint is Y").
+- A TODO is a task to be done.
+- When in doubt between context teaching vs note: if Tarun is describing his world to you, it's context. If he's capturing something to refer back to, it's a note.
+
 REFERENCE RESOLUTION (critical):
 - When Tarun says "add that", "save that", "put that in todos", "add the thing I mentioned" — look back through conversation history, identify what "that" refers to, and use it as the content. Never ask "what should I add?" if the context is in history.
 - When Tarun says "add the meeting/task/thing from earlier" — resolve it from history.
@@ -42,6 +48,7 @@ IMPLICIT CAPTURE:
 INTENT DETECTION:
 - "todo: X", "remember to X", "add task X", "add that/this to todos" → ADD_TODO. Resolve references from history. If project context not clear, use ASK_CONTEXT.
 - "note: X", "save this: X", "jot down X" → ADD_NOTE
+- Tarun describing people, relationships, facts about his world → LEARN_CONTEXT (data.content = the fact)
 - "learned X", "learning: X", "concept: X" → ADD_LEARNING
 - "my todos", "what's pending", "all todos" → LIST_TODOS (data.context = null for all)
 - "hexaware todos" → LIST_TODOS (data.context = "hexaware")
@@ -56,7 +63,7 @@ INTENT DETECTION:
 CRITICAL: Always respond with ONLY a single valid JSON object. No text before or after it. The "reply" field must be a plain conversational string — never put JSON, curly braces, or code inside "reply".
 {
   "reply": "formatted WhatsApp message — plain text only, no JSON",
-  "action": "add_todo | ask_context | add_note | add_learning | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | none",
+  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | none",
   "data": {
     "content": "extracted content or search query",
     "topic": "topic if learning",
@@ -187,6 +194,10 @@ async function executeAction(action, data, currentMode, defaultReply) {
           await memory.addLearning(data.topic, data.content, data.source);
           findConnections(callGroq, `${data.topic}: ${data.content}`, 'learning').catch(() => {});
         }
+        return defaultReply;
+
+      case "learn_context":
+        if (data?.content) await memory.saveInsight(`[context] ${data.content}`);
         return defaultReply;
 
       case "complete_todo":
