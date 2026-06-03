@@ -1,10 +1,8 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 const { getCurrentMode, getModeDescription } = require('./context');
 const memory = require('./memory');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, {
-  apiVersion: 'v1',
-});
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent';
 
 const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
 
@@ -42,6 +40,20 @@ CRITICAL: Always respond with valid JSON in this exact format:
 
 Keep replies short. Use line breaks. No markdown formatting (WhatsApp doesn't render it well). Use plain text only.`;
 
+async function callGemini(contents) {
+  const response = await axios.post(
+    GEMINI_URL,
+    {
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents,
+    },
+    {
+      headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY },
+    }
+  );
+  return response.data.candidates[0].content.parts[0].text;
+}
+
 async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
@@ -54,20 +66,18 @@ ${modeDesc}
 Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
 Unreviewed learnings: ${stats.unreviewed.length}`;
 
-  const historyParts = history.map(h => ({
-    role: h.role === 'user' ? 'user' : 'model',
-    parts: [{ text: h.content }],
-  }));
+  const contents = [
+    ...history.map(h => ({
+      role: h.role === 'user' ? 'user' : 'model',
+      parts: [{ text: h.content }],
+    })),
+    {
+      role: 'user',
+      parts: [{ text: `${contextBlock}\n\nUser message: ${userMessage}` }],
+    },
+  ];
 
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    systemInstruction: SYSTEM_PROMPT,
-  });
-
-  const chat = model.startChat({ history: historyParts });
-  const fullMessage = `${contextBlock}\n\nUser message: ${userMessage}`;
-  const result = await chat.sendMessage(fullMessage);
-  const raw = result.response.text();
+  const raw = await callGemini(contents);
 
   let parsed;
   try {
@@ -108,7 +118,6 @@ async function executeAction(action, data, currentMode) {
 
 async function generateBrief(type) {
   const stats = await memory.getSummaryStats();
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   let prompt;
   if (type === 'morning') {
@@ -126,8 +135,8 @@ Unreviewed learnings captured today: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and motivating.`;
   }
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const raw = await callGemini([{ role: 'user', parts: [{ text: prompt }] }]);
+  return raw;
 }
 
 module.exports = { handleIncoming, generateBrief };
