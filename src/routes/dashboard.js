@@ -15,7 +15,6 @@ router.post('/chat', express.json(), async (req, res) => {
   if (!message?.trim()) return res.status(400).json({ error: 'No message' });
   try {
     const reply = await handleIncoming(message.trim());
-    hub.notify();
     res.json({ reply });
   } catch (err) {
     console.error('Dashboard chat error:', err.message);
@@ -791,6 +790,7 @@ header {
   document.addEventListener('click', closePopup);
 
   // ── CHAT ───────────────────────────────────────────────────────
+  var chatPending = false;
   (function() {
     var token = new URLSearchParams(window.location.search).get('token');
     var msgsEl   = document.getElementById('chat-msgs');
@@ -835,6 +835,7 @@ header {
       addMsg('user', text);
       inputEl.value = ''; inputEl.style.height = ''; sendBtn.disabled = true;
       showTyping();
+      chatPending = true;
       try {
         var res = await fetch('/dashboard/chat?token=' + token, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -843,6 +844,7 @@ header {
         var data = await res.json();
         addMsg('blu', data.reply || data.error || 'No response');
       } catch(e) { addMsg('blu', 'Connection error. Try again.'); }
+      chatPending = false;
     }
 
     sendBtn.addEventListener('click', send);
@@ -869,7 +871,8 @@ header {
           });
           var data = await res.json();
           addMsg('blu', data.reply || data.error || 'No response');
-        } catch(e) { addMsg('blu', 'Image upload failed.'); }
+          chatPending = false;
+        } catch(e) { addMsg('blu', 'Image upload failed.'); chatPending = false; }
       };
       reader.readAsDataURL(file);
       imgInput.value = '';
@@ -904,7 +907,7 @@ header {
   (function() {
     var token = new URLSearchParams(window.location.search).get('token');
     var es = new EventSource('/dashboard/stream?token=' + token);
-    es.addEventListener('refresh', function() { window.location.reload(); });
+    es.addEventListener('refresh', function() { if (!chatPending) window.location.reload(); });
     es.onerror = function() {
       es.close();
       // SSE dropped (deploy/restart) — fall back to polling every 30s
