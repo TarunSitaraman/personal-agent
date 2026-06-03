@@ -41,6 +41,10 @@ router.post('/', async (req, res) => {
         return;
       }
       text = transcription;
+    } else if (message.type === 'interactive') {
+      const buttonReply = message.interactive?.button_reply;
+      if (!buttonReply) return;
+      text = buttonReply.title;
     } else if (message.type === 'image') {
       const caption = message.image?.caption || '';
       const description = await analyzeImage(message.image.id, caption);
@@ -54,7 +58,7 @@ router.post('/', async (req, res) => {
     }
 
     const reply = await handleIncoming(text);
-    await sendMessage(from, reply);
+    if (reply) await sendMessage(from, reply);
   } catch (err) {
     console.error('Webhook error:', err.message);
   }

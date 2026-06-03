@@ -3,6 +3,7 @@ const { getCurrentMode, getModeDescription } = require("./context");
 const memory = require("./memory");
 const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { findConnections } = require("../integrations/connections");
+const { sendButtonMessage } = require("../whatsapp/send");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -166,7 +167,12 @@ async function executeAction(action, data, currentMode, defaultReply) {
         return defaultReply;
 
       case "ask_context":
-        return defaultReply;
+        await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, defaultReply, [
+          { id: 'ctx_hex', title: 'Hexaware' },
+          { id: 'ctx_srq', title: 'SmartResQ' },
+          { id: 'ctx_per', title: 'Personal' },
+        ]);
+        return null;
 
       case "add_note":
         if (data?.content) {

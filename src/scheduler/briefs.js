@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview } = require('../agent/brain');
-const { sendMessage } = require('../whatsapp/send');
+const { sendMessage, sendButtonMessage } = require('../whatsapp/send');
 const memory = require('../agent/memory');
 
 function startScheduler() {
@@ -31,7 +31,10 @@ function startScheduler() {
     try {
       const due = await memory.getDueReminders();
       for (const reminder of due) {
-        await sendMessage(myNumber, `Reminder: ${reminder.content}`);
+        await sendButtonMessage(myNumber, `Reminder: ${reminder.content}`, [
+          { id: 'reminder_done', title: 'Done ✓' },
+          { id: 'reminder_snooze', title: 'Snooze 1hr' },
+        ]);
       }
     } catch (err) {
       console.error('Reminder check error:', err.message);
@@ -42,7 +45,12 @@ function startScheduler() {
   cron.schedule('0 9 * * 1-5', async () => {
     try {
       const alert = await generateStaleAlert();
-      if (alert) await sendMessage(myNumber, alert);
+      if (alert) {
+        await sendButtonMessage(myNumber, alert, [
+          { id: 'stale_snooze', title: 'Snooze 2 days' },
+          { id: 'stale_dismiss', title: 'Dismiss' },
+        ]);
+      }
     } catch (err) {
       console.error('Stale alert error:', err.message);
     }
