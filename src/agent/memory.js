@@ -5,6 +5,10 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+pool.on('connect', client => {
+  client.query("SET timezone='Asia/Kolkata'");
+});
+
 // --- Todos ---
 
 async function addTodo(content, context, remindAt = null) {
