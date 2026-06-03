@@ -1,10 +1,55 @@
 const express = require('express');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents } = require('../agent/memory');
+const axios = require('axios');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
+const { handleIncoming } = require('../agent/brain');
 const hub = require('../events/hub');
 
 const router = express.Router();
+
+// Chat — text message
+router.post('/chat', express.json(), async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  const { message } = req.body;
+  if (!message?.trim()) return res.status(400).json({ error: 'No message' });
+  try {
+    const reply = await handleIncoming(message.trim());
+    hub.notify();
+    res.json({ reply });
+  } catch (err) {
+    console.error('Dashboard chat error:', err.message);
+    res.status(500).json({ error: 'Failed to process message' });
+  }
+});
+
+// Chat — image upload (base64)
+router.post('/chat/image', express.json({ limit: '10mb' }), async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  const { base64, mimeType = 'image/jpeg', caption = '' } = req.body;
+  if (!base64) return res.status(400).json({ error: 'No image' });
+  try {
+    const visionRes = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'google/gemini-2.0-flash-001',
+        messages: [{ role: 'user', content: [
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          { type: 'text', text: caption || 'Describe this image in detail.' },
+        ]}],
+      },
+      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` } }
+    );
+    const description = visionRes.data.choices[0].message.content;
+    const userText = `[Image from dashboard] ${description}${caption ? `\nCaption: ${caption}` : ''}`;
+    const reply = await handleIncoming(userText);
+    hub.notify();
+    res.json({ reply, description });
+  } catch (err) {
+    console.error('Dashboard image error:', err.message);
+    res.status(500).json({ error: 'Failed to process image' });
+  }
+});
 
 // SSE endpoint — dashboard holds this open and reloads on 'refresh' event
 router.get('/stream', (req, res) => {
@@ -37,7 +82,7 @@ router.get('/', async (req, res) => {
     const monthStart = new Date(nowIST.getFullYear(), nowIST.getMonth(), 1);
     const monthEnd   = new Date(nowIST.getFullYear(), nowIST.getMonth() + 1, 0, 23, 59, 59);
 
-    const [analytics, openPRs, openIssues, recentCommits, knowledge, allTodos, recentNotes, learnings, dbEvents] = await Promise.all([
+    const [analytics, openPRs, openIssues, recentCommits, knowledge, allTodos, recentNotes, learnings, dbEvents, chatHistory] = await Promise.all([
       getAnalytics(),
       getOpenPRs(),
       getOpenIssues(),
@@ -47,6 +92,7 @@ router.get('/', async (req, res) => {
       getRecentNotes(null, 6),
       getUnreviewedLearnings(5),
       getWeekEvents(monthStart, monthEnd),
+      getRecentHistory(30),
     ]);
 
     const hexTodos = allTodos.filter(t => t.context === 'hexaware');
@@ -417,6 +463,72 @@ header {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
 
+/* ── CHAT ─────────────────────────────────── */
+.chat-panel { display: flex; flex-direction: column; height: 500px; }
+.chat-msgs { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+.chat-msgs::-webkit-scrollbar { width: 3px; }
+.chat-msgs::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
+.chat-msg { max-width: 82%; display: flex; flex-direction: column; gap: 3px; }
+.chat-msg.user { align-self: flex-end; align-items: flex-end; }
+.chat-msg.blu  { align-self: flex-start; align-items: flex-start; }
+.chat-bubble {
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 500;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-msg.user .chat-bubble { background: var(--acc); color: #000; border-bottom-right-radius: 3px; }
+.chat-msg.blu  .chat-bubble { background: var(--s2); color: var(--t1); border: 1px solid var(--line); border-bottom-left-radius: 3px; }
+.chat-img-preview { max-width: 200px; border-radius: 10px; margin-bottom: 4px; border: 1px solid var(--line); }
+.chat-time { font-size: 10px; color: var(--t3); padding: 0 2px; }
+.chat-typing { display: none; align-self: flex-start; }
+.chat-typing.visible { display: flex; }
+.chat-typing span { width: 6px; height: 6px; background: var(--t3); border-radius: 50%; animation: blink 1.2s infinite; }
+.chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+.chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%,80%,100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+.chat-input-wrap { display: flex; align-items: flex-end; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); margin-top: 10px; }
+.chat-textarea {
+  flex: 1;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: var(--t1);
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  min-height: 42px;
+  max-height: 120px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 0.15s;
+  overflow-y: auto;
+}
+.chat-textarea:focus { border-color: var(--acc); }
+.chat-textarea::placeholder { color: var(--t3); }
+.chat-action-btn {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--s2);
+  color: var(--t2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.12s;
+}
+.chat-action-btn:hover { background: var(--line); color: var(--t1); }
+.chat-action-btn.send { background: var(--acc); color: #000; border-color: transparent; }
+.chat-action-btn.send:hover { opacity: 0.85; }
+.chat-action-btn.send:disabled { opacity: 0.4; cursor: default; }
+.chat-action-btn.recording { background: #ef4444 !important; color: #fff !important; border-color: transparent; }
+.chat-img-attach { display: none; }
+
 /* ── MONTHLY CALENDAR ─────────────────────── */
 .mcal-dow-row { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
 .mcal-dow { text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--t3); padding: 4px 0 8px; }
@@ -571,6 +683,41 @@ header {
       ${renderMonthlyCalendar()}
     </div>
 
+    <!-- CHAT -->
+    <div class="panel chat-panel">
+      <div class="sec-head">
+        <span class="sec-title">Blu</span>
+        <span class="sec-count" style="color:#34d399">● online</span>
+      </div>
+      <div class="chat-msgs" id="chat-msgs">
+        ${chatHistory.map(m => {
+          const isUser = m.role === 'user';
+          const bubble = escHtml(m.content).replace(/\\n/g, '\n');
+          return `<div class="chat-msg ${isUser ? 'user' : 'blu'}">
+            <div class="chat-bubble">${bubble}</div>
+          </div>`;
+        }).join('')}
+        <div class="chat-typing" id="chat-typing">
+          <div class="chat-bubble" style="padding:10px 14px;background:var(--s2);border:1px solid var(--line);border-bottom-left-radius:3px;">
+            <span></span><span style="margin:0 3px"></span><span></span>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-wrap">
+        <input type="file" id="chat-img-input" class="chat-img-attach" accept="image/*">
+        <button class="chat-action-btn" id="chat-img-btn" title="Attach image">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+        </button>
+        <textarea class="chat-textarea" id="chat-input" placeholder="Message Blu…" rows="1"></textarea>
+        <button class="chat-action-btn" id="chat-voice-btn" title="Voice input">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <button class="chat-action-btn send" id="chat-send-btn" title="Send" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+
   </main>
 
   <div class="day-popup" id="day-popup"></div>
@@ -642,6 +789,116 @@ header {
   });
 
   document.addEventListener('click', closePopup);
+
+  // ── CHAT ───────────────────────────────────────────────────────
+  (function() {
+    var token = new URLSearchParams(window.location.search).get('token');
+    var msgsEl   = document.getElementById('chat-msgs');
+    var inputEl  = document.getElementById('chat-input');
+    var sendBtn  = document.getElementById('chat-send-btn');
+    var voiceBtn = document.getElementById('chat-voice-btn');
+    var imgBtn   = document.getElementById('chat-img-btn');
+    var imgInput = document.getElementById('chat-img-input');
+    var typing   = document.getElementById('chat-typing');
+
+    // Scroll to bottom on load
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    // Auto-resize textarea
+    inputEl.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+      sendBtn.disabled = !this.value.trim();
+    });
+
+    inputEl.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!sendBtn.disabled) send(); }
+    });
+
+    function addMsg(role, text, imgSrc) {
+      typing.classList.remove('visible');
+      var div = document.createElement('div');
+      div.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
+      var html = '';
+      if (imgSrc) html += '<img class="chat-img-preview" src="' + imgSrc + '">';
+      html += '<div class="chat-bubble">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>') + '</div>';
+      div.innerHTML = html;
+      msgsEl.insertBefore(div, typing);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+
+    function showTyping() { typing.classList.add('visible'); msgsEl.scrollTop = msgsEl.scrollHeight; }
+
+    async function send() {
+      var text = inputEl.value.trim();
+      if (!text) return;
+      addMsg('user', text);
+      inputEl.value = ''; inputEl.style.height = ''; sendBtn.disabled = true;
+      showTyping();
+      try {
+        var res = await fetch('/dashboard/chat?token=' + token, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text }),
+        });
+        var data = await res.json();
+        addMsg('blu', data.reply || data.error || 'No response');
+      } catch(e) { addMsg('blu', 'Connection error. Try again.'); }
+    }
+
+    sendBtn.addEventListener('click', send);
+
+    // Image attach
+    imgBtn.addEventListener('click', function() { imgInput.click(); });
+    imgInput.addEventListener('change', async function() {
+      var file = this.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = async function(e) {
+        var dataUrl = e.target.result;
+        var base64 = dataUrl.split(',')[1];
+        var mimeType = file.type;
+        var caption = inputEl.value.trim();
+        var previewSrc = dataUrl;
+        addMsg('user', caption || '📎 Image', previewSrc);
+        inputEl.value = ''; inputEl.style.height = ''; sendBtn.disabled = true;
+        showTyping();
+        try {
+          var res = await fetch('/dashboard/chat/image?token=' + token, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base64, mimeType, caption }),
+          });
+          var data = await res.json();
+          addMsg('blu', data.reply || data.error || 'No response');
+        } catch(e) { addMsg('blu', 'Image upload failed.'); }
+      };
+      reader.readAsDataURL(file);
+      imgInput.value = '';
+    });
+
+    // Voice — Web Speech API
+    var recognition = null;
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-IN';
+      recognition.interimResults = false;
+      recognition.onresult = function(e) {
+        var transcript = e.results[0][0].transcript;
+        inputEl.value = transcript;
+        inputEl.dispatchEvent(new Event('input'));
+        voiceBtn.classList.remove('recording');
+      };
+      recognition.onend = function() { voiceBtn.classList.remove('recording'); };
+      recognition.onerror = function() { voiceBtn.classList.remove('recording'); };
+    }
+
+    var listening = false;
+    voiceBtn.addEventListener('click', function() {
+      if (!recognition) { alert('Voice not supported in this browser. Try Chrome.'); return; }
+      if (listening) { recognition.stop(); listening = false; voiceBtn.classList.remove('recording'); }
+      else { recognition.start(); listening = true; voiceBtn.classList.add('recording'); }
+    });
+  })();
 
   // Live refresh via SSE — reloads instantly when a WhatsApp message is processed
   (function() {
