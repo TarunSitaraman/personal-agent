@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { generateStandup, generateProactiveNudge } = require('../agent/brain');
+const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview } = require('../agent/brain');
 const { sendMessage } = require('../whatsapp/send');
 const memory = require('../agent/memory');
 
@@ -37,6 +37,26 @@ function startScheduler() {
       console.error('Reminder check error:', err.message);
     }
   });
+
+  // 9:00 AM IST daily — stale todo alert
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const alert = await generateStaleAlert();
+      if (alert) await sendMessage(myNumber, alert);
+    } catch (err) {
+      console.error('Stale alert error:', err.message);
+    }
+  }, { timezone: 'Asia/Kolkata' });
+
+  // Sunday 8:00 PM IST — weekly review
+  cron.schedule('0 20 * * 0', async () => {
+    try {
+      const review = await generateWeeklyReview();
+      await sendMessage(myNumber, review);
+    } catch (err) {
+      console.error('Weekly review error:', err.message);
+    }
+  }, { timezone: 'Asia/Kolkata' });
 
   // 9:00 PM IST — proactive nudge
   cron.schedule('0 21 * * *', async () => {

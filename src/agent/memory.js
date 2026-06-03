@@ -43,10 +43,15 @@ async function completeTodoByContent(keyword) {
 // --- Notes ---
 
 async function addNote(content, context, tags = []) {
-  await pool.query(
-    'INSERT INTO notes (content, context, tags) VALUES ($1, $2, $3)',
+  const { rows } = await pool.query(
+    'INSERT INTO notes (content, context, tags) VALUES ($1, $2, $3) RETURNING id',
     [content, context, tags]
   );
+  return rows[0].id;
+}
+
+async function updateNoteTags(id, tags) {
+  await pool.query('UPDATE notes SET tags = $1 WHERE id = $2', [tags, id]);
 }
 
 async function getRecentNotes(context = null, limit = 5) {
@@ -99,6 +104,40 @@ async function getRecentHistory(limit = 20) {
     [limit]
   );
   return rows;
+}
+
+// --- Stale todos ---
+
+async function getStaleTodos(days = 5) {
+  const { rows } = await pool.query(
+    `SELECT * FROM todos WHERE done = false AND created_at < NOW() - INTERVAL '${days} days' ORDER BY created_at ASC`
+  );
+  return rows;
+}
+
+// --- Weekly activity ---
+
+async function getWeeklyActivity() {
+  const [completedTodos, addedTodos, newLearnings, newNotes] = await Promise.all([
+    pool.query(
+      `SELECT content, context FROM todos WHERE done = true AND completed_at >= NOW() - INTERVAL '7 days' ORDER BY completed_at DESC`
+    ),
+    pool.query(
+      `SELECT content, context FROM todos WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
+    ),
+    pool.query(
+      `SELECT topic, content FROM learnings WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
+    ),
+    pool.query(
+      `SELECT content, context FROM notes WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
+    ),
+  ]);
+  return {
+    completedTodos: completedTodos.rows,
+    addedTodos: addedTodos.rows,
+    newLearnings: newLearnings.rows,
+    newNotes: newNotes.rows,
+  };
 }
 
 // --- Search ---
@@ -187,11 +226,12 @@ async function getSummaryStats() {
 
 module.exports = {
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
-  addNote, getRecentNotes,
+  addNote, updateNoteTags, getRecentNotes,
   addLearning, getUnreviewedLearnings, markLearningReviewed,
   saveMessage, getRecentHistory,
   addReminder, getDueReminders,
   saveInsight, getRecentInsights, getMessageCount,
   searchMemory, getYesterdayActivity,
+  getStaleTodos, getWeeklyActivity,
   getSummaryStats,
 };

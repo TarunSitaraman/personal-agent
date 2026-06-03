@@ -168,7 +168,11 @@ async function executeAction(action, data, currentMode, defaultReply) {
         return defaultReply;
 
       case "add_note":
-        if (data?.content) await memory.addNote(data.content, context);
+        if (data?.content) {
+          const noteId = await memory.addNote(data.content, context);
+          // Auto-tag asynchronously — don't block the reply
+          autoTagNote(noteId, data.content).catch(() => {});
+        }
         return defaultReply;
 
       case "add_learning":
@@ -339,4 +343,69 @@ Keep each section to 1-3 bullet points. Plain text, no markdown except *bold* he
   return await callGroq([{ role: "user", content: prompt }]);
 }
 
-module.exports = { handleIncoming, generateStandup, generateProactiveNudge };
+async function autoTagNote(noteId, content) {
+  const raw = await callGroq([{
+    role: 'user',
+    content: `Extract 3-5 short keyword tags from this note. Return ONLY a JSON array of lowercase strings.\nNote: "${content}"\nExample output: ["tag1", "tag2", "tag3"]`,
+  }]);
+  try {
+    const match = raw.match(/\[[\s\S]*?\]/);
+    const tags = JSON.parse(match[0]);
+    if (Array.isArray(tags)) await memory.updateNoteTags(noteId, tags);
+  } catch { /* skip silently */ }
+}
+
+async function generateStaleAlert() {
+  const stale = await memory.getStaleTodos(5);
+  if (!stale.length) return null;
+
+  const hex = stale.filter(t => t.context === 'hexaware');
+  const srq = stale.filter(t => t.context === 'smartresq');
+  const other = stale.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
+
+  let msg = `Heads up — ${stale.length} todo${stale.length > 1 ? 's have' : ' has'} been sitting for 5+ days:\n\n`;
+  if (hex.length) msg += `*Hexaware*\n${hex.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+  if (srq.length) msg += `*SmartResQ*\n${srq.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+  if (other.length) msg += `*Other*\n${other.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+  msg += 'Still relevant? Mark done or drop them.';
+  return msg;
+}
+
+async function generateWeeklyReview() {
+  const [activity, openPRs, recentCommits] = await Promise.all([
+    memory.getWeeklyActivity(),
+    getOpenPRs(),
+    getRecentCommits(),
+  ]);
+
+  const prompt = `Generate Tarun's weekly review in plain text (no markdown except *bold* headers).
+
+Format:
+*Weekly Review*
+
+Shipped this week:
+[completed todos + merged work]
+
+Captured:
+[learnings and notes added]
+
+Progress:
+[todos completed vs added ratio, honest assessment]
+
+Still open:
+[key pending items]
+
+Data:
+Completed todos (${activity.completedTodos.length}): ${activity.completedTodos.map(t => `[${t.context}] ${t.content}`).join(', ') || 'none'}
+Added todos (${activity.addedTodos.length}): ${activity.addedTodos.map(t => t.content).join(', ') || 'none'}
+New learnings (${activity.newLearnings.length}): ${activity.newLearnings.map(l => l.topic).join(', ') || 'none'}
+New notes (${activity.newNotes.length})
+Open PRs: ${openPRs.join(', ') || 'none'}
+Recent commits: ${recentCommits.slice(0, 3).join(', ') || 'none'}
+
+Keep it honest, practical, under 15 lines. Plain text only.`;
+
+  return await callGroq([{ role: 'user', content: prompt }]);
+}
+
+module.exports = { handleIncoming, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview };
