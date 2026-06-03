@@ -217,6 +217,83 @@ async function getRecentContent(limit = 30) {
   return [...notes.rows, ...learnings.rows];
 }
 
+// --- Events / Calendar ---
+
+async function addEvent(title, startAt, endAt, context, recurrence = 'none') {
+  await pool.query(
+    'INSERT INTO events (title, start_at, end_at, context, recurrence) VALUES ($1, $2, $3, $4, $5)',
+    [title, startAt, endAt || null, context, recurrence]
+  );
+}
+
+async function getWeekEvents(weekStart, weekEnd) {
+  const { rows } = await pool.query(
+    `SELECT id, title, start_at, end_at, context, recurrence, source
+     FROM events
+     WHERE (recurrence = 'none' AND start_at >= $1 AND start_at < $2)
+        OR recurrence IN ('daily', 'weekdays', 'weekly')
+     ORDER BY start_at`,
+    [weekStart, weekEnd]
+  );
+  return rows;
+}
+
+async function getUpcomingEvents(hours = 24) {
+  const { rows } = await pool.query(
+    `SELECT title, start_at, context FROM events
+     WHERE recurrence = 'none' AND start_at >= NOW() AND start_at <= NOW() + ($1 || ' hours')::interval
+     ORDER BY start_at LIMIT 5`,
+    [hours]
+  );
+  return rows;
+}
+
+async function listEvents(context = null, limit = 10) {
+  const query = context
+    ? `SELECT id, title, start_at, end_at, context, recurrence FROM events WHERE context = $1 ORDER BY start_at LIMIT $2`
+    : `SELECT id, title, start_at, end_at, context, recurrence FROM events ORDER BY start_at LIMIT $1`;
+  const params = context ? [context, limit] : [limit];
+  const { rows } = await pool.query(query, params);
+  return rows;
+}
+
+async function findEventByTitle(keyword) {
+  const { rows } = await pool.query(
+    `SELECT id, title, start_at, end_at, context, recurrence FROM events WHERE title ILIKE $1 ORDER BY start_at LIMIT 3`,
+    [`%${keyword}%`]
+  );
+  return rows;
+}
+
+async function deleteEvent(id) {
+  await pool.query('DELETE FROM events WHERE id = $1', [id]);
+}
+
+async function updateEvent(id, updates) {
+  const fields = [];
+  const values = [];
+  let idx = 1;
+  if (updates.title !== undefined) { fields.push(`title = $${idx++}`); values.push(updates.title); }
+  if (updates.start_at !== undefined) { fields.push(`start_at = $${idx++}`); values.push(updates.start_at); }
+  if (updates.end_at !== undefined) { fields.push(`end_at = $${idx++}`); values.push(updates.end_at); }
+  if (updates.recurrence !== undefined) { fields.push(`recurrence = $${idx++}`); values.push(updates.recurrence); }
+  if (!fields.length) return;
+  values.push(id);
+  await pool.query(`UPDATE events SET ${fields.join(', ')} WHERE id = $${idx}`, values);
+}
+
+async function getEventsStartingSoon(minutesFrom = 14, minutesTo = 16) {
+  const { rows } = await pool.query(
+    `SELECT id, title, start_at, context FROM events
+     WHERE recurrence = 'none'
+       AND start_at >= NOW() + ($1 || ' minutes')::interval
+       AND start_at < NOW() + ($2 || ' minutes')::interval
+     ORDER BY start_at`,
+    [minutesFrom, minutesTo]
+  );
+  return rows;
+}
+
 // --- Stale todos ---
 
 async function getStaleTodos(days = 5) {
@@ -343,6 +420,8 @@ module.exports = {
   addReminder, getDueReminders, getDueTodoReminders,
   saveInsight, getRecentInsights, getMessageCount,
   saveKnowledge, getAllKnowledge, trimConversations,
+  addEvent, getWeekEvents, getUpcomingEvents,
+  listEvents, findEventByTitle, deleteEvent, updateEvent, getEventsStartingSoon,
   searchMemory, getYesterdayActivity,
   getStaleTodos, getWeeklyActivity,
   getAnalytics, getRecentContent,

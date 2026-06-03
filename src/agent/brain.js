@@ -57,20 +57,31 @@ INTENT DETECTION:
 - "my learnings", "what have I learned" → LIST_LEARNINGS
 - "find X", "search for X", "did I note X" → SEARCH (data.content = search query)
 - "remind me in X to Y" → SET_REMINDER (data.minutes = duration in minutes, data.content = task)
+- Tarun mentions a meeting, call, session, interview with a specific time → ADD_EVENT (data.title = event name, data.datetime = ISO datetime string in IST, data.duration = minutes default 60, data.recurrence = 'none' | 'daily' | 'weekdays' | 'weekly' — detect from phrasing: "every weekday" → 'weekdays', "daily" → 'daily', "every week"/"weekly" → 'weekly', one-off → 'none')
+- "my events", "what's on my calendar", "show events", "what do I have [this week/today]" → LIST_EVENTS (data.context = filter or null)
+- "cancel X", "remove X from calendar", "delete the X event/meeting" → DELETE_EVENT (data.title = event name to match)
+- "reschedule X to Y", "move X meeting to Y time", "change X to Yam" → UPDATE_EVENT (data.title = event to find, data.datetime = new ISO datetime if time changed, data.duration = new duration if changed, data.new_title = new name if renamed)
 - Otherwise → NONE
 
 CRITICAL: Always respond with ONLY a single valid JSON object. No text before or after it. The "reply" field must be a plain conversational string — never put JSON, curly braces, or code inside "reply".
 {
   "reply": "formatted WhatsApp message — plain text only, no JSON",
-  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | none",
+  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | set_reminder | add_event | list_events | delete_event | update_event | none",
   "data": {
     "content": "extracted content or search query",
     "topic": "topic if learning",
     "source": "source if mentioned",
     "context": "hexaware | smartresq | personal | null",
-    "minutes": 0
+    "minutes": 0,
+    "title": "event title if add/delete/update_event",
+    "datetime": "ISO datetime string in IST if add/update_event",
+    "duration": 60,
+    "recurrence": "none | daily | weekdays | weekly",
+    "new_title": "new event name if renaming via update_event"
   }
-}`;
+}
+
+WHEN UNSURE: If you are uncertain about any detail — context, time, what to save, what was meant — always ask a clarifying question instead of guessing. A wrong action is worse than a clarifying question.`;
 
 async function callGroq(messages, jsonMode = false) {
   try {
@@ -92,13 +103,14 @@ async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
-  const [history, stats, openPRs, openIssues, insights, knowledge, msgCount] = await Promise.all([
+  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount] = await Promise.all([
     memory.getRecentHistory(30),
     memory.getSummaryStats(),
     getOpenPRs(),
     getOpenIssues(),
     memory.getRecentInsights(5),
     memory.getAllKnowledge(),
+    memory.getUpcomingEvents(24),
     memory.getMessageCount(),
   ]);
 
@@ -115,7 +127,13 @@ async function handleIncoming(userMessage) {
     ? `Behavioural insights:\n${insights.join('\n')}`
     : '';
 
-  const contextBlock = `Current mode: ${mode}
+  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+  const eventsBlock = upcomingEvents.length
+    ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}`
+    : '';
+
+  const contextBlock = `Current time: ${now} IST
+Current mode: ${mode}
 ${modeDesc}
 
 Pending todos (${todoBlock.length}):
@@ -124,6 +142,7 @@ ${todoBlock.length ? todoBlock.join('\n') : 'none'}
 Unreviewed learnings: ${stats.unreviewed.length}
 Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
 Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
+${eventsBlock}
 ${knowledgeBlock}
 ${insightsBlock}`;
 
@@ -203,6 +222,63 @@ async function executeAction(action, data, currentMode, defaultReply) {
         const minutes = parseInt(data?.minutes) || 60;
         const remindAt = new Date(Date.now() + minutes * 60 * 1000);
         if (data?.content) await memory.addTodo(data.content, context, remindAt);
+        return defaultReply;
+      }
+
+      case "add_event": {
+        if (data?.title && data?.datetime) {
+          const startAt = new Date(data.datetime);
+          const duration = parseInt(data?.duration) || 60;
+          const endAt = new Date(startAt.getTime() + duration * 60 * 1000);
+          const recurrence = ['none', 'daily', 'weekdays', 'weekly'].includes(data?.recurrence)
+            ? data.recurrence : 'none';
+          await memory.addEvent(data.title, startAt, endAt, context, recurrence);
+        }
+        return defaultReply;
+      }
+
+      case "list_events": {
+        const events = await memory.listEvents(data?.context || null, 10);
+        if (!events.length) return 'Nothing on your calendar yet.';
+        const fmtEvent = ev => {
+          const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+          const rec = ev.recurrence !== 'none' ? ` _(${ev.recurrence})_` : '';
+          return `${ev.title} — ${timeStr}${rec}`;
+        };
+        return `*Calendar* (${events.length})\n\n` + events.map((ev, i) => `${i + 1}. ${fmtEvent(ev)}`).join('\n');
+      }
+
+      case "delete_event": {
+        if (!data?.title) return defaultReply;
+        const matches = await memory.findEventByTitle(data.title);
+        if (!matches.length) return `Couldn't find an event matching "${data.title}".`;
+        if (matches.length === 1) {
+          await memory.deleteEvent(matches[0].id);
+          return `Removed *${matches[0].title}* from your calendar.`;
+        }
+        const list = matches.map((ev, i) => {
+          const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+          return `${i + 1}. ${ev.title} — ${timeStr}`;
+        }).join('\n');
+        return `Found ${matches.length} matching events:\n${list}\n\nWhich one should I remove?`;
+      }
+
+      case "update_event": {
+        if (!data?.title) return defaultReply;
+        const hits = await memory.findEventByTitle(data.title);
+        if (!hits.length) return `Couldn't find an event matching "${data.title}".`;
+        const ev = hits[0];
+        const updates = {};
+        if (data.new_title) updates.title = data.new_title;
+        if (data.datetime) {
+          updates.start_at = new Date(data.datetime);
+          const duration = parseInt(data?.duration) || 60;
+          updates.end_at = new Date(updates.start_at.getTime() + duration * 60 * 1000);
+        }
+        if (data.recurrence && ['none', 'daily', 'weekdays', 'weekly'].includes(data.recurrence)) {
+          updates.recurrence = data.recurrence;
+        }
+        await memory.updateEvent(ev.id, updates);
         return defaultReply;
       }
 

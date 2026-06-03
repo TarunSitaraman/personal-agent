@@ -1,5 +1,5 @@
 const express = require('express');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
 
@@ -20,7 +20,17 @@ router.get('/', async (req, res) => {
     const mode = getCurrentMode();
     const modeConf = MODE_CONFIG[mode] || MODE_CONFIG.personal;
 
-    const [analytics, openPRs, openIssues, recentCommits, knowledge, allTodos, recentNotes, learnings] = await Promise.all([
+    // Current week boundaries (IST)
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const dow = nowIST.getDay();
+    const daysFromMon = dow === 0 ? 6 : dow - 1;
+    const weekStart = new Date(nowIST);
+    weekStart.setDate(nowIST.getDate() - daysFromMon);
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 7);
+
+    const [analytics, openPRs, openIssues, recentCommits, knowledge, allTodos, recentNotes, learnings, dbEvents] = await Promise.all([
       getAnalytics(),
       getOpenPRs(),
       getOpenIssues(),
@@ -29,6 +39,7 @@ router.get('/', async (req, res) => {
       getPendingTodos(),
       getRecentNotes(null, 6),
       getUnreviewedLearnings(5),
+      getWeekEvents(weekStart, weekEnd),
     ]);
 
     const hexTodos = allTodos.filter(t => t.context === 'hexaware');
@@ -70,6 +81,107 @@ router.get('/', async (req, res) => {
     const renderKnowledge = () => knowledge.length
       ? knowledge.map(k => `<div class="know-row">${escHtml(k)}</div>`).join('')
       : `<p class="nil">tell Blu about your world</p>`;
+
+    // ── Calendar helpers ────────────────────────────
+    const CAL_START = 6;   // 6am
+    const CAL_END   = 23;  // 11pm
+    const HOUR_H    = 54;  // px per hour
+    const TOTAL_H   = (CAL_END - CAL_START) * HOUR_H;
+
+    const weekDays = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      weekDays.push(d);
+    }
+
+    const todayStr = nowIST.toDateString();
+    const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    // Expand recurring events to instances for this week
+    const allCalEvents = [];
+
+    for (const ev of dbEvents) {
+      if (ev.recurrence === 'none') {
+        const d = new Date(ev.start_at);
+        const dayIdx = weekDays.findIndex(w => w.toDateString() === d.toDateString());
+        if (dayIdx >= 0) allCalEvents.push({ ...ev, dayIdx, start: d, end: ev.end_at ? new Date(ev.end_at) : new Date(d.getTime() + 60*60*1000) });
+      } else {
+        weekDays.forEach((day, dayIdx) => {
+          const isWeekday = dayIdx < 5;
+          if (ev.recurrence === 'daily' || (ev.recurrence === 'weekdays' && isWeekday) || ev.recurrence === 'weekly') {
+            const ref = new Date(ev.start_at);
+            const start = new Date(day);
+            start.setHours(ref.getHours(), ref.getMinutes(), 0, 0);
+            const end = ev.end_at ? (() => { const e = new Date(day); const r = new Date(ev.end_at); e.setHours(r.getHours(), r.getMinutes(), 0, 0); return e; })() : new Date(start.getTime() + 60*60*1000);
+            allCalEvents.push({ ...ev, dayIdx, start, end });
+          }
+        });
+      }
+    }
+
+    // Add todos with remind_at in this week
+    for (const todo of allTodos) {
+      if (!todo.remind_at) continue;
+      const d = new Date(todo.remind_at);
+      const dayIdx = weekDays.findIndex(w => w.toDateString() === d.toDateString());
+      if (dayIdx >= 0) allCalEvents.push({ title: todo.content, context: todo.context, dayIdx, start: d, end: new Date(d.getTime() + 30*60*1000), source: 'todo' });
+    }
+
+    const evTop = (start) => Math.max(0, (start.getHours() + start.getMinutes()/60 - CAL_START) * HOUR_H);
+    const evHeight = (start, end) => Math.max(22, Math.min((end - start) / 3600000 * HOUR_H, TOTAL_H));
+    const evColor = (ctx, src) => {
+      if (src === 'todo') return { bg: '#2e1a4a', border: '#a78bfa', text: '#c4b5fd' };
+      if (ctx === 'hexaware') return { bg: '#1a2d4a', border: '#4f8ef7', text: '#93c5fd' };
+      if (ctx === 'smartresq') return { bg: '#0d3a2a', border: '#34d399', text: '#6ee7b7' };
+      return { bg: '#1c1c2a', border: '#94a3b8', text: '#cbd5e1' };
+    };
+
+    const renderCalEvent = (ev) => {
+      const top = evTop(ev.start);
+      const h = evHeight(ev.start, ev.end);
+      const c = evColor(ev.context, ev.source);
+      const timeStr = ev.start.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+      return `<div class="cal-ev" style="top:${top}px;height:${h}px;background:${c.bg};border-left:2px solid ${c.border};color:${c.text}">
+        <div class="cal-ev-title">${escHtml(ev.title.length > 28 ? ev.title.slice(0, 28) + '…' : ev.title)}</div>
+        <div class="cal-ev-time">${timeStr}</div>
+      </div>`;
+    };
+
+    const hours = [];
+    for (let h = CAL_START; h < CAL_END; h++) {
+      hours.push(h);
+    }
+
+    const renderCalendar = () => `
+    <div class="cal-wrap">
+      <div class="cal-head">
+        <div class="cal-gutter"></div>
+        ${weekDays.map((d, i) => {
+          const isToday = d.toDateString() === todayStr;
+          const dateNum = d.getDate();
+          return `<div class="cal-day-head ${isToday ? 'today' : ''}">
+            <span class="cal-dow">${DAY_LABELS[i]}</span>
+            <span class="cal-date ${isToday ? 'today-num' : ''}">${dateNum}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="cal-body">
+        <div class="cal-time-col">
+          ${hours.map(h => `<div class="cal-hour-label" style="top:${(h - CAL_START) * HOUR_H}px">${h === 12 ? '12 PM' : h > 12 ? (h-12) + ' PM' : h + ' AM'}</div>`).join('')}
+        </div>
+        ${weekDays.map((d, dayIdx) => {
+          const isToday = d.toDateString() === todayStr;
+          const dayEvents = allCalEvents.filter(e => e.dayIdx === dayIdx);
+          const nowTop = isToday ? (nowIST.getHours() + nowIST.getMinutes()/60 - CAL_START) * HOUR_H : -1;
+          return `<div class="cal-col ${isToday ? 'cal-today-col' : ''}">
+            ${hours.map(h => `<div class="cal-hour-line" style="top:${(h - CAL_START) * HOUR_H}px"></div>`).join('')}
+            ${nowTop >= 0 ? `<div class="cal-now-line" style="top:${nowTop}px"></div>` : ''}
+            ${dayEvents.map(renderCalEvent).join('')}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
 
     res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -315,6 +427,27 @@ header {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
 
+/* ── CALENDAR ─────────────────────────────── */
+.cal-wrap { overflow: auto; max-height: 520px; }
+.cal-head { display: grid; grid-template-columns: 52px repeat(7, 1fr); border-bottom: 1px solid var(--s2); position: sticky; top: 0; background: var(--s1); z-index: 2; }
+.cal-gutter { border-right: 1px solid var(--s2); }
+.cal-day-head { text-align: center; padding: 10px 4px; border-right: 1px solid var(--s2); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.cal-day-head.today { background: color-mix(in srgb, var(--acc) 10%, transparent); }
+.cal-dow { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t3); }
+.cal-date { font-size: 20px; font-weight: 800; color: var(--t2); line-height: 1; }
+.today-num { color: var(--acc) !important; }
+.cal-body { display: grid; grid-template-columns: 52px repeat(7, 1fr); }
+.cal-time-col { border-right: 1px solid var(--s2); position: relative; height: ${(CAL_END - CAL_START) * HOUR_H}px; }
+.cal-hour-label { position: absolute; right: 6px; font-size: 10px; font-weight: 600; color: var(--t3); transform: translateY(-50%); white-space: nowrap; }
+.cal-col { position: relative; height: ${(CAL_END - CAL_START) * HOUR_H}px; border-right: 1px solid var(--s2); }
+.cal-today-col { background: color-mix(in srgb, var(--acc) 3%, transparent); }
+.cal-hour-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--s2); }
+.cal-now-line { position: absolute; left: 0; right: 0; border-top: 2px solid var(--acc); z-index: 1; }
+.cal-now-line::before { content: ''; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--acc); }
+.cal-ev { position: absolute; left: 3px; right: 3px; border-radius: 4px; padding: 3px 6px; overflow: hidden; z-index: 1; }
+.cal-ev-title { font-size: 11px; font-weight: 700; line-height: 1.3; }
+.cal-ev-time { font-size: 10px; opacity: 0.75; margin-top: 1px; }
+
 @media (max-width: 900px) {
   .page { grid-template-columns: 1fr; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--line); }
@@ -406,6 +539,14 @@ header {
         <span class="sec-count">${analytics.totalNotes} total</span>
       </div>
       ${renderNotes()}
+    </div>
+
+    <div class="panel">
+      <div class="sec-head">
+        <span class="sec-title">This Week</span>
+        <span class="sec-count">${allCalEvents.length} events</span>
+      </div>
+      ${renderCalendar()}
     </div>
 
   </main>

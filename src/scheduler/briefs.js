@@ -5,6 +5,7 @@ const memory = require('../agent/memory');
 
 function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
+  const remindedEventIds = new Set();
 
   // 8:00 AM IST — Hexaware standup
   cron.schedule('0 8 * * 1-5', async () => {
@@ -26,7 +27,7 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // Every minute — check due todo reminders
+  // Every minute — check due todo reminders + events starting in ~15 min
   cron.schedule('* * * * *', async () => {
     try {
       const due = await memory.getDueTodoReminders();
@@ -38,6 +39,21 @@ function startScheduler() {
       }
     } catch (err) {
       console.error('Reminder check error:', err.message);
+    }
+
+    try {
+      const upcoming = await memory.getEventsStartingSoon(14, 16);
+      for (const ev of upcoming) {
+        if (remindedEventIds.has(ev.id)) continue;
+        remindedEventIds.add(ev.id);
+        const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
+        await sendButtonMessage(myNumber, `Starting in 15 min: *${ev.title}* at ${timeStr}`, [
+          { id: 'ev_noted', title: 'Noted ✓' },
+          { id: 'ev_snooze', title: 'Snooze 5min' },
+        ]);
+      }
+    } catch (err) {
+      console.error('Event reminder error:', err.message);
     }
   });
 
