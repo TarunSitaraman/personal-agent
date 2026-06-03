@@ -20,15 +20,9 @@ router.get('/', async (req, res) => {
     const mode = getCurrentMode();
     const modeConf = MODE_CONFIG[mode] || MODE_CONFIG.personal;
 
-    // Current week boundaries (IST)
     const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-    const dow = nowIST.getDay();
-    const daysFromMon = dow === 0 ? 6 : dow - 1;
-    const weekStart = new Date(nowIST);
-    weekStart.setDate(nowIST.getDate() - daysFromMon);
-    weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 7);
+    const monthStart = new Date(nowIST.getFullYear(), nowIST.getMonth(), 1);
+    const monthEnd   = new Date(nowIST.getFullYear(), nowIST.getMonth() + 1, 0, 23, 59, 59);
 
     const [analytics, openPRs, openIssues, recentCommits, knowledge, allTodos, recentNotes, learnings, dbEvents] = await Promise.all([
       getAnalytics(),
@@ -39,7 +33,7 @@ router.get('/', async (req, res) => {
       getPendingTodos(),
       getRecentNotes(null, 6),
       getUnreviewedLearnings(5),
-      getWeekEvents(weekStart, weekEnd),
+      getWeekEvents(monthStart, monthEnd),
     ]);
 
     const hexTodos = allTodos.filter(t => t.context === 'hexaware');
@@ -82,106 +76,89 @@ router.get('/', async (req, res) => {
       ? knowledge.map(k => `<div class="know-row">${escHtml(k)}</div>`).join('')
       : `<p class="nil">tell Blu about your world</p>`;
 
-    // ── Calendar helpers ────────────────────────────
-    const CAL_START = 6;   // 6am
-    const CAL_END   = 23;  // 11pm
-    const HOUR_H    = 54;  // px per hour
-    const TOTAL_H   = (CAL_END - CAL_START) * HOUR_H;
+    // ── Monthly calendar ─────────────────────────────
+    const monthYear   = nowIST.getFullYear();
+    const monthNum    = nowIST.getMonth();
+    const todayNum    = nowIST.getDate();
+    const daysInMonth = new Date(monthYear, monthNum + 1, 0).getDate();
+    const firstDow    = new Date(monthYear, monthNum, 1).getDay(); // 0=Sun
+    const prevMonthDays = new Date(monthYear, monthNum, 0).getDate();
+    const totalCells  = firstDow + daysInMonth;
+    const trailingCnt = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
 
-    const weekDays = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(weekStart.getDate() + i);
-      weekDays.push(d);
-    }
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const CTX_DOT     = { hexaware: '#4f8ef7', smartresq: '#34d399' };
 
-    const todayStr = nowIST.toDateString();
-    const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-    // Expand recurring events to instances for this week
-    const allCalEvents = [];
+    // Build event map: day (1-31) → sorted events[]
+    const monthEventMap = {};
+    for (let d = 1; d <= daysInMonth; d++) monthEventMap[d] = [];
 
     for (const ev of dbEvents) {
+      const refStart = new Date(ev.start_at);
       if (ev.recurrence === 'none') {
-        const d = new Date(ev.start_at);
-        const dayIdx = weekDays.findIndex(w => w.toDateString() === d.toDateString());
-        if (dayIdx >= 0) allCalEvents.push({ ...ev, dayIdx, start: d, end: ev.end_at ? new Date(ev.end_at) : new Date(d.getTime() + 60*60*1000) });
+        if (refStart.getFullYear() === monthYear && refStart.getMonth() === monthNum) {
+          monthEventMap[refStart.getDate()].push({ title: ev.title, start_at: refStart.toISOString(), context: ev.context });
+        }
       } else {
-        weekDays.forEach((day, dayIdx) => {
-          const isWeekday = dayIdx < 5;
-          if (ev.recurrence === 'daily' || (ev.recurrence === 'weekdays' && isWeekday) || ev.recurrence === 'weekly') {
-            const ref = new Date(ev.start_at);
-            const start = new Date(day);
-            start.setHours(ref.getHours(), ref.getMinutes(), 0, 0);
-            const end = ev.end_at ? (() => { const e = new Date(day); const r = new Date(ev.end_at); e.setHours(r.getHours(), r.getMinutes(), 0, 0); return e; })() : new Date(start.getTime() + 60*60*1000);
-            allCalEvents.push({ ...ev, dayIdx, start, end });
+        for (let d = 1; d <= daysInMonth; d++) {
+          const date = new Date(monthYear, monthNum, d);
+          const dow = date.getDay();
+          const isWeekday = dow >= 1 && dow <= 5;
+          const refDow = refStart.getDay();
+          if (ev.recurrence === 'daily' ||
+              (ev.recurrence === 'weekdays' && isWeekday) ||
+              (ev.recurrence === 'weekly' && dow === refDow)) {
+            const s = new Date(date);
+            s.setHours(refStart.getHours(), refStart.getMinutes(), 0, 0);
+            monthEventMap[d].push({ title: ev.title, start_at: s.toISOString(), context: ev.context });
           }
-        });
+        }
       }
     }
-
-    // Add todos with remind_at in this week
     for (const todo of allTodos) {
       if (!todo.remind_at) continue;
       const d = new Date(todo.remind_at);
-      const dayIdx = weekDays.findIndex(w => w.toDateString() === d.toDateString());
-      if (dayIdx >= 0) allCalEvents.push({ title: todo.content, context: todo.context, dayIdx, start: d, end: new Date(d.getTime() + 30*60*1000), source: 'todo' });
+      if (d.getFullYear() === monthYear && d.getMonth() === monthNum) {
+        const day = d.getDate();
+        if (monthEventMap[day]) monthEventMap[day].push({ title: todo.content, start_at: d.toISOString(), context: todo.context, isTodo: true });
+      }
+    }
+    for (const d of Object.keys(monthEventMap)) {
+      monthEventMap[d].sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
     }
 
-    const evTop = (start) => Math.max(0, (start.getHours() + start.getMinutes()/60 - CAL_START) * HOUR_H);
-    const evHeight = (start, end) => Math.max(22, Math.min((end - start) / 3600000 * HOUR_H, TOTAL_H));
-    const evColor = (ctx, src) => {
-      if (src === 'todo') return { bg: '#2e1a4a', border: '#a78bfa', text: '#c4b5fd' };
-      if (ctx === 'hexaware') return { bg: '#1a2d4a', border: '#4f8ef7', text: '#93c5fd' };
-      if (ctx === 'smartresq') return { bg: '#0d3a2a', border: '#34d399', text: '#6ee7b7' };
-      return { bg: '#1c1c2a', border: '#94a3b8', text: '#cbd5e1' };
+    const monthMapJson = JSON.stringify(monthEventMap);
+    const totalMonthEvents = Object.values(monthEventMap).reduce((n, arr) => n + arr.length, 0);
+
+    const renderDots = (events) => {
+      if (!events.length) return '';
+      return '<div class="mcal-dots">' +
+        events.slice(0, 3).map(ev => `<div class="mcal-dot" style="background:${CTX_DOT[ev.context] || '#a78bfa'}"></div>`).join('') +
+        '</div>';
     };
 
-    const renderCalEvent = (ev) => {
-      const top = evTop(ev.start);
-      const h = evHeight(ev.start, ev.end);
-      const c = evColor(ev.context, ev.source);
-      const timeStr = ev.start.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
-      return `<div class="cal-ev" style="top:${top}px;height:${h}px;background:${c.bg};border-left:2px solid ${c.border};color:${c.text}">
-        <div class="cal-ev-title">${escHtml(ev.title.length > 28 ? ev.title.slice(0, 28) + '…' : ev.title)}</div>
-        <div class="cal-ev-time">${timeStr}</div>
-      </div>`;
+    const renderMonthlyCalendar = () => {
+      const cells = [];
+      for (let i = 0; i < firstDow; i++) {
+        cells.push(`<div class="mcal-day other-month"><span class="mcal-num">${prevMonthDays - firstDow + i + 1}</span></div>`);
+      }
+      for (let d = 1; d <= daysInMonth; d++) {
+        const evs = monthEventMap[d] || [];
+        cells.push(`<div class="mcal-day${d === todayNum ? ' today' : ''}" data-day="${d}">
+          <span class="mcal-num">${d}</span>${renderDots(evs)}
+        </div>`);
+      }
+      for (let i = 1; i <= trailingCnt; i++) {
+        cells.push(`<div class="mcal-day other-month"><span class="mcal-num">${i}</span></div>`);
+      }
+      return `<div class="mcal-dow-row">
+        <div class="mcal-dow">Su</div><div class="mcal-dow">Mo</div><div class="mcal-dow">Tu</div>
+        <div class="mcal-dow">We</div><div class="mcal-dow">Th</div><div class="mcal-dow">Fr</div>
+        <div class="mcal-dow">Sa</div>
+      </div>
+      <div class="mcal-grid">${cells.join('')}</div>`;
     };
-
-    const hours = [];
-    for (let h = CAL_START; h < CAL_END; h++) {
-      hours.push(h);
-    }
-
-    const renderCalendar = () => `
-    <div class="cal-wrap">
-      <div class="cal-head">
-        <div class="cal-gutter"></div>
-        ${weekDays.map((d, i) => {
-          const isToday = d.toDateString() === todayStr;
-          const dateNum = d.getDate();
-          return `<div class="cal-day-head ${isToday ? 'today' : ''}">
-            <span class="cal-dow">${DAY_LABELS[i]}</span>
-            <span class="cal-date ${isToday ? 'today-num' : ''}">${dateNum}</span>
-          </div>`;
-        }).join('')}
-      </div>
-      <div class="cal-body">
-        <div class="cal-time-col">
-          ${hours.map(h => `<div class="cal-hour-label" style="top:${(h - CAL_START) * HOUR_H}px">${h === 12 ? '12 PM' : h > 12 ? (h-12) + ' PM' : h + ' AM'}</div>`).join('')}
-        </div>
-        ${weekDays.map((d, dayIdx) => {
-          const isToday = d.toDateString() === todayStr;
-          const dayEvents = allCalEvents.filter(e => e.dayIdx === dayIdx);
-          const nowTop = isToday ? (nowIST.getHours() + nowIST.getMinutes()/60 - CAL_START) * HOUR_H : -1;
-          return `<div class="cal-col ${isToday ? 'cal-today-col' : ''}">
-            ${hours.map(h => `<div class="cal-hour-line" style="top:${(h - CAL_START) * HOUR_H}px"></div>`).join('')}
-            ${nowTop >= 0 ? `<div class="cal-now-line" style="top:${nowTop}px"></div>` : ''}
-            ${dayEvents.map(renderCalEvent).join('')}
-          </div>`;
-        }).join('')}
-      </div>
-    </div>`;
 
     res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -427,26 +404,58 @@ header {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
 
-/* ── CALENDAR ─────────────────────────────── */
-.cal-wrap { overflow: auto; max-height: 520px; }
-.cal-head { display: grid; grid-template-columns: 52px repeat(7, 1fr); border-bottom: 1px solid var(--s2); position: sticky; top: 0; background: var(--s1); z-index: 2; }
-.cal-gutter { border-right: 1px solid var(--s2); }
-.cal-day-head { text-align: center; padding: 10px 4px; border-right: 1px solid var(--s2); display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.cal-day-head.today { background: color-mix(in srgb, var(--acc) 10%, transparent); }
-.cal-dow { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t3); }
-.cal-date { font-size: 20px; font-weight: 800; color: var(--t2); line-height: 1; }
-.today-num { color: var(--acc) !important; }
-.cal-body { display: grid; grid-template-columns: 52px repeat(7, 1fr); }
-.cal-time-col { border-right: 1px solid var(--s2); position: relative; height: ${(CAL_END - CAL_START) * HOUR_H}px; }
-.cal-hour-label { position: absolute; right: 6px; font-size: 10px; font-weight: 600; color: var(--t3); transform: translateY(-50%); white-space: nowrap; }
-.cal-col { position: relative; height: ${(CAL_END - CAL_START) * HOUR_H}px; border-right: 1px solid var(--s2); }
-.cal-today-col { background: color-mix(in srgb, var(--acc) 3%, transparent); }
-.cal-hour-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--s2); }
-.cal-now-line { position: absolute; left: 0; right: 0; border-top: 2px solid var(--acc); z-index: 1; }
-.cal-now-line::before { content: ''; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--acc); }
-.cal-ev { position: absolute; left: 3px; right: 3px; border-radius: 4px; padding: 3px 6px; overflow: hidden; z-index: 1; }
-.cal-ev-title { font-size: 11px; font-weight: 700; line-height: 1.3; }
-.cal-ev-time { font-size: 10px; opacity: 0.75; margin-top: 1px; }
+/* ── MONTHLY CALENDAR ─────────────────────── */
+.mcal-dow-row { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
+.mcal-dow { text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--t3); padding: 4px 0 8px; }
+.mcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.mcal-day {
+  height: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s;
+  user-select: none;
+}
+.mcal-day:hover:not(.other-month) { background: var(--s2); }
+.mcal-day.other-month { opacity: 0.25; cursor: default; pointer-events: none; }
+.mcal-num { font-size: 13px; font-weight: 600; color: var(--t1); line-height: 1; }
+.mcal-day.other-month .mcal-num { color: var(--t3); }
+.mcal-day.today .mcal-num {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--acc);
+  color: #000;
+  border-radius: 50%;
+  font-weight: 800;
+}
+.mcal-dots { display: flex; gap: 3px; align-items: center; }
+.mcal-dot { width: 4px; height: 4px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── DAY POPUP ────────────────────────────── */
+.day-popup {
+  position: fixed;
+  display: none;
+  z-index: 300;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  min-width: 230px;
+  max-width: 280px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.04);
+  pointer-events: auto;
+}
+.day-popup.open { display: block; }
+.popup-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--t2); margin-bottom: 10px; }
+.popup-ev { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.popup-ev:last-child { border-bottom: none; padding-bottom: 0; }
+.popup-time { font-size: 11px; color: var(--t2); min-width: 50px; flex-shrink: 0; padding-top: 1px; }
+.popup-body { font-size: 13px; font-weight: 600; color: var(--t1); line-height: 1.4; }
+.popup-empty { font-size: 13px; color: var(--t3); font-style: italic; }
 
 @media (max-width: 900px) {
   .page { grid-template-columns: 1fr; }
@@ -543,25 +552,83 @@ header {
 
     <div class="panel">
       <div class="sec-head">
-        <span class="sec-title">This Week</span>
-        <span class="sec-count">${allCalEvents.length} events</span>
+        <span class="sec-title">${MONTH_NAMES[monthNum]} ${monthYear}</span>
+        <span class="sec-count">${totalMonthEvents} events</span>
       </div>
-      ${renderCalendar()}
+      ${renderMonthlyCalendar()}
     </div>
 
   </main>
+
+  <div class="day-popup" id="day-popup"></div>
 
 </div>
 
 <script>
 (function() {
-  const r = document.documentElement.style;
+  // Spotlight
+  var r = document.documentElement.style;
   document.addEventListener('pointermove', function(e) {
     r.setProperty('--mx', e.clientX.toFixed(1));
     r.setProperty('--my', e.clientY.toFixed(1));
     r.setProperty('--mxp', (e.clientX / window.innerWidth).toFixed(3));
     r.setProperty('--myp', (e.clientY / window.innerHeight).toFixed(3));
   });
+
+  // Monthly calendar popup
+  var MAP = ${monthMapJson};
+  var MSHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var CTX_COLOR = { hexaware: '#4f8ef7', smartresq: '#34d399' };
+  var popup = document.getElementById('day-popup');
+  var activeCell = null;
+
+  function fmtTime(iso) {
+    return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+
+  function openPopup(cell, day) {
+    if (activeCell === cell) { closePopup(); return; }
+    activeCell = cell;
+    var evs = MAP[day] || [];
+    var dateLabel = MSHORT[${monthNum}] + ' ' + day + ', ' + ${monthYear};
+    var html = '<div class="popup-head">' + dateLabel + '</div>';
+    if (!evs.length) {
+      html += '<div class="popup-empty">Nothing scheduled</div>';
+    } else {
+      evs.forEach(function(ev) {
+        var color = CTX_COLOR[ev.context] || '#a78bfa';
+        html += '<div class="popup-ev">' +
+          '<div class="popup-time">' + fmtTime(ev.start_at) + '</div>' +
+          '<div class="popup-body"><span style="color:' + color + '">● </span>' + ev.title + '</div>' +
+          '</div>';
+      });
+    }
+    popup.innerHTML = html;
+    popup.classList.add('open');
+
+    var rect = cell.getBoundingClientRect();
+    var pw = 260, ph = popup.offsetHeight || 140;
+    var left = rect.right + 10;
+    var top = rect.top;
+    if (left + pw > window.innerWidth - 12) left = rect.left - pw - 10;
+    if (top + ph > window.innerHeight - 12) top = window.innerHeight - ph - 12;
+    popup.style.left = Math.max(8, left) + 'px';
+    popup.style.top  = Math.max(8, top)  + 'px';
+  }
+
+  function closePopup() {
+    popup.classList.remove('open');
+    activeCell = null;
+  }
+
+  document.querySelectorAll('.mcal-day[data-day]').forEach(function(cell) {
+    cell.addEventListener('click', function(e) {
+      e.stopPropagation();
+      openPopup(cell, cell.dataset.day);
+    });
+  });
+
+  document.addEventListener('click', closePopup);
 })();
 </script>
 </body>
