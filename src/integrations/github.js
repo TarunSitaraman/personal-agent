@@ -28,4 +28,20 @@ async function getRecentCommits() {
   }
 }
 
-module.exports = { getOpenPRs, getRecentCommits };
+async function getOpenIssues() {
+  try {
+    const { data } = await axios.get(
+      `https://api.github.com/repos/${REPO}/issues?state=open&per_page=10`,
+      { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } }
+    );
+    // GitHub issues API returns PRs too — filter them out
+    return data
+      .filter(i => !i.pull_request)
+      .map(i => `#${i.number} ${i.title} (${i.labels.map(l => l.name).join(', ') || 'no labels'})`);
+  } catch (err) {
+    console.error('GitHub issues fetch error:', err.response?.data?.message || err.message);
+    return [];
+  }
+}
+
+module.exports = { getOpenPRs, getRecentCommits, getOpenIssues };

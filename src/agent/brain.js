@@ -1,7 +1,7 @@
 const axios = require("axios");
 const { getCurrentMode, getModeDescription } = require("./context");
 const memory = require("./memory");
-const { getOpenPRs, getRecentCommits } = require("../integrations/github");
+const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
@@ -67,22 +67,28 @@ async function callGroq(messages) {
 async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
-  const [history, stats, openPRs] = await Promise.all([
+  const [history, stats, openPRs, openIssues] = await Promise.all([
     memory.getRecentHistory(20),
     memory.getSummaryStats(),
     getOpenPRs(),
+    getOpenIssues(),
   ]);
 
   const prBlock = openPRs.length
     ? `Open PRs (${openPRs.length}):\n${openPRs.join('\n')}`
     : 'Open PRs: none';
 
+  const issueBlock = openIssues.length
+    ? `Open Issues (${openIssues.length}):\n${openIssues.join('\n')}`
+    : 'Open Issues: none';
+
   const contextBlock = `Current mode: ${mode}
 ${modeDesc}
 
 Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
 Unreviewed learnings: ${stats.unreviewed.length}
-${prBlock}`;
+${prBlock}
+${issueBlock}`;
 
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
