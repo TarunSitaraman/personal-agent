@@ -3,6 +3,7 @@ const { handleIncoming } = require('../agent/brain');
 const { sendMessage } = require('./send');
 const { transcribeAudio } = require('../integrations/whisper');
 const { analyzeImage } = require('../integrations/vision');
+const hub = require('../events/hub');
 
 const router = express.Router();
 
@@ -59,6 +60,7 @@ router.post('/', async (req, res) => {
 
     const reply = await handleIncoming(text);
     if (reply) await sendMessage(from, reply);
+    hub.notify();
   } catch (err) {
     console.error('Webhook error:', err.message);
   }

@@ -2,8 +2,21 @@ const express = require('express');
 const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
+const hub = require('../events/hub');
 
 const router = express.Router();
+
+// SSE endpoint — dashboard holds this open and reloads on 'refresh' event
+router.get('/stream', (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).end();
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  hub.addClient(res);
+  const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+  req.on('close', () => { clearInterval(ping); hub.removeClient(res); });
+});
 
 const MODE_CONFIG = {
   hexaware: { label: 'Hexaware', color: '#4f8ef7', emoji: '💼' },
@@ -165,7 +178,7 @@ router.get('/', async (req, res) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="60">
+<meta http-equiv="refresh" content="300">
 <title>blu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -629,6 +642,18 @@ header {
   });
 
   document.addEventListener('click', closePopup);
+
+  // Live refresh via SSE — reloads instantly when a WhatsApp message is processed
+  (function() {
+    var token = new URLSearchParams(window.location.search).get('token');
+    var es = new EventSource('/dashboard/stream?token=' + token);
+    es.addEventListener('refresh', function() { window.location.reload(); });
+    es.onerror = function() {
+      es.close();
+      // SSE dropped (deploy/restart) — fall back to polling every 30s
+      setTimeout(function() { window.location.reload(); }, 30000);
+    };
+  })();
 })();
 </script>
 </body>
