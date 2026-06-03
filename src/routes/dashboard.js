@@ -777,7 +777,7 @@ header {
 
   // ── CHAT ───────────────────────────────────────────────────────
   var chatPending = false;
-  var HISTORY = ${JSON.stringify(chatHistory)};
+  var HISTORY = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
   (function() {
     var token = new URLSearchParams(window.location.search).get('token');
     var msgsEl   = document.getElementById('chat-msgs');
@@ -805,30 +805,37 @@ header {
     });
 
     inputEl.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!sendBtn.disabled) send(); }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
+
+    function esc(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
 
     function addMsg(role, text, imgSrc) {
       typing.classList.remove('visible');
       var div = document.createElement('div');
       div.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
-      var html = '';
-      if (imgSrc) html += '<img class="chat-img-preview" src="' + imgSrc + '">';
-      html += '<div class="chat-bubble">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>') + '</div>';
+      var html = imgSrc ? '<img class="chat-img-preview" src="' + imgSrc + '">' : '';
+      html += '<div class="chat-bubble">' + esc(text) + '</div>';
       div.innerHTML = html;
       msgsEl.insertBefore(div, typing);
       msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+
+    function setBusy(busy) {
+      sendBtn.style.opacity = busy ? '0.4' : '1';
+      sendBtn.style.pointerEvents = busy ? 'none' : '';
+      chatPending = busy;
     }
 
     function showTyping() { typing.classList.add('visible'); msgsEl.scrollTop = msgsEl.scrollHeight; }
 
     async function send() {
       var text = inputEl.value.trim();
-      if (!text) return;
+      if (!text || chatPending) return;
       addMsg('user', text);
-      inputEl.value = ''; inputEl.style.height = ''; sendBtn.disabled = true;
+      inputEl.value = ''; inputEl.style.height = '';
       showTyping();
-      chatPending = true;
+      setBusy(true);
       try {
         var res = await fetch('/dashboard/chat?token=' + token, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -837,7 +844,7 @@ header {
         var data = await res.json();
         addMsg('blu', data.reply || data.error || 'No response');
       } catch(e) { addMsg('blu', 'Connection error. Try again.'); }
-      chatPending = false;
+      setBusy(false);
     }
 
     sendBtn.addEventListener('click', send);
@@ -855,8 +862,8 @@ header {
         var caption = inputEl.value.trim();
         var previewSrc = dataUrl;
         addMsg('user', caption || '📎 Image', previewSrc);
-        inputEl.value = ''; inputEl.style.height = ''; sendBtn.disabled = true;
-        showTyping();
+        inputEl.value = ''; inputEl.style.height = '';
+        showTyping(); setBusy(true);
         try {
           var res = await fetch('/dashboard/chat/image?token=' + token, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
