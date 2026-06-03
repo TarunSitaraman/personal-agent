@@ -1,8 +1,18 @@
-let _override = null;      // { mode, expiry }
+const memory = require('./memory');
+
+let _override = null; // { mode, expiry } — in-memory cache
+
+// Load persisted override from DB on startup
+async function initContext() {
+  const row = await memory.loadModeOverride();
+  if (row) {
+    _override = { mode: row.value, expiry: new Date(row.expires_at) };
+  }
+}
 
 function getCurrentMode() {
   if (_override && new Date() < _override.expiry) return _override.mode;
-  if (_override && new Date() >= _override.expiry) _override = null;
+  if (_override) _override = null; // expired
 
   const hour = new Date().getHours();
   if (hour >= 10 && hour < 18) return 'hexaware';
@@ -10,14 +20,16 @@ function getCurrentMode() {
   return 'personal';
 }
 
-function setModeOverride(mode) {
+async function setModeOverride(mode) {
   const midnight = new Date();
   midnight.setHours(24, 0, 0, 0);
   _override = { mode, expiry: midnight };
+  await memory.saveModeOverride(mode, midnight);
 }
 
-function clearModeOverride() {
+async function clearModeOverride() {
   _override = null;
+  await memory.clearModeOverride();
 }
 
 function getModeDescription(mode) {
@@ -29,4 +41,4 @@ function getModeDescription(mode) {
   return descriptions[mode];
 }
 
-module.exports = { getCurrentMode, setModeOverride, clearModeOverride, getModeDescription };
+module.exports = { initContext, getCurrentMode, setModeOverride, clearModeOverride, getModeDescription };

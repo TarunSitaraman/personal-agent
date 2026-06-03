@@ -370,7 +370,7 @@ async function executeAction(action, data, currentMode, defaultReply) {
       case "switch_mode": {
         const newMode = data?.mode;
         if (newMode && ['hexaware', 'smartresq', 'personal'].includes(newMode)) {
-          setModeOverride(newMode);
+          await setModeOverride(newMode);
         }
         return defaultReply;
       }

@@ -364,6 +364,29 @@ async function getYesterdayActivity(context) {
   return { completed: completed.rows, notes: notes.rows };
 }
 
+// --- Mode override (persisted so it survives restarts) ---
+
+async function saveModeOverride(mode, expiry) {
+  await pool.query(
+    `INSERT INTO state (key, value, expires_at)
+     VALUES ('mode_override', $1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = $1, expires_at = $2`,
+    [mode, expiry]
+  );
+}
+
+async function loadModeOverride() {
+  const { rows } = await pool.query(
+    `SELECT value, expires_at FROM state
+     WHERE key = 'mode_override' AND expires_at > NOW()`
+  );
+  return rows[0] || null;
+}
+
+async function clearModeOverride() {
+  await pool.query(`DELETE FROM state WHERE key = 'mode_override'`);
+}
+
 // --- Reminders ---
 
 async function addReminder(content, remindAt) {
@@ -420,6 +443,7 @@ module.exports = {
   addReminder, getDueReminders, getDueTodoReminders,
   saveInsight, getRecentInsights, getMessageCount,
   saveKnowledge, getAllKnowledge, trimConversations,
+  saveModeOverride, loadModeOverride, clearModeOverride,
   addEvent, getWeekEvents, getUpcomingEvents,
   listEvents, findEventByTitle, deleteEvent, updateEvent, getEventsStartingSoon,
   searchMemory, getYesterdayActivity,

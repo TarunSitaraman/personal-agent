@@ -4,6 +4,7 @@ const axios = require('axios');
 const { router: webhookRouter } = require('./whatsapp/webhook');
 const { startScheduler } = require('./scheduler/briefs');
 const dashboardRouter = require('./routes/dashboard');
+const { initContext } = require('./agent/context');
 
 const app = express();
 app.use(express.json());
@@ -13,8 +14,9 @@ app.use('/dashboard', dashboardRouter);
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Personal agent running on port ${PORT}`);
+  await initContext();
   startScheduler();
 
   // Keep Render free tier awake — ping self every 4 minutes
