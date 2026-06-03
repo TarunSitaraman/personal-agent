@@ -57,7 +57,8 @@ INTENT DETECTION:
 - "my notes", "what did I save" → LIST_NOTES
 - "my learnings", "what have I learned" → LIST_LEARNINGS
 - "find X", "search for X", "did I note X", "what did I save about X" → SEARCH (data.content = search query — searches Tarun's own notes/todos/learnings only)
-- "google X", "search the web for X", "look up X", "what is X", "who is X", "how much is X", "latest X", "news about X", or any factual question about the external world → SEARCH_WEB (data.content = search query)
+- Factual question about the external world → SEARCH_WEB only if ALL of these are true: (1) the answer requires live/current data (today's price, live score, current weather, breaking news) OR you are genuinely uncertain, AND (2) the answer is NOT already in the knowledge block above. If you already know it confidently — use NONE and answer directly. Never search for programming concepts, history, definitions, or anything stable you're sure about.
+- When using SEARCH_WEB: set data.cache = true and data.fact = "one concise sentence summary" if the result is a STABLE fact worth remembering. Set data.cache = false for live/changing data (prices, scores, news, weather).
 - "remind me in X to Y" → SET_REMINDER (data.minutes = duration in minutes, data.content = task)
 - Tarun mentions a meeting, call, session, interview with a specific time → ADD_EVENT (data.title = event name, data.datetime = ISO datetime string in IST, data.duration = minutes default 60, data.recurrence = 'none' | 'daily' | 'weekdays' | 'weekly' — detect from phrasing: "every weekday" → 'weekdays', "daily" → 'daily', "every week"/"weekly" → 'weekly', one-off → 'none')
 - "my events", "what's on my calendar", "show events", "what do I have [this week/today]" → LIST_EVENTS (data.context = filter or null)
@@ -79,7 +80,9 @@ CRITICAL: Always respond with ONLY a single valid JSON object. No text before or
     "datetime": "ISO datetime string in IST if add/update_event",
     "duration": 60,
     "recurrence": "none | daily | weekdays | weekly",
-    "new_title": "new event name if renaming via update_event"
+    "new_title": "new event name if renaming via update_event",
+    "cache": false,
+    "fact": "concise one-line fact to save if cache=true"
   }
 }
 
@@ -343,7 +346,6 @@ async function executeAction(action, data, currentMode, defaultReply) {
         const results = await webSearch(query);
         if (!results.length) return `No results found for "${query}".`;
 
-        // Feed results back to LLM to synthesize a clean answer
         const snippets = results.map(r => {
           if (r.type === 'answer' || r.type === 'knowledge') return `DIRECT ANSWER: ${r.text}`;
           return `${r.title}: ${r.snippet}`;
@@ -353,6 +355,11 @@ async function executeAction(action, data, currentMode, defaultReply) {
           role: 'user',
           content: `Query: "${query}"\n\nSearch results:\n${snippets}\n\nAnswer the query in plain text using only these results. Be concise (under 6 lines). No markdown except *bold*. If results are insufficient, say so.`,
         }]);
+
+        // Persist stable facts so Blu never needs to search for them again
+        if (data?.cache && data?.fact) {
+          memory.saveKnowledge(data.fact).catch(() => {});
+        }
 
         return synthesis.trim();
       }
