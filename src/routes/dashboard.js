@@ -682,13 +682,6 @@ header {
         <span class="sec-count" style="color:#34d399">● online</span>
       </div>
       <div class="chat-msgs" id="chat-msgs">
-        ${chatHistory.map(m => {
-          const isUser = m.role === 'user';
-          const bubble = escHtml(m.content).replace(/\\n/g, '\n');
-          return `<div class="chat-msg ${isUser ? 'user' : 'blu'}">
-            <div class="chat-bubble">${bubble}</div>
-          </div>`;
-        }).join('')}
         <div class="chat-typing" id="chat-typing">
           <div class="chat-bubble" style="padding:10px 14px;background:var(--s2);border:1px solid var(--line);border-bottom-left-radius:3px;">
             <span></span><span style="margin:0 3px"></span><span></span>
@@ -704,7 +697,7 @@ header {
         <button class="chat-action-btn" id="chat-voice-btn" title="Voice input">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
-        <button class="chat-action-btn send" id="chat-send-btn" title="Send" disabled>
+        <button class="chat-action-btn send" id="chat-send-btn" title="Send">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
@@ -784,6 +777,7 @@ header {
 
   // ── CHAT ───────────────────────────────────────────────────────
   var chatPending = false;
+  var HISTORY = ${JSON.stringify(chatHistory)};
   (function() {
     var token = new URLSearchParams(window.location.search).get('token');
     var msgsEl   = document.getElementById('chat-msgs');
@@ -794,14 +788,20 @@ header {
     var imgInput = document.getElementById('chat-img-input');
     var typing   = document.getElementById('chat-typing');
 
-    // Scroll to bottom on load
+    // Render initial history from JSON (safe — no template literal escaping issues)
+    HISTORY.forEach(function(m) {
+      var div = document.createElement('div');
+      div.className = 'chat-msg ' + (m.role === 'user' ? 'user' : 'blu');
+      var text = (m.content || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+      div.innerHTML = '<div class="chat-bubble">' + text + '</div>';
+      msgsEl.insertBefore(div, typing);
+    });
     msgsEl.scrollTop = msgsEl.scrollHeight;
 
     // Auto-resize textarea
     inputEl.addEventListener('input', function() {
       this.style.height = 'auto';
       this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-      sendBtn.disabled = !this.value.trim();
     });
 
     inputEl.addEventListener('keydown', function(e) {
