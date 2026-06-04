@@ -128,12 +128,26 @@ async function callLLM(messages, jsonMode = false) {
   throw lastErr;
 }
 
+function filterKnowledge(knowledge, userMessage) {
+  if (!knowledge.length) return [];
+  const words = userMessage.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+  if (!words.length) return knowledge.slice(0, 6);
+  const scored = knowledge.map(k => {
+    const kl = k.toLowerCase();
+    const score = words.reduce((n, w) => n + (kl.includes(w) ? 1 : 0), 0);
+    return { k, score };
+  });
+  const relevant = scored.filter(x => x.score > 0).sort((a, b) => b.score - a.score).map(x => x.k);
+  const fallback = scored.filter(x => x.score === 0).slice(0, 3).map(x => x.k);
+  return [...relevant, ...fallback];
+}
+
 async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
   const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount] = await Promise.all([
-    memory.getRecentHistory(30),
+    memory.getRecentHistory(10),
     memory.getSummaryStats(),
     getOpenPRs(),
     getOpenIssues(),
@@ -149,7 +163,7 @@ async function handleIncoming(userMessage) {
   ];
 
   const knowledgeBlock = knowledge.length
-    ? `What I know about Tarun's world:\n${knowledge.join('\n')}`
+    ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
     : '';
 
   const insightsBlock = insights.length
