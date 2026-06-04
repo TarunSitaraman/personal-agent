@@ -30,12 +30,24 @@ router.get('/test', async (req, res) => {
     results.whatsapp = { ok: false, error: err.message };
   }
 
+  // Test GitHub
+  try {
+    const ghRes = await axios.get('https://api.github.com/repos/TarunSitaraman/SmartResQ-dev/pulls?state=open&per_page=1', {
+      headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, 'User-Agent': 'personal-agent' }
+    });
+    results.github = { ok: true, openPRs: ghRes.data.length };
+  } catch (err) {
+    results.github = { ok: false, status: err.response?.status, error: err.response?.data?.message || err.message };
+  }
+
   results.env = {
     hasToken: !!process.env.WHATSAPP_TOKEN,
     hasPhoneId: !!process.env.WHATSAPP_PHONE_ID,
     hasMyNumber: !!process.env.MY_WHATSAPP_NUMBER,
     myNumber: process.env.MY_WHATSAPP_NUMBER,
     hasOpenRouter: !!process.env.OPENROUTER_API_KEY,
+    hasGitHub: !!process.env.GITHUB_TOKEN,
+    hasGroq: !!process.env.GROQ_API_KEY,
   };
 
   res.json(results);
