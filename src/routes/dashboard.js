@@ -786,7 +786,6 @@ header {
 </script>
 
 <script>
-// Chat — isolated script block so outer JS errors can't affect it
 (function() {
   var TOKEN = new URLSearchParams(window.location.search).get('token') || '';
   var msgsEl  = document.getElementById('chat-msgs');
@@ -798,29 +797,25 @@ header {
   var typing  = document.getElementById('chat-typing');
   var busy    = false;
 
-  // Load history
-  var HISTORY = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
-  HISTORY.forEach(function(m) { appendMsg(m.role, m.content); });
-  msgsEl.scrollTop = msgsEl.scrollHeight;
-
   function esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   }
 
   function appendMsg(role, text, imgSrc) {
-    typing.classList.remove('visible');
+    if (typing) typing.classList.remove('visible');
     var d = document.createElement('div');
     d.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
     d.innerHTML = (imgSrc ? '<img class="chat-img-preview" src="'+imgSrc+'">' : '') +
                   '<div class="chat-bubble">' + esc(text) + '</div>';
-    msgsEl.insertBefore(d, typing);
+    if (typing) msgsEl.insertBefore(d, typing);
+    else msgsEl.appendChild(d);
     msgsEl.scrollTop = msgsEl.scrollHeight;
   }
 
   function setBusy(v) {
     busy = v;
     window._bluChatBusy = v;
-    sendBtn.style.opacity = v ? '0.5' : '1';
+    if (sendBtn) sendBtn.style.opacity = v ? '0.5' : '1';
   }
 
   async function doSend() {
@@ -828,7 +823,7 @@ header {
     if (!text || busy) return;
     appendMsg('user', text);
     inputEl.value = ''; inputEl.style.height = '';
-    typing.classList.add('visible');
+    if (typing) typing.classList.add('visible');
     msgsEl.scrollTop = msgsEl.scrollHeight;
     setBusy(true);
     var ctrl = new AbortController();
@@ -845,14 +840,14 @@ header {
       appendMsg('blu', d.reply || d.error || '(no response)');
     } catch(e) {
       clearTimeout(timer);
-      appendMsg('blu', e.name === 'AbortError' ? 'Timed out — server may be waking up, try again in a moment.' : 'Connection error — ' + e.message);
+      appendMsg('blu', e.name === 'AbortError' ? 'Timed out — server may be waking up, try again.' : 'Error: ' + e.message);
     } finally {
       setBusy(false);
     }
   }
 
+  // Wire up handlers FIRST — before anything that could throw
   sendBtn.onclick = doSend;
-
   inputEl.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 120) + 'px';
@@ -861,7 +856,6 @@ header {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
   });
 
-  // Image
   imgBtn.onclick = function() { imgInput.click(); };
   imgInput.addEventListener('change', async function() {
     var file = this.files[0]; if (!file) return;
@@ -871,7 +865,8 @@ header {
       var caption = (inputEl.value || '').trim();
       appendMsg('user', caption || '📎 Image', dataUrl);
       inputEl.value = ''; inputEl.style.height = '';
-      typing.classList.add('visible'); setBusy(true);
+      if (typing) typing.classList.add('visible');
+      setBusy(true);
       try {
         var r = await fetch('/dashboard/chat/image?token=' + TOKEN, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -879,14 +874,16 @@ header {
         });
         var d = await r.json();
         appendMsg('blu', d.reply || d.error || '(no response)');
-      } catch(e) { appendMsg('blu', 'Image error — ' + e.message); }
-      setBusy(false);
+      } catch(e) {
+        appendMsg('blu', 'Image error — ' + e.message);
+      } finally {
+        setBusy(false);
+      }
     };
     reader.readAsDataURL(file);
     this.value = '';
   });
 
-  // Voice
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var recog = SR ? new SR() : null;
   var listening = false;
@@ -900,9 +897,18 @@ header {
     recog.onend = function() { listening = false; voiceBtn.classList.remove('recording'); };
   }
   voiceBtn.onclick = function() {
-    if (!recog) { alert('Voice not supported. Try Chrome.'); return; }
+    if (!recog) { alert('Voice not supported in this browser.'); return; }
     if (listening) { recog.stop(); } else { recog.start(); listening = true; voiceBtn.classList.add('recording'); }
   };
+
+  // Load history LAST — if this throws, handlers above are already set
+  try {
+    var HISTORY = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
+    if (Array.isArray(HISTORY)) {
+      HISTORY.forEach(function(m) { if (m && m.content) appendMsg(m.role, m.content); });
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+  } catch(e) { /* history render failed — chat still works */ }
 })();
 </script>
 </body>
