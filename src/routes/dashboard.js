@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
@@ -897,6 +897,80 @@ header {
   } catch (err) {
     console.error('Dashboard error:', err.message);
     res.status(500).send('Error loading dashboard');
+  }
+});
+
+// ── Mobile API ─────────────────────────────────────────────────
+
+// GET /dashboard/api/status  — mode, stats, upcoming events (home screen)
+router.get('/api/status', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const mode = getCurrentMode();
+    const [stats, openPRs, openIssues, upcoming] = await Promise.all([
+      getSummaryStats(),
+      getOpenPRs(),
+      getOpenIssues(),
+      listEvents(null, 5),
+    ]);
+    res.json({
+      mode,
+      modeLabel: { hexaware: 'Hexaware', smartresq: 'SmartResQ', personal: 'Personal' }[mode],
+      modeDesc: getModeDescription(mode),
+      todos: {
+        total: stats.hexTodos.length + stats.srqTodos.length,
+        hexaware: stats.hexTodos,
+        smartresq: stats.srqTodos,
+      },
+      prs: openPRs.length,
+      issues: openIssues.length,
+      upcoming: upcoming.map(ev => ({
+        id: ev.id,
+        title: ev.title,
+        start_at: ev.start_at,
+        context: ev.context,
+        recurrence: ev.recurrence,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /dashboard/api/notes  — recent notes (mobile notes screen)
+router.get('/api/notes', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const ctx = req.query.context || null;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const notes = await getRecentNotes(ctx, limit);
+    res.json(notes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /dashboard/api/learnings  — unreviewed learnings (mobile notes screen)
+router.get('/api/learnings', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const learnings = await getUnreviewedLearnings(20);
+    res.json(learnings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /dashboard/api/events  — calendar events
+router.get('/api/events', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const ctx = req.query.context || null;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const events = await listEvents(ctx, limit);
+    res.json(events);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

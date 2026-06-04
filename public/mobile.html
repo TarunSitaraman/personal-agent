@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#09090b">
+<title>Blu</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+:root {
+  --bg:   #09090b;
+  --s1:   #111115;
+  --s2:   #18181d;
+  --line: #27272f;
+  --t1:   #fafafa;
+  --t2:   #71717a;
+  --t3:   #3f3f46;
+  --hex:  #4f8ef7;
+  --srq:  #34d399;
+  --per:  #a78bfa;
+  --red:  #ef4444;
+  --acc:  var(--hex);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+body {
+  background: var(--bg);
+  color: var(--t1);
+  font-family: 'Inter', sans-serif;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  height: 100dvh;
+}
+
+/* ── App shell ──────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  position: relative;
+}
+
+/* ── Screens ────────────────────────────────── */
+.screen {
+  display: none;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-top: calc(var(--safe-top) + 52px);
+  padding-bottom: calc(var(--safe-bottom) + 64px);
+}
+.screen.active { display: flex; flex-direction: column; }
+
+/* ── Header ─────────────────────────────────── */
+.mobile-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--safe-top) + 52px);
+  padding-top: var(--safe-top);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 20px;
+  padding-right: 20px;
+  z-index: 100;
+}
+.logo { font-size: 22px; font-weight: 900; letter-spacing: -0.04em; }
+.logo span { color: var(--acc); }
+.mode-pill {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--acc) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 30%, transparent);
+  color: var(--acc);
+  text-transform: uppercase;
+}
+
+/* ── Bottom nav ─────────────────────────────── */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--safe-bottom) + 60px);
+  padding-bottom: var(--safe-bottom);
+  background: var(--s1);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-around;
+  z-index: 100;
+  padding-top: 8px;
+}
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  padding: 0 10px;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+  -webkit-user-select: none;
+}
+.nav-item.active { opacity: 1; }
+.nav-icon { font-size: 20px; line-height: 1; }
+.nav-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--t2);
+}
+.nav-item.active .nav-label { color: var(--acc); }
+
+/* ── Section headings ───────────────────────── */
+.sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  margin-bottom: 14px;
+}
+.sec-title { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+.sec-count { font-size: 13px; color: var(--t2); }
+
+/* ── Stat cards ─────────────────────────────── */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 0 20px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+}
+.stat-n {
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.stat-l { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--t2); margin-top: 6px; }
+
+/* ── Mode card ──────────────────────────────── */
+.mode-card {
+  margin: 0 20px 16px;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+.mode-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t3); margin-bottom: 6px; }
+.mode-name { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: var(--acc); margin-bottom: 4px; }
+.mode-desc { font-size: 12px; color: var(--t2); line-height: 1.5; }
+
+/* ── List rows ──────────────────────────────── */
+.list-section { padding: 0 20px; margin-bottom: 20px; }
+.list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.list-header-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t2); }
+.list-header-count { font-size: 11px; color: var(--t3); font-weight: 600; }
+
+.row-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 6px;
+}
+.row-accent { width: 3px; height: 22px; border-radius: 2px; flex-shrink: 0; }
+.row-content { flex: 1; min-width: 0; }
+.row-ctx { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+.row-text { font-size: 13px; font-weight: 500; color: var(--t1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-meta { font-size: 10px; color: var(--t3); margin-top: 2px; }
+.row-action { flex-shrink: 0; }
+
+.check-box {
+  width: 22px; height: 22px;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  background: var(--s2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+  transition: all 0.15s;
+  -webkit-user-select: none;
+}
+.check-box.done { background: var(--srq); border-color: var(--srq); }
+
+/* ── PR / Issue chips ───────────────────────── */
+.chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+.chip {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  color: var(--t2);
+  flex-shrink: 0;
+}
+.chip-text { font-size: 12px; font-weight: 500; color: var(--t1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Context filter tabs ────────────────────── */
+.ctx-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ctx-tabs::-webkit-scrollbar { display: none; }
+.ctx-tab {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  color: var(--t2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s;
+  -webkit-user-select: none;
+}
+.ctx-tab.active { color: var(--acc); background: color-mix(in srgb, var(--acc) 12%, transparent); border-color: color-mix(in srgb, var(--acc) 30%, transparent); }
+
+/* ── Calendar ───────────────────────────────── */
+.cal-wrap { padding: 0 20px; }
+.cal-dow { display: grid; grid-template-columns: repeat(7,1fr); margin-bottom: 4px; }
+.cal-dow-label { text-align: center; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); padding: 4px 0 8px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 2px; }
+.cal-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 0;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-user-select: none;
+}
+.cal-day.other { opacity: 0.25; pointer-events: none; }
+.cal-num { font-size: 13px; font-weight: 500; color: var(--t1); line-height: 1; }
+.cal-day.today .cal-num {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--acc); color: #000;
+  border-radius: 50%; font-weight: 800;
+}
+.cal-dots { display: flex; gap: 2px; }
+.cal-dot { width: 4px; height: 4px; border-radius: 50%; }
+
+/* Day event popup */
+.day-sheet {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--s1);
+  border-top: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 20px calc(var(--safe-bottom) + 80px);
+  z-index: 200;
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+.day-sheet.open { transform: translateY(0); }
+.day-sheet-handle { width: 36px; height: 4px; background: var(--line); border-radius: 2px; margin: 0 auto 14px; }
+.day-sheet-title { font-size: 14px; font-weight: 700; color: var(--t2); margin-bottom: 12px; }
+.day-ev { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: flex-start; }
+.day-ev:last-child { border-bottom: none; }
+.day-ev-time { font-size: 11px; color: var(--t2); min-width: 52px; flex-shrink: 0; padding-top: 1px; }
+.day-ev-body { font-size: 13px; font-weight: 600; color: var(--t1); }
+.day-empty { font-size: 13px; color: var(--t3); font-style: italic; padding: 8px 0; }
+.sheet-overlay { display: none; position: fixed; inset: 0; z-index: 190; }
+.sheet-overlay.open { display: block; }
+
+/* ── Chat ───────────────────────────────────── */
+#chat-screen {
+  padding-top: calc(var(--safe-top) + 52px);
+  padding-bottom: calc(var(--safe-bottom) + 64px + 60px);
+}
+.chat-msgs {
+  flex: 1;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+.msg { display: flex; flex-direction: column; max-width: 82%; gap: 2px; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.blu  { align-self: flex-start; align-items: flex-start; }
+.bubble {
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg.user .bubble { background: var(--acc); color: #000; border-bottom-right-radius: 4px; }
+.msg.blu  .bubble { background: var(--s2); color: var(--t1); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.msg-time { font-size: 10px; color: var(--t3); padding: 0 2px; }
+
+.typing { display: none; align-self: flex-start; }
+.typing.visible { display: flex; }
+.typing .bubble { padding: 12px 14px; }
+.dot { width: 6px; height: 6px; background: var(--t3); border-radius: 50%; display: inline-block; animation: pulse 1.2s infinite; }
+.dot:nth-child(2) { animation-delay: 0.2s; margin: 0 3px; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulse { 0%,80%,100% { opacity:0.2; } 40% { opacity:1; } }
+
+.chat-input-bar {
+  position: fixed;
+  bottom: calc(var(--safe-bottom) + 60px);
+  left: 0; right: 0;
+  background: var(--s1);
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 100;
+}
+.chat-input {
+  flex: 1;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: var(--t1);
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  max-height: 120px;
+  line-height: 1.5;
+  outline: none;
+}
+.chat-input:focus { border-color: var(--acc); }
+.chat-input::placeholder { color: var(--t3); }
+.send-btn {
+  width: 40px; height: 40px;
+  border-radius: 11px;
+  background: var(--acc);
+  border: none;
+  color: #000;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-weight: 700;
+}
+.send-btn:disabled { opacity: 0.4; }
+
+/* ── Notes screen ───────────────────────────── */
+.note-card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+.note-ctx { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.note-text { font-size: 13px; font-weight: 500; color: var(--t1); line-height: 1.5; }
+.note-time { font-size: 10px; color: var(--t3); margin-top: 6px; }
+
+.learn-card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+.learn-topic { font-size: 14px; font-weight: 700; color: var(--t1); margin-bottom: 4px; }
+.learn-body { font-size: 13px; color: var(--t2); line-height: 1.5; }
+
+/* ── Spinner ────────────────────────────────── */
+.spinner { display: flex; justify-content: center; padding: 32px; }
+.spin { width: 20px; height: 20px; border: 2px solid var(--line); border-top-color: var(--acc); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Nil state ──────────────────────────────── */
+.nil { font-size: 13px; color: var(--t3); font-style: italic; padding: 12px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <div class="mobile-header">
+    <div class="logo">blu<span>.</span></div>
+    <div class="mode-pill" id="mode-pill">—</div>
+  </div>
+
+  <!-- ── HOME ──────────────────────────────────────────── -->
+  <div class="screen active" id="home-screen">
+    <div style="padding:12px 0 0">
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-n" id="stat-todos" style="color:var(--t1)">—</div>
+          <div class="stat-l">Todos</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-n" id="stat-prs" style="color:var(--hex)">—</div>
+          <div class="stat-l">PRs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-n" id="stat-issues" style="color:var(--srq)">—</div>
+          <div class="stat-l">Issues</div>
+        </div>
+      </div>
+
+      <!-- Mode -->
+      <div class="mode-card">
+        <div class="mode-label">Current mode</div>
+        <div class="mode-name" id="home-mode-name">—</div>
+        <div class="mode-desc" id="home-mode-desc">Loading…</div>
+      </div>
+
+      <!-- Todos -->
+      <div class="list-section">
+        <div class="list-header">
+          <span class="list-header-label">Open Todos</span>
+          <span class="list-header-count" id="home-todo-count">—</span>
+        </div>
+        <div id="home-todos"><div class="spinner"><div class="spin"></div></div></div>
+      </div>
+
+      <!-- Upcoming events -->
+      <div class="list-section">
+        <div class="list-header">
+          <span class="list-header-label">Upcoming</span>
+        </div>
+        <div id="home-events"><div class="spinner"><div class="spin"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CHAT ──────────────────────────────────────────── -->
+  <div class="screen" id="chat-screen">
+    <div class="chat-msgs" id="chat-msgs">
+      <div class="msg blu">
+        <div class="bubble">Hey! I'm Blu. What's on your mind?</div>
+      </div>
+      <div class="typing" id="typing">
+        <div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      </div>
+    </div>
+    <div class="chat-input-bar">
+      <textarea class="chat-input" id="chat-input" placeholder="Message Blu…" rows="1"></textarea>
+      <button class="send-btn" id="send-btn">↑</button>
+    </div>
+  </div>
+
+  <!-- ── TODOS ─────────────────────────────────────────── -->
+  <div class="screen" id="todos-screen">
+    <div style="padding:12px 0 0">
+      <div class="sec-head">
+        <span class="sec-title">Todos</span>
+        <span class="sec-count" id="todos-total">—</span>
+      </div>
+      <div class="ctx-tabs">
+        <div class="ctx-tab active" data-ctx="all">All</div>
+        <div class="ctx-tab" data-ctx="hexaware">Hexaware</div>
+        <div class="ctx-tab" data-ctx="smartresq">SmartResQ</div>
+        <div class="ctx-tab" data-ctx="personal">Personal</div>
+      </div>
+      <div class="list-section" id="todos-list">
+        <div class="spinner"><div class="spin"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CALENDAR ──────────────────────────────────────── -->
+  <div class="screen" id="cal-screen">
+    <div style="padding:12px 0 0">
+      <div class="sec-head">
+        <span class="sec-title" id="cal-month-title">—</span>
+        <span class="sec-count" id="cal-event-count">—</span>
+      </div>
+      <div class="cal-wrap">
+        <div class="cal-dow">
+          <div class="cal-dow-label">Su</div><div class="cal-dow-label">Mo</div>
+          <div class="cal-dow-label">Tu</div><div class="cal-dow-label">We</div>
+          <div class="cal-dow-label">Th</div><div class="cal-dow-label">Fr</div>
+          <div class="cal-dow-label">Sa</div>
+        </div>
+        <div class="cal-grid" id="cal-grid"></div>
+      </div>
+      <div class="list-section" style="margin-top:16px">
+        <div class="list-header">
+          <span class="list-header-label">Upcoming events</span>
+        </div>
+        <div id="cal-events-list"><div class="spinner"><div class="spin"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── NOTES ─────────────────────────────────────────── -->
+  <div class="screen" id="notes-screen">
+    <div style="padding:12px 0 0">
+      <div class="sec-head"><span class="sec-title">Captured</span></div>
+      <div class="ctx-tabs">
+        <div class="ctx-tab active" data-view="notes">Notes</div>
+        <div class="ctx-tab" data-view="learnings">Learnings</div>
+      </div>
+      <div class="list-section" id="notes-list">
+        <div class="spinner"><div class="spin"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BOTTOM NAV ─────────────────────────────────────── -->
+  <div class="bottom-nav">
+    <div class="nav-item active" data-screen="home-screen">
+      <div class="nav-icon">🏠</div>
+      <div class="nav-label">Home</div>
+    </div>
+    <div class="nav-item" data-screen="chat-screen">
+      <div class="nav-icon">💬</div>
+      <div class="nav-label">Chat</div>
+    </div>
+    <div class="nav-item" data-screen="todos-screen">
+      <div class="nav-icon">☑️</div>
+      <div class="nav-label">Todos</div>
+    </div>
+    <div class="nav-item" data-screen="cal-screen">
+      <div class="nav-icon">📅</div>
+      <div class="nav-label">Calendar</div>
+    </div>
+    <div class="nav-item" data-screen="notes-screen">
+      <div class="nav-icon">📝</div>
+      <div class="nav-label">Notes</div>
+    </div>
+  </div>
+
+  <!-- Day event sheet -->
+  <div class="sheet-overlay" id="sheet-overlay"></div>
+  <div class="day-sheet" id="day-sheet">
+    <div class="day-sheet-handle"></div>
+    <div class="day-sheet-title" id="day-sheet-title"></div>
+    <div id="day-sheet-events"></div>
+  </div>
+
+</div>
+
+<script>
+// ── Config ─────────────────────────────────────────────────────
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const API   = (path) => `${path}?token=${TOKEN}`;
+
+const CTX_COLOR = { hexaware:'var(--hex)', smartresq:'var(--srq)', personal:'var(--per)' };
+const MODE_NAMES = { hexaware:'Hexaware', smartresq:'SmartResQ', personal:'Personal' };
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ── Shared state ───────────────────────────────────────────────
+let state = { todos:[], events:[], notes:[], learnings:[], todosCtx:'all', notesView:'notes', calEventMap:{} };
+
+// ── Navigation ─────────────────────────────────────────────────
+function switchScreen(screenId) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(screenId).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.toggle('active', n.dataset.screen === screenId);
+  });
+  if (screenId === 'chat-screen') scrollChat();
+}
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => switchScreen(item.dataset.screen));
+});
+
+// ── Accent color by mode ───────────────────────────────────────
+function setAccent(mode) {
+  const c = { hexaware:'#4f8ef7', smartresq:'#34d399', personal:'#a78bfa' }[mode] || '#4f8ef7';
+  document.documentElement.style.setProperty('--acc', c);
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+function fmtTime(iso) {
+  return new Date(iso).toLocaleString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:true });
+}
+function relTime(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(diff / 36e5), d = Math.floor(diff / 864e5);
+  if (d > 6) return new Date(iso).toLocaleDateString('en-IN', { day:'numeric', month:'short' });
+  if (d >= 1) return d === 1 ? 'yesterday' : `${d} days ago`;
+  if (h >= 1) return `${h}h ago`;
+  return 'just now';
+}
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Load home ──────────────────────────────────────────────────
+async function loadHome() {
+  try {
+    const r = await fetch(API('/dashboard/api/status'));
+    const d = await r.json();
+
+    setAccent(d.mode);
+    document.getElementById('mode-pill').textContent = d.modeLabel;
+    document.getElementById('stat-todos').textContent = d.todos.total;
+    document.getElementById('stat-prs').textContent   = d.prs;
+    document.getElementById('stat-issues').textContent = d.issues;
+    document.getElementById('home-mode-name').textContent = d.modeLabel;
+    document.getElementById('home-mode-desc').textContent = d.modeDesc;
+
+    const allTodos = [...d.todos.hexaware, ...d.todos.smartresq];
+    document.getElementById('home-todo-count').textContent = allTodos.length;
+    state.todos = allTodos;
+
+    const todoEl = document.getElementById('home-todos');
+    if (!allTodos.length) { todoEl.innerHTML = '<p class="nil">All clear — nothing pending</p>'; }
+    else {
+      todoEl.innerHTML = allTodos.map(t => {
+        const c = CTX_COLOR[t.context] || 'var(--per)';
+        return `<div class="row-item">
+          <div class="row-accent" style="background:${c}"></div>
+          <div class="row-content">
+            <div class="row-ctx" style="color:${c}">${esc(t.context)}</div>
+            <div class="row-text">${esc(t.content)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    const evEl = document.getElementById('home-events');
+    if (!d.upcoming.length) { evEl.innerHTML = '<p class="nil">Nothing scheduled</p>'; }
+    else {
+      evEl.innerHTML = d.upcoming.map(ev => {
+        const c = CTX_COLOR[ev.context] || 'var(--per)';
+        return `<div class="row-item">
+          <div class="row-accent" style="background:${c}"></div>
+          <div class="row-content">
+            <div class="row-text">${esc(ev.title)}</div>
+            <div class="row-meta">${fmtTime(ev.start_at)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) { console.error('loadHome', e); }
+}
+
+// ── Load all todos ─────────────────────────────────────────────
+async function loadTodos(ctx) {
+  const url = ctx && ctx !== 'all' ? API(`/dashboard/api/todos`) + `&context=${ctx}` : API('/dashboard/api/todos');
+  try {
+    const r = await fetch(url);
+    const d = await r.json();
+    const todos = ctx === 'all'
+      ? [...(d.hexaware||[]), ...(d.smartresq||[]), ...(d.personal||[])]
+      : (d[ctx] || (Array.isArray(d) ? d : []));
+    state.todos = todos;
+    renderTodos(todos);
+    document.getElementById('todos-total').textContent = `${todos.length} open`;
+  } catch(e) { console.error('loadTodos', e); }
+}
+
+function renderTodos(todos) {
+  const el = document.getElementById('todos-list');
+  if (!todos.length) { el.innerHTML = '<p class="nil">Nothing here — all clear</p>'; return; }
+  el.innerHTML = todos.map(t => {
+    const c = CTX_COLOR[t.context] || 'var(--per)';
+    return `<div class="row-item" data-id="${t.id}">
+      <div class="row-accent" style="background:${c}"></div>
+      <div class="row-content">
+        <div class="row-ctx" style="color:${c}">${esc(t.context)}</div>
+        <div class="row-text">${esc(t.content)}</div>
+      </div>
+      <div class="row-action">
+        <div class="check-box" onclick="completeTodo(this,'${esc(t.content)}')"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function completeTodo(box, content) {
+  box.classList.add('done');
+  box.textContent = '✓';
+  try {
+    await fetch(API('/dashboard/api/complete-todo'), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ content })
+    });
+    setTimeout(() => box.closest('.row-item').remove(), 600);
+  } catch(e) { box.classList.remove('done'); box.textContent = ''; }
+}
+
+document.querySelectorAll('#todos-screen .ctx-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#todos-screen .ctx-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.todosCtx = tab.dataset.ctx;
+    document.getElementById('todos-list').innerHTML = '<div class="spinner"><div class="spin"></div></div>';
+    loadTodos(tab.dataset.ctx);
+  });
+});
+
+// ── Calendar ───────────────────────────────────────────────────
+async function loadCalendar() {
+  try {
+    const r = await fetch(API('/dashboard/api/events'));
+    const events = await r.json();
+    state.events = events;
+
+    const now = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
+    const yr = now.getFullYear(), mo = now.getMonth(), today = now.getDate();
+    const daysInMonth = new Date(yr, mo+1, 0).getDate();
+    const firstDow = new Date(yr, mo, 1).getDay();
+
+    document.getElementById('cal-month-title').textContent = `${MONTH_NAMES[mo]} ${yr}`;
+
+    // Build event map
+    const evMap = {};
+    for (let d = 1; d <= daysInMonth; d++) evMap[d] = [];
+    for (const ev of events) {
+      const s = new Date(ev.start_at);
+      if (ev.recurrence === 'none') {
+        if (s.getFullYear()===yr && s.getMonth()===mo) evMap[s.getDate()]?.push(ev);
+      } else {
+        for (let d=1; d<=daysInMonth; d++) {
+          const date = new Date(yr,mo,d), dow = date.getDay();
+          const refDow = s.getDay();
+          if (ev.recurrence==='daily' ||
+              (ev.recurrence==='weekdays' && dow>=1&&dow<=5) ||
+              (ev.recurrence==='weekly' && dow===refDow)) {
+            const copy = {...ev, start_at: new Date(date).toISOString()};
+            evMap[d].push(copy);
+          }
+        }
+      }
+    }
+    state.calEventMap = evMap;
+
+    const totalEvs = Object.values(evMap).reduce((n,a)=>n+a.length,0);
+    document.getElementById('cal-event-count').textContent = `${totalEvs} events`;
+
+    // Render grid
+    const grid = document.getElementById('cal-grid');
+    const prevDays = new Date(yr,mo,0).getDate();
+    let cells = '';
+    const totalCells = firstDow + daysInMonth;
+    const trailing = totalCells%7===0 ? 0 : 7-(totalCells%7);
+
+    for (let i=0;i<firstDow;i++) {
+      cells += `<div class="cal-day other"><span class="cal-num">${prevDays-firstDow+i+1}</span></div>`;
+    }
+    for (let d=1;d<=daysInMonth;d++) {
+      const evs = evMap[d]||[];
+      const isToday = d===today;
+      const dots = evs.slice(0,3).map(ev=>{
+        const c = ev.context==='hexaware'?'#4f8ef7':ev.context==='smartresq'?'#34d399':'#a78bfa';
+        return `<div class="cal-dot" style="background:${c}"></div>`;
+      }).join('');
+      cells += `<div class="cal-day${isToday?' today':''}" data-day="${d}" onclick="openDaySheet(${d})">
+        <span class="cal-num">${d}</span>
+        ${dots?`<div class="cal-dots">${dots}</div>`:''}
+      </div>`;
+    }
+    for (let i=1;i<=trailing;i++) {
+      cells += `<div class="cal-day other"><span class="cal-num">${i}</span></div>`;
+    }
+    grid.innerHTML = cells;
+
+    // Upcoming list
+    const upcoming = events.filter(ev=>new Date(ev.start_at)>=now).slice(0,6);
+    const listEl = document.getElementById('cal-events-list');
+    if (!upcoming.length) { listEl.innerHTML='<p class="nil">Nothing scheduled</p>'; return; }
+    listEl.innerHTML = upcoming.map(ev=>{
+      const c = CTX_COLOR[ev.context]||'var(--per)';
+      const rec = ev.recurrence!=='none' ? ` <span style="color:var(--t3);font-size:10px">(${ev.recurrence})</span>` : '';
+      return `<div class="row-item">
+        <div class="row-accent" style="background:${c}"></div>
+        <div class="row-content">
+          <div class="row-text">${esc(ev.title)}${rec}</div>
+          <div class="row-meta">${fmtTime(ev.start_at)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error('loadCalendar',e); }
+}
+
+function openDaySheet(day) {
+  const evs = state.calEventMap[day]||[];
+  const now = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
+  const mo = now.getMonth();
+  document.getElementById('day-sheet-title').textContent = `${MONTH_SHORT[mo]} ${day}`;
+  const el = document.getElementById('day-sheet-events');
+  if (!evs.length) { el.innerHTML = '<div class="day-empty">Nothing scheduled</div>'; }
+  else {
+    el.innerHTML = evs.map(ev=>{
+      const c = CTX_COLOR[ev.context]||'var(--per)';
+      return `<div class="day-ev">
+        <div class="day-ev-time">${fmtTime(ev.start_at)}</div>
+        <div class="day-ev-body"><span style="color:${c}">● </span>${esc(ev.title)}</div>
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('day-sheet').classList.add('open');
+  document.getElementById('sheet-overlay').classList.add('open');
+}
+
+document.getElementById('sheet-overlay').addEventListener('click', () => {
+  document.getElementById('day-sheet').classList.remove('open');
+  document.getElementById('sheet-overlay').classList.remove('open');
+});
+
+// ── Notes & Learnings ──────────────────────────────────────────
+async function loadNotes() {
+  try {
+    const [nr, lr] = await Promise.all([
+      fetch(API('/dashboard/api/notes?limit=20')).then(r=>r.json()),
+      fetch(API('/dashboard/api/learnings')).then(r=>r.json()),
+    ]);
+    state.notes = Array.isArray(nr) ? nr : [];
+    state.learnings = Array.isArray(lr) ? lr : [];
+    renderNotesView(state.notesView);
+  } catch(e) { console.error('loadNotes',e); }
+}
+
+function renderNotesView(view) {
+  const el = document.getElementById('notes-list');
+  if (view === 'notes') {
+    if (!state.notes.length) { el.innerHTML='<p class="nil">No notes yet</p>'; return; }
+    el.innerHTML = state.notes.map(n=>{
+      const c = CTX_COLOR[n.context]||'var(--per)';
+      return `<div class="note-card">
+        <div class="note-ctx" style="color:${c}">${esc(n.context)}</div>
+        <div class="note-text">${esc(n.content)}</div>
+        <div class="note-time">${relTime(n.created_at)}</div>
+      </div>`;
+    }).join('');
+  } else {
+    if (!state.learnings.length) { el.innerHTML='<p class="nil">All caught up</p>'; return; }
+    el.innerHTML = state.learnings.map(l=>{
+      return `<div class="learn-card">
+        <div class="learn-topic">${esc(l.topic)}</div>
+        <div class="learn-body">${esc(l.content)}</div>
+        <div class="note-time">${relTime(l.created_at)}</div>
+      </div>`;
+    }).join('');
+  }
+}
+
+document.querySelectorAll('#notes-screen .ctx-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#notes-screen .ctx-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    state.notesView = tab.dataset.view;
+    renderNotesView(tab.dataset.view);
+  });
+});
+
+// ── Chat ───────────────────────────────────────────────────────
+const chatMsgs = document.getElementById('chat-msgs');
+const chatInput = document.getElementById('chat-input');
+const sendBtn   = document.getElementById('send-btn');
+const typing    = document.getElementById('typing');
+
+function scrollChat() {
+  chatMsgs.scrollTop = chatMsgs.scrollHeight;
+}
+
+function addMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = `msg ${role}`;
+  d.innerHTML = `<div class="bubble">${esc(text)}</div><div class="msg-time">${new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</div>`;
+  chatMsgs.insertBefore(d, typing);
+  scrollChat();
+  return d;
+}
+
+async function sendMessage() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+  sendBtn.disabled = true;
+  addMsg('user', msg);
+  typing.classList.add('visible');
+  scrollChat();
+
+  try {
+    // Try streaming first
+    const es = new EventSource(API('/dashboard/chat/stream') + '&' + new URLSearchParams({message:msg}));
+    // Streaming via fetch+ReadableStream (SSE requires GET — use POST with fetch stream)
+    const resp = await fetch(API('/dashboard/chat/stream'), {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message:msg}),
+    });
+
+    if (!resp.body) throw new Error('no body');
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', bluBubble = null;
+
+    typing.classList.remove('visible');
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const ev = JSON.parse(line.slice(5).trim());
+          if (ev.t) {
+            if (!bluBubble) {
+              const d = document.createElement('div');
+              d.className = 'msg blu';
+              d.innerHTML = '<div class="bubble"></div>';
+              chatMsgs.insertBefore(d, typing);
+              bluBubble = d.querySelector('.bubble');
+            }
+            bluBubble.textContent += ev.t;
+            scrollChat();
+          }
+          if (ev.reply && !bluBubble) {
+            addMsg('blu', ev.reply);
+          }
+        } catch {}
+      }
+    }
+  } catch(e) {
+    // Fallback to regular POST
+    try {
+      typing.classList.add('visible');
+      const r = await fetch(API('/dashboard/chat'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({message:msg}),
+      });
+      const d = await r.json();
+      typing.classList.remove('visible');
+      if (d.reply) addMsg('blu', d.reply);
+    } catch(e2) {
+      typing.classList.remove('visible');
+      addMsg('blu', 'Something went wrong. Try again.');
+    }
+  }
+
+  sendBtn.disabled = false;
+}
+
+sendBtn.addEventListener('click', sendMessage);
+chatInput.addEventListener('keydown', e => {
+  if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+});
+
+// ── Lazy load screens ──────────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    const screen = item.dataset.screen;
+    if (screen === 'todos-screen' && !state.todos.length) loadTodos('all');
+    if (screen === 'cal-screen' && !state.events.length) loadCalendar();
+    if (screen === 'notes-screen' && !state.notes.length) loadNotes();
+  });
+});
+
+// ── Init ────────────────────────────────────────────────────────
+loadHome();
+</script>
+</body>
+</html>
