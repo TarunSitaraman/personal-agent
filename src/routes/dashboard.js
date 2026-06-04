@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
 const { handleIncoming } = require('../agent/brain');
@@ -18,6 +18,19 @@ router.get('/api/todos', async (req, res) => {
       smartresq: todos.filter(t => t.context === 'smartresq'),
       personal: todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq'),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Complete todo by content match
+router.post('/api/complete-todo', express.json(), async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  const { content } = req.body;
+  if (!content) return res.status(400).json({ error: 'No content' });
+  try {
+    await completeTodoByContent(content);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
