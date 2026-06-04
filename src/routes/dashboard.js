@@ -3,7 +3,7 @@ const axios = require('axios');
 const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
-const { handleIncoming } = require('../agent/brain');
+const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
 
 const router = express.Router();
@@ -36,7 +36,34 @@ router.post('/api/complete-todo', express.json(), async (req, res) => {
   }
 });
 
-// Chat — text message
+// Chat — streaming text
+router.post('/chat/stream', express.json(), async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).end();
+  const { message } = req.body;
+  if (!message?.trim()) return res.status(400).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (event, data) => {
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+  };
+
+  try {
+    const reply = await handleIncomingStream(message.trim(), (token) => {
+      send('token', { t: token });
+    });
+    send('done', { reply: reply || '' });
+  } catch (err) {
+    console.error('Stream chat error:', err.message);
+    send('error', { message: err.message });
+  }
+  res.end();
+});
+
+// Chat — text message (fallback, kept for WhatsApp compatibility)
 router.post('/chat', express.json(), async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
   const { message } = req.body;

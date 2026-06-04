@@ -98,6 +98,59 @@ CRITICAL: Always respond with ONLY a single valid JSON object. No text before or
 
 WHEN UNSURE: If you are uncertain about any detail — context, time, what to save, what was meant — always ask a clarifying question instead of guessing. A wrong action is worse than a clarifying question.`;
 
+async function callLLMStream(messages, onToken) {
+  let lastErr;
+  for (const model of MODEL_CHAIN) {
+    try {
+      const response = await axios.post(
+        OPENROUTER_URL,
+        { model, messages, stream: true },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
+            'X-Title': 'Personal Agent',
+          },
+          responseType: 'stream',
+          timeout: 60000,
+        }
+      );
+      return await new Promise((resolve, reject) => {
+        let buf = '', full = '';
+        response.data.on('data', chunk => {
+          buf += chunk.toString();
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]') return;
+            try {
+              const token = JSON.parse(raw).choices?.[0]?.delta?.content || '';
+              if (token) { full += token; onToken(token, full); }
+            } catch {}
+          }
+        });
+        response.data.on('end', () => resolve(full));
+        response.data.on('error', reject);
+      });
+    } catch (err) {
+      console.warn(`[LLM stream] ${model} failed (${err.response?.status || err.message}), trying next...`);
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('All models failed');
+}
+
+// Extracts the reply string from partial streaming JSON
+function extractPartialReply(content) {
+  const m = content.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"?/);
+  if (!m) return null;
+  try { return JSON.parse('"' + m[1] + '"'); } catch {
+    return m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  }
+}
+
 async function callLLM(messages, jsonMode = false) {
   let lastErr;
   for (const model of MODEL_CHAIN) {
@@ -209,6 +262,71 @@ ${insightsBlock}`;
     await memory.saveMessage("user", userMessage);
     await memory.saveMessage("model", raw);
     return raw;
+  }
+
+  const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
+  await memory.saveMessage("user", userMessage);
+  await memory.saveMessage("model", reply);
+
+  if ((msgCount + 2) % 20 === 0) {
+    analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
+  }
+
+  return reply;
+}
+
+// Streaming version — streams reply tokens, executes action after full response
+async function handleIncomingStream(userMessage, onToken) {
+  const mode = getCurrentMode();
+  const modeDesc = getModeDescription(mode);
+
+  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount] = await Promise.all([
+    memory.getRecentHistory(10),
+    memory.getSummaryStats(),
+    getOpenPRs(),
+    getOpenIssues(),
+    memory.getRecentInsights(5),
+    memory.getAllKnowledge(),
+    memory.getUpcomingEvents(24),
+    memory.getMessageCount(),
+  ]);
+
+  const todoBlock = [
+    ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
+    ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
+  ];
+  const knowledgeBlock = knowledge.length
+    ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}` : '';
+  const insightsBlock = insights.length ? `Behavioural insights:\n${insights.join('\n')}` : '';
+  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+  const eventsBlock = upcomingEvents.length
+    ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}` : '';
+
+  const contextBlock = `Current time: ${now} IST\nCurrent mode: ${mode}\n${modeDesc}\n\nPending todos (${todoBlock.length}):\n${todoBlock.join('\n') || 'none'}\n\nUnreviewed learnings: ${stats.unreviewed.length}\nOpen PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}\nOpen Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}\n${eventsBlock}\n${knowledgeBlock}\n${insightsBlock}`;
+
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map(h => ({ role: h.role === "user" ? "user" : "assistant", content: h.content })),
+    { role: "user", content: `${contextBlock}\n\nUser message: ${userMessage}` },
+  ];
+
+  let sentLen = 0;
+  const full = await callLLMStream(messages, (token, accumulated) => {
+    const reply = extractPartialReply(accumulated);
+    if (reply && reply.length > sentLen) {
+      onToken(reply.slice(sentLen));
+      sentLen = reply.length;
+    }
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(full);
+    if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
+  } catch {
+    await memory.saveMessage("user", userMessage);
+    await memory.saveMessage("model", full);
+    return full;
   }
 
   const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
@@ -593,4 +711,4 @@ Keep it honest, practical, under 15 lines. Plain text only.`;
   return await callLLM([{ role: 'user', content: prompt }]);
 }
 
-module.exports = { handleIncoming, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview };
+module.exports = { handleIncoming, handleIncomingStream, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview };

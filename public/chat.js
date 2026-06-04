@@ -26,11 +26,13 @@
     if (typing) msgs.insertBefore(d, typing);
     else msgs.appendChild(d);
     msgs.scrollTop = msgs.scrollHeight;
+    return bubble;
   }
 
   window.bluSend = async function () {
     var text = (input.value || '').trim();
     if (!text || busy) return;
+
     appendMsg('user', text);
     input.value = '';
     input.style.height = '';
@@ -38,22 +40,70 @@
     msgs.scrollTop = msgs.scrollHeight;
     busy = true;
     window._bluChatBusy = true;
+
+    // Create reply bubble for streaming
+    if (typing) typing.classList.remove('visible');
+    var replyRow = document.createElement('div');
+    replyRow.className = 'chat-msg blu';
+    var replyBubble = document.createElement('div');
+    replyBubble.className = 'chat-bubble';
+    replyBubble.innerHTML = '<span style="opacity:.4">●●●</span>';
+    replyRow.appendChild(replyBubble);
+    if (typing) msgs.insertBefore(replyRow, typing);
+    else msgs.appendChild(replyRow);
+    msgs.scrollTop = msgs.scrollHeight;
+
     var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, 60000);
+    var timer = setTimeout(function () { ctrl.abort(); }, 90000);
+    var gotContent = false;
+
     try {
-      var r = await fetch('/dashboard/chat?token=' + token, {
+      var r = await fetch('/dashboard/chat/stream?token=' + token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text }),
         signal: ctrl.signal
       });
+
       clearTimeout(timer);
-      var d = await r.json();
-      appendMsg('blu', d.reply || d.error || '(no response)');
-      if (window.refreshTodos) window.refreshTodos();
+
+      var reader = r.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+      var replyText = '';
+
+      while (true) {
+        var result = await reader.read();
+        if (result.done) break;
+        buf += decoder.decode(result.value, { stream: true });
+        var lines = buf.split('\n');
+        buf = lines.pop();
+
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (!line.startsWith('data:')) continue;
+          try {
+            var evt = JSON.parse(line.slice(5));
+            if (evt.t !== undefined) {
+              if (!gotContent) { replyBubble.innerHTML = ''; gotContent = true; }
+              replyText += evt.t;
+              replyBubble.innerHTML = esc(replyText);
+              msgs.scrollTop = msgs.scrollHeight;
+            } else if (evt.reply !== undefined) {
+              // Final reply — use it if streaming missed chars
+              var final = evt.reply || replyText;
+              replyBubble.innerHTML = esc(final);
+              msgs.scrollTop = msgs.scrollHeight;
+              if (window.refreshTodos) window.refreshTodos();
+            } else if (evt.message) {
+              replyBubble.innerHTML = 'Error: ' + esc(evt.message);
+            }
+          } catch {}
+        }
+      }
     } catch (e) {
       clearTimeout(timer);
-      appendMsg('blu', e.name === 'AbortError' ? 'Timed out — try again.' : 'Error: ' + e.message);
+      replyBubble.innerHTML = e.name === 'AbortError' ? 'Timed out — try again.' : 'Error: ' + esc(e.message);
     } finally {
       busy = false;
       window._bluChatBusy = false;
@@ -92,6 +142,7 @@
         });
         var d = await r.json();
         appendMsg('blu', d.reply || d.error || '(no response)');
+        if (window.refreshTodos) window.refreshTodos();
       } catch (e) {
         appendMsg('blu', 'Image error: ' + e.message);
       } finally {
@@ -124,7 +175,6 @@
     if (listen) { recog.stop(); } else { recog.start(); listen = true; vBtn.classList.add('recording'); }
   };
 
-  // Load history from data attribute (base64 JSON injected server-side)
   try {
     var raw = msgs.dataset.history;
     if (raw) {
@@ -134,5 +184,5 @@
         msgs.scrollTop = msgs.scrollHeight;
       }
     }
-  } catch (e) { /* history load failed — chat still works */ }
+  } catch (e) {}
 })();
