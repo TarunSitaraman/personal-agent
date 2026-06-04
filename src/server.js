@@ -7,6 +7,7 @@ const dashboardRouter = require('./routes/dashboard');
 const { initContext } = require('./agent/context');
 
 const app = express();
+app.use(express.static('public'));
 app.use(express.json());
 app.use('/webhook', webhookRouter);
 app.use('/dashboard', dashboardRouter);

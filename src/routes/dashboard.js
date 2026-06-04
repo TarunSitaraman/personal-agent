@@ -681,7 +681,7 @@ header {
         <span class="sec-title">Blu</span>
         <span class="sec-count" style="color:#34d399">● online</span>
       </div>
-      <div class="chat-msgs" id="chat-msgs">
+      <div class="chat-msgs" id="chat-msgs" data-history="${Buffer.from(JSON.stringify(chatHistory)).toString('base64')}">
         <div class="chat-typing" id="chat-typing">
           <div class="chat-bubble" style="padding:10px 14px;background:var(--s2);border:1px solid var(--line);border-bottom-left-radius:3px;">
             <span></span><span style="margin:0 3px"></span><span></span>
@@ -785,114 +785,7 @@ header {
 })();
 </script>
 
-<script>
-// window.bluSend is set as the very first statement — nothing above it can throw
-window.bluSend = async function() {
-  var msgs   = document.getElementById('chat-msgs');
-  var input  = document.getElementById('chat-input');
-  var typing = document.getElementById('chat-typing');
-  var token  = new URLSearchParams(window.location.search).get('token') || '';
-
-  function esc(s) { return String(s||'').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('\n').join('<br>'); }
-  function appendMsg(role, text, imgSrc) {
-    if (typing) typing.classList.remove('visible');
-    var d = document.createElement('div');
-    d.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
-    d.innerHTML = (imgSrc ? '<img class="chat-img-preview" src="'+imgSrc+'">' : '') + '<div class="chat-bubble">' + esc(text) + '</div>';
-    if (typing) msgs.insertBefore(d, typing); else msgs.appendChild(d);
-    msgs.scrollTop = msgs.scrollHeight;
-  }
-
-  var text = (input.value || '').trim();
-  if (!text || window._bluBusy) return;
-  appendMsg('user', text);
-  input.value = ''; input.style.height = '';
-  if (typing) typing.classList.add('visible');
-  msgs.scrollTop = msgs.scrollHeight;
-  window._bluBusy = true; window._bluChatBusy = true;
-  var ctrl = new AbortController();
-  var timer = setTimeout(function() { ctrl.abort(); }, 60000);
-  try {
-    var r = await fetch('/dashboard/chat?token=' + token, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }), signal: ctrl.signal
-    });
-    clearTimeout(timer);
-    var d = await r.json();
-    appendMsg('blu', d.reply || d.error || '(no response)');
-  } catch(e) {
-    clearTimeout(timer);
-    appendMsg('blu', e.name === 'AbortError' ? 'Timed out — try again.' : 'Error: ' + e.message);
-  } finally {
-    window._bluBusy = false; window._bluChatBusy = false;
-  }
-};
-
-// Everything below is best-effort setup — wrapped so any throw can't affect window.bluSend
-try {
-  var _inp = document.getElementById('chat-input');
-  _inp.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window.bluSend(); } });
-  _inp.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
-
-  document.getElementById('chat-img-btn').onclick = function() { document.getElementById('chat-img-input').click(); };
-  document.getElementById('chat-img-input').addEventListener('change', async function() {
-    var file = this.files[0]; if (!file) return;
-    this.value = '';
-    var reader = new FileReader();
-    reader.onload = async function(ev) {
-      var msgs = document.getElementById('chat-msgs'), typing = document.getElementById('chat-typing');
-      var token = new URLSearchParams(window.location.search).get('token') || '';
-      var input = document.getElementById('chat-input');
-      var dataUrl = ev.target.result, caption = (input.value || '').trim();
-      function esc(s) { return String(s||'').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('\n').join('<br>'); }
-      function appendMsg(role, text, imgSrc) {
-        if (typing) typing.classList.remove('visible');
-        var d = document.createElement('div'); d.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
-        d.innerHTML = (imgSrc ? '<img class="chat-img-preview" src="'+imgSrc+'">' : '') + '<div class="chat-bubble">' + esc(text) + '</div>';
-        if (typing) msgs.insertBefore(d, typing); else msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
-      }
-      appendMsg('user', caption || 'Image', dataUrl);
-      input.value = ''; input.style.height = '';
-      if (typing) typing.classList.add('visible');
-      window._bluBusy = true;
-      try {
-        var r = await fetch('/dashboard/chat/image?token=' + token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64: dataUrl.split(',')[1], mimeType: file.type, caption: caption }) });
-        var d = await r.json(); appendMsg('blu', d.reply || d.error || '(no response)');
-      } catch(e) { appendMsg('blu', 'Image error: ' + e.message); }
-      finally { window._bluBusy = false; }
-    };
-    reader.readAsDataURL(file);
-  });
-
-  var _SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var _recog = _SR ? new _SR() : null, _listening = false;
-  var _voiceBtn = document.getElementById('chat-voice-btn');
-  if (_recog) {
-    _recog.lang = 'en-IN'; _recog.interimResults = false;
-    _recog.onresult = function(e) { _inp.value = e.results[0][0].transcript; _inp.dispatchEvent(new Event('input')); _listening = false; _voiceBtn.classList.remove('recording'); };
-    _recog.onend = function() { _listening = false; _voiceBtn.classList.remove('recording'); };
-  }
-  _voiceBtn.onclick = function() {
-    if (!_recog) { alert('Voice not supported in this browser.'); return; }
-    if (_listening) { _recog.stop(); } else { _recog.start(); _listening = true; _voiceBtn.classList.add('recording'); }
-  };
-
-  var _hist = JSON.parse(atob('${Buffer.from(JSON.stringify(chatHistory)).toString('base64')}'));
-  if (Array.isArray(_hist)) {
-    var _msgs = document.getElementById('chat-msgs'), _typing = document.getElementById('chat-typing');
-    function _esc(s) { return String(s||'').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('\n').join('<br>'); }
-    _hist.forEach(function(m) {
-      if (!m || !m.content) return;
-      if (_typing) _typing.classList.remove('visible');
-      var d = document.createElement('div'); d.className = 'chat-msg ' + (m.role === 'user' ? 'user' : 'blu');
-      d.innerHTML = '<div class="chat-bubble">' + _esc(m.content) + '</div>';
-      if (_typing) _msgs.insertBefore(d, _typing); else _msgs.appendChild(d);
-    });
-    _msgs.scrollTop = _msgs.scrollHeight;
-  }
-} catch(e) {}
-</script>
+<script src="/chat.js"></script>
 </body>
 </html>`);
 
