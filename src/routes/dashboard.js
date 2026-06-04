@@ -186,7 +186,7 @@ router.get('/', async (req, res) => {
       monthEventMap[d].sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
     }
 
-    const monthMapJson = JSON.stringify(monthEventMap);
+    const monthMapJson = JSON.stringify(monthEventMap).replace(/<\//g, '<\\/');
     const totalMonthEvents = Object.values(monthEventMap).reduce((n, arr) => n + arr.length, 0);
 
     const renderDots = (events) => {
