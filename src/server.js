@@ -20,11 +20,13 @@ app.listen(PORT, async () => {
   startScheduler();
 
   // Keep Render free tier awake — ping self every 4 minutes
-  const selfUrl = process.env.RENDER_EXTERNAL_URL;
+  const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL;
   if (selfUrl) {
+    console.log(`Keep-alive ping active → ${selfUrl}/health`);
     setInterval(() => {
-      axios.get(`${selfUrl}/health`).catch(() => {});
+      axios.get(`${selfUrl}/health`).catch(err => console.warn('[keep-alive] ping failed:', err.message));
     }, 4 * 60 * 1000);
-    console.log('Keep-alive ping active');
+  } else {
+    console.warn('Keep-alive disabled — set RENDER_EXTERNAL_URL or APP_URL env var');
   }
 });

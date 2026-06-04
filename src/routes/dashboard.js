@@ -788,7 +788,7 @@ header {
 <script>
 // Chat — isolated script block so outer JS errors can't affect it
 (function() {
-  var TOKEN = (window.location.search.match(/token=([^&]+)/) || [])[1] || '';
+  var TOKEN = new URLSearchParams(window.location.search).get('token') || '';
   var msgsEl  = document.getElementById('chat-msgs');
   var inputEl = document.getElementById('chat-input');
   var sendBtn = document.getElementById('chat-send-btn');
@@ -831,18 +831,24 @@ header {
     typing.classList.add('visible');
     msgsEl.scrollTop = msgsEl.scrollHeight;
     setBusy(true);
+    var ctrl = new AbortController();
+    var timer = setTimeout(function() { ctrl.abort(); }, 60000);
     try {
       var r = await fetch('/dashboard/chat?token=' + TOKEN, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ message: text }),
+        signal: ctrl.signal
       });
+      clearTimeout(timer);
       var d = await r.json();
       appendMsg('blu', d.reply || d.error || '(no response)');
     } catch(e) {
-      appendMsg('blu', 'Connection error — ' + e.message);
+      clearTimeout(timer);
+      appendMsg('blu', e.name === 'AbortError' ? 'Timed out — server may be waking up, try again in a moment.' : 'Connection error — ' + e.message);
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   sendBtn.onclick = doSend;
