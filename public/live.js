@@ -113,6 +113,8 @@
                       '.row:hover .todo-done-hint{display:block}';
   document.head.appendChild(style);
 
+  // Run immediately so initial server-rendered todos get swipe/dblclick handlers
+  window.refreshTodos();
   setInterval(window.refreshTodos, 60000);
 
   var es = new EventSource('/dashboard/stream?token=' + token);
