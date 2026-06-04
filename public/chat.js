@@ -50,6 +50,7 @@
       clearTimeout(timer);
       var d = await r.json();
       appendMsg('blu', d.reply || d.error || '(no response)');
+      if (window.refreshTodos) window.refreshTodos();
     } catch (e) {
       clearTimeout(timer);
       appendMsg('blu', e.name === 'AbortError' ? 'Timed out — try again.' : 'Error: ' + e.message);
