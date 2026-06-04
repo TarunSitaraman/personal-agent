@@ -52,9 +52,15 @@ router.post('/chat/stream', express.json(), async (req, res) => {
   };
 
   try {
-    const reply = await handleIncomingStream(message.trim(), (token) => {
-      send('token', { t: token });
-    });
+    let reply;
+    try {
+      reply = await handleIncomingStream(message.trim(), (token) => {
+        send('token', { t: token });
+      });
+    } catch (streamErr) {
+      console.warn('Stream failed, falling back to non-streaming:', streamErr.message);
+      reply = await handleIncoming(message.trim());
+    }
     send('done', { reply: reply || '' });
   } catch (err) {
     console.error('Stream chat error:', err.message);

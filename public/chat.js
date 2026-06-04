@@ -90,9 +90,9 @@
               replyBubble.innerHTML = esc(replyText);
               msgs.scrollTop = msgs.scrollHeight;
             } else if (evt.reply !== undefined) {
-              // Final reply — use it if streaming missed chars
+              // Final reply — covers both streaming completion and non-streaming fallback
               var final = evt.reply || replyText;
-              replyBubble.innerHTML = esc(final);
+              if (final) replyBubble.innerHTML = esc(final);
               msgs.scrollTop = msgs.scrollHeight;
               if (window.refreshTodos) window.refreshTodos();
             } else if (evt.message) {
