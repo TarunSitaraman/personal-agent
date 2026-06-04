@@ -294,6 +294,23 @@ async function getEventsStartingSoon(minutesFrom = 14, minutesTo = 16) {
   return rows;
 }
 
+async function deleteNote(id) {
+  await pool.query('DELETE FROM notes WHERE id = $1', [id]);
+}
+
+async function getLastCreatedItem() {
+  const { rows } = await pool.query(`
+    SELECT type, id, content, created_at FROM (
+      SELECT 'todo' AS type, id, content, created_at FROM todos WHERE done = false ORDER BY created_at DESC LIMIT 1
+      UNION ALL
+      SELECT 'note' AS type, id, content, created_at FROM notes ORDER BY created_at DESC LIMIT 1
+      UNION ALL
+      SELECT 'event' AS type, id, title AS content, created_at FROM events ORDER BY created_at DESC LIMIT 1
+    ) sub ORDER BY created_at DESC LIMIT 1
+  `);
+  return rows[0] || null;
+}
+
 // --- Stale todos ---
 
 async function getStaleTodos(days = 5) {
@@ -437,7 +454,7 @@ async function getSummaryStats() {
 
 module.exports = {
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
-  addNote, updateNoteTags, getRecentNotes,
+  addNote, updateNoteTags, getRecentNotes, deleteNote, getLastCreatedItem,
   addLearning, getUnreviewedLearnings, markLearningReviewed,
   saveMessage, getRecentHistory,
   addReminder, getDueReminders, getDueTodoReminders,
