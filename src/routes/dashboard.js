@@ -8,6 +8,21 @@ const hub = require('../events/hub');
 
 const router = express.Router();
 
+// Todos API — for live sidebar refresh
+router.get('/api/todos', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const todos = await getPendingTodos();
+    res.json({
+      hexaware: todos.filter(t => t.context === 'hexaware'),
+      smartresq: todos.filter(t => t.context === 'smartresq'),
+      personal: todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq'),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Chat — text message
 router.post('/chat', express.json(), async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
@@ -628,12 +643,14 @@ header {
     <div class="section">
       <div class="sec-head">
         <span class="sec-title">Open Todos</span>
-        <span class="sec-count">${allTodos.length}</span>
+        <span class="sec-count" id="todos-count">${allTodos.length}</span>
       </div>
-      ${hexTodos.length ? renderTodoSection(hexTodos, 'Hexaware', '#4f8ef7') : ''}
-      ${srqTodos.length ? renderTodoSection(srqTodos, 'SmartResQ', '#34d399') : ''}
-      ${personalTodos.length ? renderTodoSection(personalTodos, 'Personal', '#a78bfa') : ''}
-      ${!allTodos.length ? '<p class="nil">nothing open — all clear</p>' : ''}
+      <div id="sidebar-todos">
+        ${hexTodos.length ? renderTodoSection(hexTodos, 'Hexaware', '#4f8ef7') : ''}
+        ${srqTodos.length ? renderTodoSection(srqTodos, 'SmartResQ', '#34d399') : ''}
+        ${personalTodos.length ? renderTodoSection(personalTodos, 'Personal', '#a78bfa') : ''}
+        ${!allTodos.length ? '<p class="nil">nothing open — all clear</p>' : ''}
+      </div>
     </div>
 
 
@@ -775,17 +792,12 @@ header {
 
   document.addEventListener('click', closePopup);
 
-  // Live refresh via SSE
-  (function() {
-    var token = new URLSearchParams(window.location.search).get('token');
-    var es = new EventSource('/dashboard/stream?token=' + token);
-    es.addEventListener('refresh', function() { if (!window._bluChatBusy) window.location.reload(); });
-    es.onerror = function() { es.close(); setTimeout(function() { window.location.reload(); }, 30000); };
-  })();
+  // SSE handled by live.js
 })();
 </script>
 
 <script src="/chat.js"></script>
+<script src="/live.js"></script>
 </body>
 </html>`);
 
