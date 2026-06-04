@@ -7,6 +7,17 @@ const hub = require('../events/hub');
 
 const router = express.Router();
 
+// In-memory log of last 10 webhook hits for diagnostics
+const webhookLog = [];
+function logHit(entry) {
+  webhookLog.unshift({ t: new Date().toISOString(), ...entry });
+  if (webhookLog.length > 10) webhookLog.pop();
+}
+
+router.get('/log', (req, res) => {
+  res.json(webhookLog);
+});
+
 router.get('/', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -26,10 +37,15 @@ router.post('/', async (req, res) => {
     const change = entry?.changes?.[0];
     const message = change?.value?.messages?.[0];
 
+    logHit({ hasMessage: !!message, from: message?.from, type: message?.type });
+
     if (!message) return;
 
     const from = message.from;
-    if (from !== process.env.MY_WHATSAPP_NUMBER) return;
+    if (from !== process.env.MY_WHATSAPP_NUMBER) {
+      logHit({ filtered: true, from, expected: process.env.MY_WHATSAPP_NUMBER });
+      return;
+    }
 
     let text = '';
 
