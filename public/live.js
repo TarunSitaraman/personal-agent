@@ -64,8 +64,7 @@
         content: t.content,
         html: '<span class="row-num">' + (i + 1) + '</span>' +
               '<span class="row-tag" style="color:' + color + '">' + label.toLowerCase() + '</span>' +
-              '<span class="row-body">' + esc(t.content) + '</span>' +
-              '<span class="todo-done-hint">swipe ← or double-click to complete</span>'
+              '<span class="row-body">' + esc(t.content) + '</span>'
       };
     });
   }
@@ -107,11 +106,6 @@
       .catch(function () {});
   };
 
-  // Inject hint CSS
-  var style = document.createElement('style');
-  style.textContent = '.todo-done-hint{display:none;font-size:10px;color:var(--t3);margin-left:auto;padding-left:8px;flex-shrink:0}' +
-                      '.row:hover .todo-done-hint{display:block}';
-  document.head.appendChild(style);
 
   // Run immediately so initial server-rendered todos get swipe/dblclick handlers
   window.refreshTodos();
