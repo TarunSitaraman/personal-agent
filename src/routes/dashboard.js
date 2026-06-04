@@ -98,15 +98,17 @@ router.post('/chat/stream', express.json(), async (req, res) => {
 
   try {
     let reply;
+    let streamed = false;
     try {
       reply = await handleIncomingStream(message.trim(), (token) => {
+        streamed = true;
         send('token', { t: token });
       });
     } catch (streamErr) {
-      console.warn('Stream failed, falling back to non-streaming:', streamErr.message);
+      console.warn('Stream failed, falling back:', streamErr.message);
       reply = await handleIncoming(message.trim());
     }
-    send('done', { reply: reply || '' });
+    send('done', { reply: reply || '', streamed });
   } catch (err) {
     console.error('Stream chat error:', err.message);
     send('error', { message: err.message });

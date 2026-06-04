@@ -201,7 +201,7 @@ async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
-  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount] = await Promise.all([
+  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, contextSummary] = await Promise.all([
     memory.getRecentHistory(10),
     memory.getSummaryStats(),
     getOpenPRs(),
@@ -210,6 +210,7 @@ async function handleIncoming(userMessage) {
     memory.getAllKnowledge(),
     memory.getUpcomingEvents(24),
     memory.getMessageCount(),
+    memory.getContextSummary(),
   ]);
 
   const todoBlock = [
@@ -230,6 +231,8 @@ async function handleIncoming(userMessage) {
     ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}`
     : '';
 
+  const summaryBlock = contextSummary ? `Earlier conversation summary:\n${contextSummary}` : '';
+
   const contextBlock = `Current time: ${now} IST
 Current mode: ${mode}
 ${modeDesc}
@@ -242,7 +245,8 @@ Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
 Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
 ${eventsBlock}
 ${knowledgeBlock}
-${insightsBlock}`;
+${insightsBlock}
+${summaryBlock}`;
 
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -272,9 +276,21 @@ ${insightsBlock}`;
 
   if ((msgCount + 2) % 20 === 0) {
     analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
+    refreshContextSummary().catch(err => console.error('Summary refresh error:', err.message));
   }
 
   return reply;
+}
+
+async function refreshContextSummary() {
+  const history = await memory.getRecentHistory(40);
+  if (history.length < 10) return;
+  const histText = history.map(h => `${h.role}: ${h.content}`).join('\n');
+  const raw = await callLLM([{
+    role: 'user',
+    content: `Summarize this conversation in 3-5 sentences. Focus on decisions made, things saved, key context — NOT greetings or small talk.\n\n${histText}\n\nSummary:`,
+  }]);
+  await memory.saveContextSummary(raw.trim());
 }
 
 // Streaming version — streams reply tokens, executes action after full response

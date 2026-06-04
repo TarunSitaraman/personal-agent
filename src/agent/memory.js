@@ -381,6 +381,24 @@ async function getYesterdayActivity(context) {
   return { completed: completed.rows, notes: notes.rows };
 }
 
+// --- Rolling context summary (stored in state table, 24h TTL) ---
+
+async function saveContextSummary(summary) {
+  await pool.query(
+    `INSERT INTO state (key, value, expires_at)
+     VALUES ('context_summary', $1, NOW() + INTERVAL '24 hours')
+     ON CONFLICT (key) DO UPDATE SET value = $1, expires_at = NOW() + INTERVAL '24 hours'`,
+    [summary]
+  );
+}
+
+async function getContextSummary() {
+  const { rows } = await pool.query(
+    `SELECT value FROM state WHERE key = 'context_summary' AND expires_at > NOW()`
+  );
+  return rows[0]?.value || null;
+}
+
 // --- Mode override (persisted so it survives restarts) ---
 
 async function saveModeOverride(mode, expiry) {
@@ -460,6 +478,7 @@ module.exports = {
   addReminder, getDueReminders, getDueTodoReminders,
   saveInsight, getRecentInsights, getMessageCount,
   saveKnowledge, getAllKnowledge, trimConversations,
+  saveContextSummary, getContextSummary,
   saveModeOverride, loadModeOverride, clearModeOverride,
   addEvent, getWeekEvents, getUpcomingEvents,
   listEvents, findEventByTitle, deleteEvent, updateEvent, getEventsStartingSoon,
