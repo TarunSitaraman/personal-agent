@@ -8,6 +8,39 @@ const hub = require('../events/hub');
 
 const router = express.Router();
 
+// Diagnostic — tests LLM + WhatsApp sending
+router.get('/test', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).send('Unauthorized');
+  const { sendMessage } = require('../whatsapp/send');
+  const results = {};
+
+  // Test LLM
+  try {
+    const reply = await handleIncoming('say "LLM OK" and nothing else');
+    results.llm = { ok: true, reply };
+  } catch (err) {
+    results.llm = { ok: false, error: err.message };
+  }
+
+  // Test WhatsApp sending
+  try {
+    await sendMessage(process.env.MY_WHATSAPP_NUMBER, `Blu diagnostic: LLM ${results.llm.ok ? '✓' : '✗'} | sent at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+    results.whatsapp = { ok: true };
+  } catch (err) {
+    results.whatsapp = { ok: false, error: err.message };
+  }
+
+  results.env = {
+    hasToken: !!process.env.WHATSAPP_TOKEN,
+    hasPhoneId: !!process.env.WHATSAPP_PHONE_ID,
+    hasMyNumber: !!process.env.MY_WHATSAPP_NUMBER,
+    myNumber: process.env.MY_WHATSAPP_NUMBER,
+    hasOpenRouter: !!process.env.OPENROUTER_API_KEY,
+  };
+
+  res.json(results);
+});
+
 // Todos API — for live sidebar refresh
 router.get('/api/todos', async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
