@@ -721,7 +721,7 @@ header {
   });
 
   // Monthly calendar popup
-  var MAP = ${monthMapJson};
+  var MAP = JSON.parse(atob('${Buffer.from(monthMapJson).toString('base64')}'));
   var MSHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var CTX_COLOR = { hexaware: '#4f8ef7', smartresq: '#34d399' };
   var popup = document.getElementById('day-popup');
@@ -793,7 +793,7 @@ var _bluTyping= document.getElementById('chat-typing');
 var _bluBusy  = false;
 
 function _bluEsc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  return String(s||'').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('\n').join('<br>');
 }
 
 function _bluAppend(role, text, imgSrc) {
@@ -896,7 +896,7 @@ document.getElementById('chat-voice-btn').onclick = function() {
 };
 
 try {
-  var _bluHistory = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
+  var _bluHistory = JSON.parse(atob('${Buffer.from(JSON.stringify(chatHistory)).toString('base64')}'));
   if (Array.isArray(_bluHistory)) {
     _bluHistory.forEach(function(m) { if (m && m.content) _bluAppend(m.role, m.content); });
     _bluMsgs.scrollTop = _bluMsgs.scrollHeight;
