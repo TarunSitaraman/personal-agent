@@ -9,10 +9,10 @@ const { sendButtonMessage } = require("../whatsapp/send");
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 const MODEL_CHAIN = [
-  "google/gemini-2.5-pro-preview",
   "google/gemini-2.0-flash-001",
   "meta-llama/llama-3.3-70b-instruct",
   "qwen/qwen-2.5-72b-instruct",
+  "nvidia/llama-3.1-nemotron-70b-instruct",
 ];
 
 const SYSTEM_PROMPT = `You are Blu, Tarun's personal AI agent on WhatsApp.
