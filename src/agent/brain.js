@@ -117,13 +117,9 @@ async function callLLM(messages, jsonMode = false) {
       if (content) return content;
     } catch (err) {
       const status = err.response?.status;
-      if (status === 429 || status === 503 || status === 502 || status === 500) {
-        console.warn(`[LLM] ${model} unavailable (${status}), trying next model...`);
-        lastErr = err;
-        continue;
-      }
-      console.error(`[LLM] ${model} error:`, JSON.stringify(err.response?.data || err.message));
-      throw err;
+      console.warn(`[LLM] ${model} failed (${status || err.code || err.message}), trying next...`);
+      lastErr = err;
+      continue;
     }
   }
   console.error('[LLM] All models exhausted');

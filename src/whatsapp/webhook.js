@@ -63,6 +63,7 @@ router.post('/', async (req, res) => {
     hub.notify();
   } catch (err) {
     console.error('Webhook error:', err.message);
+    try { await sendMessage(process.env.MY_WHATSAPP_NUMBER, `Error: ${err.message}`); } catch {}
   }
 });
 
