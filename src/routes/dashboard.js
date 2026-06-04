@@ -697,7 +697,7 @@ header {
         <button class="chat-action-btn" id="chat-voice-btn" title="Voice input">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
-        <button class="chat-action-btn send" id="chat-send-btn" title="Send">
+        <button class="chat-action-btn send" id="chat-send-btn" title="Send" onclick="bluSend()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
@@ -786,130 +786,122 @@ header {
 </script>
 
 <script>
-(function() {
-  var TOKEN = new URLSearchParams(window.location.search).get('token') || '';
-  var msgsEl  = document.getElementById('chat-msgs');
-  var inputEl = document.getElementById('chat-input');
-  var sendBtn = document.getElementById('chat-send-btn');
-  var voiceBtn= document.getElementById('chat-voice-btn');
-  var imgBtn  = document.getElementById('chat-img-btn');
-  var imgInput= document.getElementById('chat-img-input');
-  var typing  = document.getElementById('chat-typing');
-  var busy    = false;
+var _bluToken = new URLSearchParams(window.location.search).get('token') || '';
+var _bluMsgs  = document.getElementById('chat-msgs');
+var _bluInput = document.getElementById('chat-input');
+var _bluTyping= document.getElementById('chat-typing');
+var _bluBusy  = false;
 
-  function esc(s) {
-    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-  }
+function _bluEsc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
 
-  function appendMsg(role, text, imgSrc) {
-    if (typing) typing.classList.remove('visible');
-    var d = document.createElement('div');
-    d.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
-    d.innerHTML = (imgSrc ? '<img class="chat-img-preview" src="'+imgSrc+'">' : '') +
-                  '<div class="chat-bubble">' + esc(text) + '</div>';
-    if (typing) msgsEl.insertBefore(d, typing);
-    else msgsEl.appendChild(d);
-    msgsEl.scrollTop = msgsEl.scrollHeight;
-  }
+function _bluAppend(role, text, imgSrc) {
+  if (_bluTyping) _bluTyping.classList.remove('visible');
+  var d = document.createElement('div');
+  d.className = 'chat-msg ' + (role === 'user' ? 'user' : 'blu');
+  d.innerHTML = (imgSrc ? '<img class="chat-img-preview" src="'+imgSrc+'">' : '') +
+                '<div class="chat-bubble">' + _bluEsc(text) + '</div>';
+  if (_bluTyping) _bluMsgs.insertBefore(d, _bluTyping);
+  else _bluMsgs.appendChild(d);
+  _bluMsgs.scrollTop = _bluMsgs.scrollHeight;
+}
 
-  function setBusy(v) {
-    busy = v;
-    window._bluChatBusy = v;
-    if (sendBtn) sendBtn.style.opacity = v ? '0.5' : '1';
-  }
-
-  async function doSend() {
-    var text = (inputEl.value || '').trim();
-    if (!text || busy) return;
-    appendMsg('user', text);
-    inputEl.value = ''; inputEl.style.height = '';
-    if (typing) typing.classList.add('visible');
-    msgsEl.scrollTop = msgsEl.scrollHeight;
-    setBusy(true);
-    var ctrl = new AbortController();
-    var timer = setTimeout(function() { ctrl.abort(); }, 60000);
-    try {
-      var r = await fetch('/dashboard/chat?token=' + TOKEN, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-        signal: ctrl.signal
-      });
-      clearTimeout(timer);
-      var d = await r.json();
-      appendMsg('blu', d.reply || d.error || '(no response)');
-    } catch(e) {
-      clearTimeout(timer);
-      appendMsg('blu', e.name === 'AbortError' ? 'Timed out — server may be waking up, try again.' : 'Error: ' + e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Wire up handlers FIRST — before anything that could throw
-  sendBtn.onclick = doSend;
-  inputEl.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-  });
-  inputEl.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
-  });
-
-  imgBtn.onclick = function() { imgInput.click(); };
-  imgInput.addEventListener('change', async function() {
-    var file = this.files[0]; if (!file) return;
-    var reader = new FileReader();
-    reader.onload = async function(ev) {
-      var dataUrl = ev.target.result;
-      var caption = (inputEl.value || '').trim();
-      appendMsg('user', caption || '📎 Image', dataUrl);
-      inputEl.value = ''; inputEl.style.height = '';
-      if (typing) typing.classList.add('visible');
-      setBusy(true);
-      try {
-        var r = await fetch('/dashboard/chat/image?token=' + TOKEN, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64: dataUrl.split(',')[1], mimeType: file.type, caption: caption })
-        });
-        var d = await r.json();
-        appendMsg('blu', d.reply || d.error || '(no response)');
-      } catch(e) {
-        appendMsg('blu', 'Image error — ' + e.message);
-      } finally {
-        setBusy(false);
-      }
-    };
-    reader.readAsDataURL(file);
-    this.value = '';
-  });
-
-  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var recog = SR ? new SR() : null;
-  var listening = false;
-  if (recog) {
-    recog.lang = 'en-IN'; recog.interimResults = false;
-    recog.onresult = function(e) {
-      inputEl.value = e.results[0][0].transcript;
-      inputEl.dispatchEvent(new Event('input'));
-      listening = false; voiceBtn.classList.remove('recording');
-    };
-    recog.onend = function() { listening = false; voiceBtn.classList.remove('recording'); };
-  }
-  voiceBtn.onclick = function() {
-    if (!recog) { alert('Voice not supported in this browser.'); return; }
-    if (listening) { recog.stop(); } else { recog.start(); listening = true; voiceBtn.classList.add('recording'); }
-  };
-
-  // Load history LAST — if this throws, handlers above are already set
+async function bluSend() {
+  var text = (_bluInput.value || '').trim();
+  if (!text || _bluBusy) return;
+  _bluAppend('user', text);
+  _bluInput.value = ''; _bluInput.style.height = '';
+  if (_bluTyping) _bluTyping.classList.add('visible');
+  _bluMsgs.scrollTop = _bluMsgs.scrollHeight;
+  _bluBusy = true; window._bluChatBusy = true;
+  var ctrl = new AbortController();
+  var timer = setTimeout(function() { ctrl.abort(); }, 60000);
   try {
-    var HISTORY = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
-    if (Array.isArray(HISTORY)) {
-      HISTORY.forEach(function(m) { if (m && m.content) appendMsg(m.role, m.content); });
-      msgsEl.scrollTop = msgsEl.scrollHeight;
+    var r = await fetch('/dashboard/chat?token=' + _bluToken, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    var d = await r.json();
+    _bluAppend('blu', d.reply || d.error || '(no response)');
+  } catch(e) {
+    clearTimeout(timer);
+    _bluAppend('blu', e.name === 'AbortError' ? 'Timed out — try again.' : 'Error: ' + e.message);
+  } finally {
+    _bluBusy = false; window._bluChatBusy = false;
+  }
+}
+
+_bluInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); bluSend(); }
+});
+_bluInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+document.getElementById('chat-img-btn').onclick = function() {
+  document.getElementById('chat-img-input').click();
+};
+document.getElementById('chat-img-input').addEventListener('change', async function() {
+  var file = this.files[0]; if (!file) return;
+  this.value = '';
+  var reader = new FileReader();
+  reader.onload = async function(ev) {
+    var dataUrl = ev.target.result;
+    var caption = (_bluInput.value || '').trim();
+    _bluAppend('user', caption || 'Image', dataUrl);
+    _bluInput.value = ''; _bluInput.style.height = '';
+    if (_bluTyping) _bluTyping.classList.add('visible');
+    _bluBusy = true;
+    try {
+      var r = await fetch('/dashboard/chat/image?token=' + _bluToken, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64: dataUrl.split(',')[1], mimeType: file.type, caption: caption })
+      });
+      var d = await r.json();
+      _bluAppend('blu', d.reply || d.error || '(no response)');
+    } catch(e) {
+      _bluAppend('blu', 'Image error: ' + e.message);
+    } finally {
+      _bluBusy = false;
     }
-  } catch(e) { /* history render failed — chat still works */ }
-})();
+  };
+  reader.readAsDataURL(file);
+});
+
+var _bluSR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var _bluRecog = _bluSR ? new _bluSR() : null;
+var _bluListening = false;
+if (_bluRecog) {
+  _bluRecog.lang = 'en-IN'; _bluRecog.interimResults = false;
+  _bluRecog.onresult = function(e) {
+    _bluInput.value = e.results[0][0].transcript;
+    _bluInput.dispatchEvent(new Event('input'));
+    _bluListening = false;
+    document.getElementById('chat-voice-btn').classList.remove('recording');
+  };
+  _bluRecog.onend = function() {
+    _bluListening = false;
+    document.getElementById('chat-voice-btn').classList.remove('recording');
+  };
+}
+document.getElementById('chat-voice-btn').onclick = function() {
+  if (!_bluRecog) { alert('Voice not supported in this browser.'); return; }
+  if (_bluListening) { _bluRecog.stop(); }
+  else { _bluRecog.start(); _bluListening = true; this.classList.add('recording'); }
+};
+
+try {
+  var _bluHistory = ${JSON.stringify(chatHistory).replace(/<\//g, '<\\/')};
+  if (Array.isArray(_bluHistory)) {
+    _bluHistory.forEach(function(m) { if (m && m.content) _bluAppend(m.role, m.content); });
+    _bluMsgs.scrollTop = _bluMsgs.scrollHeight;
+  }
+} catch(e) {}
 </script>
 </body>
 </html>`);
