@@ -73,12 +73,13 @@ INTENT DETECTION:
 - "cancel X", "remove X from calendar", "delete the X event/meeting" → DELETE_EVENT (data.title = event name to match)
 - "reschedule X to Y", "move X meeting to Y time", "change X to Yam" → UPDATE_EVENT (data.title = event to find, data.datetime = new ISO datetime if time changed, data.duration = new duration if changed, data.new_title = new name if renamed)
 - Tarun signals a shift in where he is or what he's doing with his day — leaving work, arriving at office, winding down, heading out, going to sleep, starting a new work context — infer the appropriate mode from context and trigger SWITCH_MODE (data.mode = 'hexaware' | 'smartresq' | 'personal'). Do not require specific phrases. Reason: if he's heading to office → hexaware, leaving office or done for the day → smartresq, winding down/sleeping → personal. Override lasts until midnight.
+- "brief me", "morning brief", "give me my standup", "what's my day", "day brief", "standup" → GENERATE_BRIEF (data.type = 'hexaware' if in hexaware mode or asked for hexaware, 'smartresq' if in smartresq mode or asked for smartresq, 'both' if no specific context or both requested)
 - Otherwise → NONE
 
 CRITICAL: Always respond with ONLY a single valid JSON object. No text before or after it. The "reply" field must be a plain conversational string — never put JSON, curly braces, or code inside "reply".
 {
   "reply": "formatted WhatsApp message — plain text only, no JSON",
-  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | none",
+  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | none",
   "data": {
     "content": "extracted content or search query",
     "topic": "topic if learning",
@@ -386,6 +387,16 @@ async function executeAction(action, data, currentMode, defaultReply) {
         }
 
         return synthesis.trim();
+      }
+
+      case "generate_brief": {
+        const briefType = data?.type;
+        if (briefType === 'both') {
+          const [hex, srq] = await Promise.all([generateStandup('hexaware'), generateStandup('smartresq')]);
+          return hex + '\n\n---\n\n' + srq;
+        }
+        const type = briefType === 'smartresq' ? 'smartresq' : 'hexaware';
+        return await generateStandup(type);
       }
 
       case "switch_mode": {
