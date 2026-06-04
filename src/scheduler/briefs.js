@@ -7,8 +7,8 @@ function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
   const remindedEventIds = new Set();
 
-  // 10:00 AM IST — Morning brief (Hexaware standup)
-  cron.schedule('0 10 * * 1-5', async () => {
+  // 9:00 AM IST — Morning brief (Hexaware standup)
+  cron.schedule('0 9 * * 1-5', async () => {
     try {
       const standup = await generateStandup('hexaware');
       await sendMessage(myNumber, standup);
@@ -93,7 +93,7 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  console.log('Scheduler started — Morning brief (10am), SmartResQ standup (6:30pm), stale alert (9am), nudge (9pm), weekly review (Sun 8pm)');
+  console.log('Scheduler started — Hexaware brief (9am), SmartResQ brief (6:30pm), stale alert (9am), nudge (9pm), weekly review (Sun 8pm)');
 }
 
 module.exports = { startScheduler };
