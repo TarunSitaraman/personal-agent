@@ -123,25 +123,38 @@ Data fields:
 - skill_desc: description of skill
 - skill_instr: detailed instructions for the skill`;
 
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+
 async function callGemini(messages, jsonMode = false) {
   const systemMsg = messages.find(m => m.role === 'system');
   const chatMessages = messages.filter(m => m.role !== 'system');
   if (!chatMessages.length) throw new Error('No messages for Gemini');
 
-  const config = { model: 'gemini-2.0-flash-exp' };
-  if (systemMsg) config.systemInstruction = systemMsg.content;
-  if (jsonMode) config.generationConfig = { responseMimeType: 'application/json' };
-
   const history = chatMessages.slice(0, -1).map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content }],
   }));
-
   const lastContent = chatMessages[chatMessages.length - 1].content;
-  const model = genAI.getGenerativeModel(config);
-  const chat = model.startChat({ history });
-  const result = await chat.sendMessage(lastContent);
-  return result.response.text();
+
+  let lastErr;
+  for (const modelId of GEMINI_MODELS) {
+    const config = { model: modelId };
+    if (systemMsg) config.systemInstruction = systemMsg.content;
+    if (jsonMode) config.generationConfig = { responseMimeType: 'application/json' };
+
+    try {
+      const model = genAI.getGenerativeModel(config);
+      const chat = model.startChat({ history });
+      const result = await chat.sendMessage(lastContent);
+      return result.response.text();
+    } catch (err) {
+      const is429 = err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED');
+      console.warn(`[Gemini] ${modelId} failed${is429 ? ' (rate limited)' : ''}: ${err.message?.slice(0, 60)}`);
+      lastErr = err;
+      if (is429) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  throw lastErr;
 }
 
 async function callLLMStream(messages, onToken) {
