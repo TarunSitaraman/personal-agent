@@ -557,6 +557,26 @@ async function getSummaryStats() {
   return { hexTodos, srqTodos, unreviewed };
 }
 
+async function updateTodoReminder(id, remindAt) {
+  await pool.query(
+    'UPDATE todos SET remind_at = $1, reminded = false WHERE id = $2',
+    [remindAt, id]
+  );
+}
+
+async function setTodoReminderByContent(keyword, remindAt) {
+  await pool.query(
+    `UPDATE todos SET remind_at = $1, reminded = false
+     WHERE id = (SELECT id FROM todos WHERE done = false AND content ILIKE $2 ORDER BY created_at DESC LIMIT 1)`,
+    [remindAt, `%${keyword}%`]
+  );
+}
+
+async function getEventById(id) {
+  const { rows } = await pool.query('SELECT * FROM events WHERE id = $1', [id]);
+  return rows[0] || null;
+}
+
 module.exports = {
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
   addNote, updateNoteTags, getRecentNotes, deleteNote, getLastCreatedItem,
@@ -575,4 +595,5 @@ module.exports = {
   getSummaryStats,
   getAllSkills, saveSkill,
   saveGoal, getPendingGoal, completeGoal,
+  updateTodoReminder, setTodoReminderByContent, getEventById,
 };

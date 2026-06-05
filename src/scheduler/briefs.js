@@ -33,8 +33,8 @@ function startScheduler() {
       const due = await memory.getDueTodoReminders();
       for (const todo of due) {
         await sendButtonMessage(myNumber, `Reminder: ${todo.content}`, [
-          { id: 'reminder_done', title: 'Done ✓' },
-          { id: 'reminder_snooze', title: 'Snooze 1hr' },
+          { id: `rdone_${todo.id}`, title: 'Done' },
+          { id: `rsnooze_60_${todo.id}`, title: 'Snooze 1hr' },
         ]);
       }
     } catch (err) {
@@ -48,8 +48,8 @@ function startScheduler() {
         remindedEventIds.add(ev.id);
         const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
         await sendButtonMessage(myNumber, `Starting in 15 min: *${ev.title}* at ${timeStr}`, [
-          { id: 'ev_noted', title: 'Noted ✓' },
-          { id: 'ev_snooze', title: 'Snooze 5min' },
+          { id: `evnoted_${ev.id}`, title: 'Noted' },
+          { id: `evsnooze_${ev.id}`, title: '+15 min' },
         ]);
       }
     } catch (err) {

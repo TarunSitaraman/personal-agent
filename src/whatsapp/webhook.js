@@ -1,9 +1,10 @@
 const express = require('express');
 const { handleIncoming } = require('../agent/brain');
-const { sendMessage } = require('./send');
+const { sendMessage, sendButtonMessage } = require('./send');
 const { transcribeAudio } = require('../integrations/whisper');
 const { analyzeImage } = require('../integrations/vision');
 const hub = require('../events/hub');
+const memory = require('../agent/memory');
 
 const router = express.Router();
 
@@ -24,6 +25,94 @@ function isDuplicate(msgId) {
   }
   if (seenIds.has(msgId)) return true;
   seenIds.set(msgId, now);
+  return false;
+}
+
+// Handle structured button IDs directly without going to the LLM.
+// Returns true if the action was handled, false to fall through to LLM.
+async function handleButtonAction(id, from) {
+  try {
+    // Todo reminder: Done — mark the specific todo complete by ID
+    if (id.startsWith('rdone_')) {
+      const todoId = id.slice(6);
+      await memory.completeTodo(todoId);
+      await sendMessage(from, 'Done. Removed from your list.');
+      hub.notify();
+      return true;
+    }
+
+    // Todo reminder: Snooze — update remind_at by N minutes
+    if (id.startsWith('rsnooze_')) {
+      const parts = id.split('_'); // rsnooze_60_<uuid>
+      const mins = parseInt(parts[1]) || 60;
+      const todoId = parts.slice(2).join('_');
+      const remindAt = new Date(Date.now() + mins * 60 * 1000);
+      await memory.updateTodoReminder(todoId, remindAt);
+      await sendMessage(from, `Snoozed ${mins} min.`);
+      return true;
+    }
+
+    // Event reminder: Noted — just acknowledge
+    if (id.startsWith('evnoted_')) {
+      await sendMessage(from, 'Good luck!');
+      return true;
+    }
+
+    // Event reminder: Snooze — queue a new reminder in 15 min via todo system
+    if (id.startsWith('evsnooze_')) {
+      const eventId = id.slice(9);
+      const ev = await memory.getEventById(eventId);
+      const remindAt = new Date(Date.now() + 15 * 60 * 1000);
+      if (ev) await memory.addTodo(`Upcoming: ${ev.title}`, ev.context || 'personal', remindAt);
+      await sendMessage(from, "I'll remind you again in 15 minutes.");
+      return true;
+    }
+
+    // Reminder follow-up: set tonight 9pm on the most recently added todo matching content
+    if (id.startsWith('rem_tonight_')) {
+      const keyword = id.slice('rem_tonight_'.length).replace(/_/g, ' ');
+      const now = new Date();
+      const remindAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
+      if (remindAt <= now) remindAt.setDate(remindAt.getDate() + 1);
+      await memory.setTodoReminderByContent(keyword, remindAt);
+      await sendMessage(from, 'Reminder set for 9pm.');
+      hub.notify();
+      return true;
+    }
+
+    // Reminder follow-up: set tomorrow 8am
+    if (id.startsWith('rem_tmrw_')) {
+      const keyword = id.slice('rem_tmrw_'.length).replace(/_/g, ' ');
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const remindAt = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate(), 8, 0, 0);
+      await memory.setTodoReminderByContent(keyword, remindAt);
+      await sendMessage(from, 'Reminder set for tomorrow 8am.');
+      hub.notify();
+      return true;
+    }
+
+    // Reminder follow-up: skip / no reminder
+    if (id === 'rem_no') {
+      await sendMessage(from, 'Ok, no reminder.');
+      return true;
+    }
+
+    // Stale todos: dismiss the alert
+    if (id === 'stale_dismiss') {
+      await sendMessage(from, 'Got it.');
+      return true;
+    }
+
+    // Stale todos: snooze (legacy button without encoded ID — just acknowledge)
+    if (id === 'stale_snooze') {
+      await sendMessage(from, 'Noted — I\'ll check back in a couple of days.');
+      return true;
+    }
+
+  } catch (err) {
+    console.error('[Button] Handler error:', id, err.message);
+  }
   return false;
 }
 
@@ -78,6 +167,9 @@ router.post('/', async (req, res) => {
     } else if (message.type === 'interactive') {
       const buttonReply = message.interactive?.button_reply;
       if (!buttonReply) return;
+      // Try structured ID handling first — faster and more reliable than LLM
+      if (await handleButtonAction(buttonReply.id, from)) return;
+      // Fall through to LLM for unrecognised button IDs (e.g. ctx_hex/srq/per)
       text = buttonReply.title;
     } else if (message.type === 'image') {
       const caption = message.image?.caption || '';
@@ -91,7 +183,7 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const reply = await handleIncoming(text);
+    const reply = await handleIncoming(text, from);
     if (reply) await sendMessage(from, reply);
     hub.notify();
   } catch (err) {

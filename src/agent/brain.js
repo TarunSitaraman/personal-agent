@@ -276,7 +276,7 @@ function filterKnowledge(knowledge, userMessage) {
   return [...relevant, ...fallback];
 }
 
-async function handleIncoming(userMessage) {
+async function handleIncoming(userMessage, replyTo = null) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
@@ -389,6 +389,24 @@ ${summaryBlock}`;
 
   await memory.saveMessage("user", userMessage);
   await memory.saveMessage("model", reply);
+
+  // After adding a todo, offer a reminder button so the user doesn't have to ask
+  if (replyTo) {
+    const primaryAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
+    const primaryData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
+    if (primaryAction === 'add_todo' && primaryData?.content) {
+      const key = primaryData.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
+      setTimeout(async () => {
+        try {
+          await sendButtonMessage(replyTo, 'Want a reminder for this?', [
+            { id: `rem_tonight_${key}`, title: 'Tonight 9pm' },
+            { id: `rem_tmrw_${key}`, title: 'Tomorrow 8am' },
+            { id: 'rem_no', title: 'Skip' },
+          ]);
+        } catch (e) { console.error('[Brain] Follow-up button error:', e.message); }
+      }, 800);
+    }
+  }
 
   if ((msgCount + 2) % 20 === 0) {
     analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
