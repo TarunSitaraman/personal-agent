@@ -136,16 +136,22 @@ router.post('/chat/image', express.json({ limit: '10mb' }), async (req, res) => 
   const { base64, mimeType = 'image/jpeg', caption = '' } = req.body;
   if (!base64) return res.status(400).json({ error: 'No image' });
   try {
+    const { analyzeImage } = require('../integrations/vision');
+    // We need to simulate a mediaId or just pass the base64. 
+    // The current analyzeImage integration expect a mediaId (WhatsApp style).
+    // Let's create a specialized dashboard vision helper or update vision.js.
+    // For now, let's use Groq directly here for speed as requested.
+    
     const visionRes = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
+      'https://api.groq.com/openai/v1/chat/completions',
       {
-        model: 'google/gemini-2.0-flash-001',
+        model: 'llama-3.2-11b-vision-preview',
         messages: [{ role: 'user', content: [
+          { type: 'text', text: caption || 'Describe this image in detail for a personal AI agent memory.' },
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
-          { type: 'text', text: caption || 'Describe this image in detail.' },
         ]}],
       },
-      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` } }
+      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` } }
     );
     const description = visionRes.data.choices[0].message.content;
     const userText = `[Image from dashboard] ${description}${caption ? `\nCaption: ${caption}` : ''}`;
@@ -153,7 +159,7 @@ router.post('/chat/image', express.json({ limit: '10mb' }), async (req, res) => 
     hub.notify();
     res.json({ reply, description });
   } catch (err) {
-    console.error('Dashboard image error:', err.message);
+    console.error('Dashboard image error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to process image' });
   }
 });

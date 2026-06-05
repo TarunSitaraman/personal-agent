@@ -102,10 +102,10 @@ async function markLearningReviewed(id) {
 
 // --- Permanent knowledge store ---
 
-async function saveKnowledge(fact, embedding = null) {
+async function saveKnowledge(fact, embedding = null, context = 'personal') {
   await pool.query(
-    'INSERT INTO knowledge (subject, fact, embedding) VALUES ($1, $2, $3)',
-    ['general', fact, embedding ? `[${embedding.join(',')}]` : null]
+    'INSERT INTO knowledge (subject, fact, embedding, context) VALUES ($1, $2, $3, $4)',
+    ['general', fact, embedding ? `[${embedding.join(',')}]` : null, context]
   );
 }
 
@@ -350,7 +350,7 @@ async function getWeeklyActivity() {
 
 // --- Search ---
 
-async function searchMemory(query, embedding = null) {
+async function searchMemory(query, embedding = null, currentMode = 'personal') {
   if (embedding) {
     const vectorStr = `[${embedding.join(',')}]`;
     const [todos, notes, learnings, knowledge] = await Promise.all([
@@ -368,8 +368,10 @@ async function searchMemory(query, embedding = null) {
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'knowledge' as type, fact as content, 'personal' as context, 1 - (embedding <=> $1) as score FROM knowledge ORDER BY embedding <=> $1 LIMIT 5`,
-        [vectorStr]
+        `SELECT 'knowledge' as type, fact as content, context, 
+         (1 - (embedding <=> $1)) + (CASE WHEN context = $2 THEN 0.2 ELSE 0 END) as score 
+         FROM knowledge ORDER BY score DESC LIMIT 5`,
+        [vectorStr, currentMode]
       ),
     ]);
     return [...todos.rows, ...notes.rows, ...learnings.rows, ...knowledge.rows]

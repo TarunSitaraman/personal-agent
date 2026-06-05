@@ -436,7 +436,7 @@ async function executeAction(action, data, currentMode, defaultReply) {
       case "learn_context":
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
-          await memory.saveKnowledge(data.content, embedding);
+          await memory.saveKnowledge(data.content, embedding, context);
         }
         return defaultReply;
 
@@ -785,4 +785,37 @@ Keep it honest, practical, under 15 lines. Plain text only.`;
   return await callLLM([{ role: 'user', content: prompt }]);
 }
 
-module.exports = { handleIncoming, handleIncomingStream, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview };
+async function generateTechPulse() {
+  if (!process.env.SERPER_API_KEY) return null;
+
+  // 1. Fetch interests from permanent knowledge
+  const knowledge = await memory.getAllKnowledge();
+  const interestPrompt = `Based on these facts about Tarun, extract a list of 3-5 specific tech interests or people he follows on X/Twitter. 
+Knowledge:
+${knowledge.join('\n')}
+
+Return ONLY a comma-separated list of keywords. If nothing found, return "AI Agents, GenAI, Web Dev".`;
+  
+  const interests = await callLLM([{ role: 'user', content: interestPrompt }]);
+  
+  // 2. Search for latest updates using Serper
+  const query = `latest tech trends and top tweets about ${interests} today`;
+  const results = await webSearch(query);
+  
+  if (!results || results.length < 2) return null;
+
+  // 3. Synthesize the Pulse
+  const snippets = results.map(r => `${r.title}: ${r.snippet}`).join('\n\n');
+  const synthesisPrompt = `You are Blu, the Hermes Agent. Tarun loves Tech Twitter. Based on these latest web results, give him a curated "Pulse" of what he'd find interesting today.
+
+Interests: ${interests}
+Latest Info:
+${snippets}
+
+Tone: Enthusiastic, high-signal, concise. Use *bold* for topics. Under 10 lines. Plain text only.`;
+
+  return await callLLM([{ role: 'user', content: synthesisPrompt }]);
+}
+
+module.exports = { handleIncoming, handleIncomingStream, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview, generateTechPulse };
+};

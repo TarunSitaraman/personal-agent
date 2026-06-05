@@ -93,7 +93,17 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  console.log('Scheduler started — Hexaware brief (9am), SmartResQ brief (6:30pm), stale alert (9am), nudge (9pm), weekly review (Sun 8pm)');
+  // 10:00 AM Sunday — Tech Twitter Pulse
+  cron.schedule('0 10 * * 0', async () => {
+    try {
+      const pulse = await generateTechPulse();
+      if (pulse) await sendMessage(myNumber, pulse);
+    } catch (err) {
+      console.error('Tech Pulse error:', err.message);
+    }
+  }, { timezone: 'Asia/Kolkata' });
+
+  console.log('Scheduler started — Hexaware brief (9am), SmartResQ brief (6:30pm), Tech Pulse (Sun 10am), Weekly Review (Sun 8pm)');
 }
 
 module.exports = { startScheduler };
