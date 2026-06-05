@@ -4,3 +4,7 @@ node_modules/
 .env.*.local
 *.pem
 *.key
+
+# Mobile app
+mobile/node_modules/
+mobile/.expo/
