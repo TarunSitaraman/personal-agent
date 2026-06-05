@@ -4,6 +4,7 @@ const axios = require('axios');
 const { router: webhookRouter } = require('./whatsapp/webhook');
 const { startScheduler } = require('./scheduler/briefs');
 const dashboardRouter = require('./routes/dashboard');
+const apiRouter = require('./routes/api');
 const { initContext } = require('./agent/context');
 
 const app = express();
@@ -11,6 +12,7 @@ app.use(express.static('public'));
 app.use(express.json());
 app.use('/webhook', webhookRouter);
 app.use('/dashboard', dashboardRouter);
+app.use('/api', apiRouter);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 

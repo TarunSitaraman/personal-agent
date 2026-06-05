@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview } = require('../agent/brain');
 const { sendMessage, sendButtonMessage, sendListMessage } = require('../whatsapp/send');
+const { sendReminderPush, sendBriefPush, sendNudgePush } = require('../push/push');
 const memory = require('../agent/memory');
 
 function startScheduler() {
@@ -12,6 +13,7 @@ function startScheduler() {
     try {
       const standup = await generateStandup('hexaware');
       await sendMessage(myNumber, standup);
+      await sendBriefPush('Morning Brief', 'Your Hexaware day starts now. Tap to see context.');
     } catch (err) {
       console.error('Morning brief error:', err.message);
     }
@@ -43,6 +45,7 @@ function startScheduler() {
           { id: `rdone_${todo.id}`, title: 'Done' },
           { id: `rsnooze_60_${todo.id}`, title: 'Snooze 1hr' },
         ]);
+        await sendReminderPush(todo.id, todo.content);
       }
     } catch (err) {
       console.error('Reminder check error:', err.message);
@@ -58,6 +61,7 @@ function startScheduler() {
           { id: `evnoted_${ev.id}`, title: 'Noted' },
           { id: `evsnooze_${ev.id}`, title: '+15 min' },
         ]);
+        await sendNudgePush(`Starting in 15 min: ${ev.title} at ${timeStr}`);
       }
     } catch (err) {
       console.error('Event reminder error:', err.message);
@@ -94,7 +98,11 @@ function startScheduler() {
   cron.schedule('0 21 * * *', async () => {
     try {
       const nudge = await generateProactiveNudge();
-      if (nudge) await sendMessage(myNumber, nudge);
+      if (nudge) {
+        await sendMessage(myNumber, nudge);
+        // Push a short version (notifications have limited space)
+        await sendNudgePush(nudge.slice(0, 120));
+      }
     } catch (err) {
       console.error('Proactive nudge error:', err.message);
     }

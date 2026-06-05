@@ -466,6 +466,37 @@ async function getContextSummary() {
   return rows[0]?.value || null;
 }
 
+// --- Push tokens (stored as JSON array in state, no expiry) ---
+
+async function savePushToken(token) {
+  const existing = await getPushTokens();
+  if (!existing.includes(token)) {
+    const updated = [...existing, token];
+    await pool.query(
+      `INSERT INTO state (key, value, expires_at)
+       VALUES ('push_tokens', $1, NOW() + INTERVAL '10 years')
+       ON CONFLICT (key) DO UPDATE SET value = $1, expires_at = NOW() + INTERVAL '10 years'`,
+      [JSON.stringify(updated)]
+    );
+  }
+}
+
+async function getPushTokens() {
+  const { rows } = await pool.query(`SELECT value FROM state WHERE key = 'push_tokens'`);
+  try { return JSON.parse(rows[0]?.value || '[]'); } catch { return []; }
+}
+
+async function removePushToken(token) {
+  const existing = await getPushTokens();
+  const updated = existing.filter(t => t !== token);
+  await pool.query(
+    `INSERT INTO state (key, value, expires_at)
+     VALUES ('push_tokens', $1, NOW() + INTERVAL '10 years')
+     ON CONFLICT (key) DO UPDATE SET value = $1, expires_at = NOW() + INTERVAL '10 years'`,
+    [JSON.stringify(updated)]
+  );
+}
+
 // --- Mode override (persisted so it survives restarts) ---
 
 async function saveModeOverride(mode, expiry) {
@@ -596,4 +627,5 @@ module.exports = {
   getAllSkills, saveSkill,
   saveGoal, getPendingGoal, completeGoal,
   updateTodoReminder, setTodoReminderByContent, getEventById,
+  savePushToken, getPushTokens, removePushToken,
 };
