@@ -550,4 +550,6 @@ module.exports = {
   getStaleTodos, getWeeklyActivity,
   getAnalytics, getRecentContent,
   getSummaryStats,
+  getAllSkills, saveSkill,
+  saveGoal, getPendingGoal, completeGoal,
 };
