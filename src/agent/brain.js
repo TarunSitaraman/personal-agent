@@ -93,27 +93,31 @@ If Tarun mentions a new person, tool, company, or project entity for the first t
 - Vary confirmations — don't always say "Done." or "I've added X to your list."
 
 ## RESPONSE FORMAT — return ONLY valid JSON, nothing else
-{
-  "reply": "WhatsApp message to send",
-  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | none",
-  "data": {
-    "content": "extracted content or search query",
-    "topic": "topic if learning",
-    "source": "source if mentioned",
-    "context": "hexaware | smartresq | personal | null",
-    "minutes": 0,
-    "title": "event title",
-    "datetime": "ISO datetime string in IST (e.g. 2026-06-05T14:00:00+05:30)",
-    "duration": 60,
-    "recurrence": "none | daily | weekdays | weekly",
-    "new_title": "new event name if updating",
-    "cache": false,
-    "fact": "concise fact to save if cache=true",
-    "skill_name": "name of skill to create/run",
-    "skill_desc": "description of skill",
-    "skill_instr": "detailed instructions for the skill"
-  }
-}`;
+
+For a single action:
+{"reply": "...", "action": "action_name", "data": {...}}
+
+For compound requests (multiple things to do in one message), use the "actions" array instead:
+{"reply": "...", "actions": [{"action": "add_event", "data": {...}}, {"action": "set_reminder", "data": {...}}]}
+
+Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | none
+
+Data fields:
+- content: extracted content or search query
+- topic: topic if learning
+- source: source if mentioned
+- context: hexaware | smartresq | personal | null
+- title: event title
+- datetime: ISO datetime in IST (e.g. 2026-06-05T21:00:00+05:30) — use for add_event AND set_reminder when time is specific
+- minutes: minutes from now — use for set_reminder only when no specific clock time given
+- duration: event duration in minutes (default 60)
+- recurrence: none | daily | weekdays | weekly
+- new_title: new event name if updating
+- cache: true/false — whether to permanently save a web search fact
+- fact: concise fact to save if cache=true
+- skill_name: name of skill to create/run
+- skill_desc: description of skill
+- skill_instr: detailed instructions for the skill`;
 
 async function callGemini(messages, jsonMode = false) {
   const systemMsg = messages.find(m => m.role === 'system');
@@ -349,7 +353,16 @@ ${summaryBlock}`;
 
   if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
 
-  const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
+  let reply;
+  if (Array.isArray(parsed.actions) && parsed.actions.length) {
+    for (const item of parsed.actions) {
+      await executeAction(item.action, item.data, mode, parsed.reply);
+    }
+    reply = parsed.reply;
+  } else {
+    reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
+  }
+
   await memory.saveMessage("user", userMessage);
   await memory.saveMessage("model", reply);
 
@@ -518,9 +531,11 @@ async function executeAction(action, data, currentMode, defaultReply) {
         return defaultReply;
 
       case "set_reminder": {
-        const minutes = parseInt(data?.minutes) || 60;
-        const remindAt = new Date(Date.now() + minutes * 60 * 1000);
-        if (data?.content) await memory.addTodo(data.content, context, remindAt);
+        if (!data?.content) return defaultReply;
+        const remindAt = data?.datetime
+          ? new Date(data.datetime)
+          : new Date(Date.now() + (parseInt(data?.minutes) || 60) * 60 * 1000);
+        await memory.addTodo(data.content, context, remindAt);
         return defaultReply;
       }
 
