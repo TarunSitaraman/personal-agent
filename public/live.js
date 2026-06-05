@@ -106,12 +106,46 @@
       .catch(function () {});
   };
 
+  var CTX_COLOR = { hexaware: '#4f8ef7', smartresq: '#34d399' };
+
+  window.refreshCalendar = function () {
+    fetch('/dashboard/api/calendar?token=' + token)
+      .then(function (r) { return r.json(); })
+      .then(function (newMap) {
+        // Update the shared MAP so day popups show fresh data
+        window.MAP = newMap;
+
+        // Re-render dots on every calendar day cell
+        document.querySelectorAll('.mcal-day[data-day]').forEach(function (cell) {
+          var day = cell.dataset.day;
+          var evs = newMap[day] || [];
+          var existing = cell.querySelector('.mcal-dots');
+          if (existing) existing.remove();
+          if (evs.length) {
+            var wrap = document.createElement('div');
+            wrap.className = 'mcal-dots';
+            evs.slice(0, 3).forEach(function (ev) {
+              var dot = document.createElement('div');
+              dot.className = 'mcal-dot';
+              dot.style.background = CTX_COLOR[ev.context] || '#a78bfa';
+              wrap.appendChild(dot);
+            });
+            cell.appendChild(wrap);
+          }
+        });
+      })
+      .catch(function () {});
+  };
 
   // Run immediately so initial server-rendered todos get swipe/dblclick handlers
   window.refreshTodos();
   setInterval(window.refreshTodos, 60000);
+  setInterval(window.refreshCalendar, 60000);
 
   var es = new EventSource('/dashboard/stream?token=' + token);
-  es.addEventListener('refresh', function () { window.refreshTodos(); });
+  es.addEventListener('refresh', function () {
+    window.refreshTodos();
+    window.refreshCalendar();
+  });
   es.onerror = function () { es.close(); setTimeout(function () { window.location.reload(); }, 30000); };
 })();

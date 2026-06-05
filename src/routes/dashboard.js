@@ -865,7 +865,7 @@ header {
   });
 
   // Monthly calendar popup
-  var MAP = JSON.parse(atob('${Buffer.from(monthMapJson).toString('base64')}'));
+  var MAP = window.MAP = JSON.parse(atob('${Buffer.from(monthMapJson).toString('base64')}'));
   var MSHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var CTX_COLOR = { hexaware: '#4f8ef7', smartresq: '#34d399' };
   var popup = document.getElementById('day-popup');
@@ -1003,6 +1003,66 @@ router.get('/api/events', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 20, 50);
     const events = await listEvents(ctx, limit);
     res.json(events);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /dashboard/api/calendar — current month event map for live refresh
+router.get('/api/calendar', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const monthYear = nowIST.getFullYear();
+    const monthNum = nowIST.getMonth();
+    const daysInMonth = new Date(monthYear, monthNum + 1, 0).getDate();
+    const monthStart = new Date(monthYear, monthNum, 1);
+    const monthEnd = new Date(monthYear, monthNum + 1, 0, 23, 59, 59);
+
+    const [dbEvents, allTodos] = await Promise.all([
+      getWeekEvents(monthStart, monthEnd),
+      getPendingTodos(),
+    ]);
+
+    const map = {};
+    for (let d = 1; d <= daysInMonth; d++) map[d] = [];
+
+    for (const ev of dbEvents) {
+      const refStart = new Date(ev.start_at);
+      if (ev.recurrence === 'none') {
+        if (refStart.getFullYear() === monthYear && refStart.getMonth() === monthNum) {
+          map[refStart.getDate()].push({ title: ev.title, start_at: refStart.toISOString(), context: ev.context });
+        }
+      } else {
+        for (let d = 1; d <= daysInMonth; d++) {
+          const date = new Date(monthYear, monthNum, d);
+          const dow = date.getDay();
+          const refDow = refStart.getDay();
+          if (ev.recurrence === 'daily' ||
+              (ev.recurrence === 'weekdays' && dow >= 1 && dow <= 5) ||
+              (ev.recurrence === 'weekly' && dow === refDow)) {
+            const s = new Date(date);
+            s.setHours(refStart.getHours(), refStart.getMinutes(), 0, 0);
+            map[d].push({ title: ev.title, start_at: s.toISOString(), context: ev.context });
+          }
+        }
+      }
+    }
+
+    for (const todo of allTodos) {
+      if (!todo.remind_at) continue;
+      const d = new Date(todo.remind_at);
+      if (d.getFullYear() === monthYear && d.getMonth() === monthNum) {
+        const day = d.getDate();
+        if (map[day]) map[day].push({ title: todo.content, start_at: d.toISOString(), context: todo.context, isTodo: true });
+      }
+    }
+
+    for (const d of Object.keys(map)) {
+      map[d].sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
+    }
+
+    res.json(map);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
