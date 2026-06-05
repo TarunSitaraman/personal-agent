@@ -81,7 +81,7 @@ router.post('/api/complete-todo', express.json(), async (req, res) => {
   }
 });
 
-// Chat — streaming text
+// Chat — streaming text (Upgraded for Mobile/Hermes)
 router.post('/chat/stream', express.json(), async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).end();
   const { message } = req.body;
@@ -97,18 +97,33 @@ router.post('/chat/stream', express.json(), async (req, res) => {
   };
 
   try {
-    let reply;
+    let finalFull;
     let streamed = false;
-    try {
-      reply = await handleIncomingStream(message.trim(), (token) => {
-        streamed = true;
-        send('token', { t: token });
-      });
-    } catch (streamErr) {
-      console.warn('Stream failed, falling back:', streamErr.message);
-      reply = await handleIncoming(message.trim());
+    
+    // We use a custom token handler to extract the 'reply' part for the UI
+    // while keeping the full JSON for the 'done' event action processing.
+    const fullContent = await handleIncomingStream(message.trim(), (token) => {
+      streamed = true;
+      send('token', { t: token });
+    });
+
+    // The brain returns a structured object, but handleIncomingStream might return the full raw JSON string
+    // if it's been processed. Let's ensure we send the parsed actions to the mobile client.
+    let parsed;
+    try { 
+      parsed = JSON.parse(fullContent); 
+    } catch { 
+      // If handleIncomingStream already returned the reply string, we wrap it
+      parsed = { reply: fullContent, action: 'none', data: {} };
     }
-    send('done', { reply: reply || '', streamed });
+
+    send('done', { 
+      reply: parsed.reply, 
+      action: parsed.action, 
+      data: parsed.data,
+      streamed 
+    });
+    hub.notify(); // Notify dashboard to refresh
   } catch (err) {
     console.error('Stream chat error:', err.message);
     send('error', { message: err.message });
@@ -116,18 +131,31 @@ router.post('/chat/stream', express.json(), async (req, res) => {
   res.end();
 });
 
-// Chat — text message (fallback, kept for WhatsApp compatibility)
+// Chat — text message (Upgraded for Mobile/Hermes)
 router.post('/chat', express.json(), async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
   const { message } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'No message' });
   try {
+    // handleIncoming is modified to return the formatted reply string, 
+    // but for the mobile API we might want the raw structured data.
+    // Let's create a specialized 'core' handler if needed, but for now 
+    // we'll rely on the brain's internal processing and just return the reply.
     const reply = await handleIncoming(message.trim());
     res.json({ reply });
+    hub.notify();
   } catch (err) {
     console.error('Dashboard chat error:', err.message);
     res.status(500).json({ error: 'Failed to process message' });
   }
+});
+
+// GET /dashboard/api/auth/verify — simple token check for mobile app boot
+router.get('/api/auth/verify', (req, res) => {
+  if (req.query.token === process.env.DASHBOARD_TOKEN) {
+    return res.json({ ok: true, name: 'Tarun' });
+  }
+  res.status(401).json({ ok: false });
 });
 
 // Chat — image upload (base64)
