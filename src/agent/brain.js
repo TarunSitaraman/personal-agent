@@ -9,10 +9,8 @@ const { sendButtonMessage } = require("../whatsapp/send");
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 const MODEL_CHAIN = [
-  "google/gemini-2.0-flash-lite-preview-02-05:free",
   "meta-llama/llama-3.3-70b-instruct:free",
-  "deepseek/deepseek-r1-distill-llama-70b:free",
-  "mistralai/mistral-7b-instruct:free",
+  "openrouter/free",
 ];
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -131,7 +129,7 @@ async function callLLMStream(messages, onToken) {
       });
     } catch (err) {
       console.warn(`[LLM stream] ${model} failed (${err.response?.status || err.message}), trying next...`);
-      lastErr = err;
+      lastErr = new Error(`OpenRouter Stream Error (${err.response?.status}): ${model} - ${err.message}`);
     }
   }
   throw lastErr || new Error('All models failed');
