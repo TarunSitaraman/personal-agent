@@ -103,7 +103,19 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  console.log('Scheduler started — Hexaware brief (9am), SmartResQ brief (6:30pm), Tech Pulse (Sun 10am), Weekly Review (Sun 8pm)');
+  // 10:00 PM IST — late night goal nudge
+  cron.schedule('0 22 * * *', async () => {
+    try {
+      const pendingGoal = await memory.getPendingGoal();
+      if (pendingGoal) {
+        await sendMessage(myNumber, `Hermes checking in: How's progress on the **One Big Thing**? (*${pendingGoal.content}*). Almost there?`);
+      }
+    } catch (err) {
+      console.error('Goal nudge error:', err.message);
+    }
+  }, { timezone: 'Asia/Kolkata' });
+
+  console.log('Scheduler started — morning (10am), evening (7pm), Tech Pulse (Sun 10am), Weekly Review (Sun 8pm), and Goal Nudge (10pm)');
 }
 
 module.exports = { startScheduler };

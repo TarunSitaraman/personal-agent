@@ -58,6 +58,8 @@ FORMATTING RULES:
 
 INTENT DETECTION:
 - "todo: X", "remember to X" → ADD_TODO
+- "the one big thing is X", "my main focus is X", "goal: X" → SET_GOAL
+- "goal done", "finished the big thing" → COMPLETE_GOAL
 - "note: X", "save this: X" → ADD_NOTE
 - Facts about the world/people → LEARN_CONTEXT
 - "learned X", "learning: X" → ADD_LEARNING
@@ -408,9 +410,18 @@ async function executeAction(action, data, currentMode, defaultReply) {
   const context = data?.context || currentMode;
   try {
     switch (action) {
-      case "add_todo":
-        if (data?.content) await memory.addTodo(data.content, context);
+      case "set_goal":
+        if (data?.content) await memory.saveGoal(data.content, context);
         return defaultReply;
+
+      case "complete_goal": {
+        const goal = await memory.getPendingGoal();
+        if (goal) {
+          await memory.completeGoal(goal.id);
+          return `Awesome work finishing the **One Big Thing**: ${goal.content}! Goal cleared.`;
+        }
+        return "You don't have an active 'One Big Thing' set for today.";
+      }
 
       case "ask_context":
         await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, defaultReply, [
@@ -683,20 +694,27 @@ Return ONLY a JSON array: ["insight 1", "insight 2"]`;
 }
 
 async function generateProactiveNudge() {
-  const [stats, insights, openPRs] = await Promise.all([
+  const [stats, insights, openPRs, pendingGoal] = await Promise.all([
     memory.getSummaryStats(),
     memory.getRecentInsights(5),
     getOpenPRs(),
+    memory.getPendingGoal(),
   ]);
-  const prompt = `You are Blu, Tarun's AI agent. Based on the data, decide if there's something worth proactively telling Tarun. Be specific. If nothing genuinely worth saying, reply SKIP.
 
-Hexaware todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
-SmartResQ todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
-Unreviewed learnings: ${stats.unreviewed.length}
-Open PRs: ${openPRs.join(', ') || 'none'}
-Insights: ${insights.join(', ') || 'none'}
+  const prompt = `You are Blu, Tarun's Hermes Agent. Analyze his current state and decide if a proactive nudge is needed.
 
-Plain text. Under 4 lines. No markdown.`;
+Priority 1 (Goal Check): If there is a pending "One Big Thing", nudge him about it if it's late evening.
+Priority 2 (Automation): Look at his behavioural insights and recent tasks. Suggest ONE specific thing he could automate or a tool/skill I could learn to help him.
+Priority 3 (General): Only if the above aren't urgent, mention a blocker or a stale item.
+
+Data:
+- Pending "One Big Thing": ${pendingGoal ? pendingGoal.content : 'none'}
+- Recent Insights: ${insights.join(', ') || 'none'}
+- Open PRs: ${openPRs.join(', ') || 'none'}
+- Stats: ${stats.hexTodos.length} Hexaware, ${stats.srqTodos.length} SmartResQ tasks pending.
+
+If nothing truly valuable to say, reply SKIP.
+Tone: Guardian-like, efficiency-obsessed, direct. Under 5 lines. No markdown except *bold*.`;
 
   const result = await callLLM([{ role: "user", content: prompt }]);
   return result.trim() === 'SKIP' ? null : result;

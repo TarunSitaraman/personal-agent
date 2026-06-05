@@ -505,6 +505,26 @@ async function getMessageCount() {
 
 // --- Summary stats (for briefs) ---
 
+// --- Goals (One Big Thing) ---
+
+async function saveGoal(content, context) {
+  await pool.query(
+    'INSERT INTO goals (content, context) VALUES ($1, $2)',
+    [content, context]
+  );
+}
+
+async function getPendingGoal() {
+  const { rows } = await pool.query(
+    "SELECT * FROM goals WHERE done = false AND created_at >= CURRENT_DATE ORDER BY created_at DESC LIMIT 1"
+  );
+  return rows[0] || null;
+}
+
+async function completeGoal(id) {
+  await pool.query('UPDATE goals SET done = true, completed_at = NOW() WHERE id = $1', [id]);
+}
+
 async function getSummaryStats() {
   const [hexTodos, srqTodos, unreviewed] = await Promise.all([
     getPendingTodos('hexaware'),
