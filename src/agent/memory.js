@@ -242,22 +242,45 @@ async function getWeekEvents(weekStart, weekEnd) {
 }
 
 async function getUpcomingEvents(hours = 24) {
-  const { rows } = await pool.query(
-    `SELECT title, start_at, context FROM events
-     WHERE recurrence = 'none' AND start_at >= NOW() AND start_at <= NOW() + ($1 || ' hours')::interval
-     ORDER BY start_at LIMIT 5`,
-    [hours]
-  );
-  return rows;
+  const [events, todos] = await Promise.all([
+    pool.query(
+      `SELECT title, start_at, context, 'event' as type FROM events
+       WHERE recurrence = 'none' AND start_at >= NOW() AND start_at <= NOW() + ($1 || ' hours')::interval
+       ORDER BY start_at LIMIT 5`,
+      [hours]
+    ),
+    pool.query(
+      `SELECT content as title, remind_at as start_at, context, 'todo' as type FROM todos
+       WHERE done = false AND remind_at IS NOT NULL AND remind_at >= NOW() AND remind_at <= NOW() + ($1 || ' hours')::interval
+       ORDER BY remind_at LIMIT 5`,
+      [hours]
+    )
+  ]);
+  
+  return [...events.rows, ...todos.rows]
+    .sort((a, b) => new Date(a.start_at) - new Date(b.start_at))
+    .slice(0, 5);
 }
 
 async function listEvents(context = null, limit = 10) {
-  const query = context
-    ? `SELECT id, title, start_at, end_at, context, recurrence FROM events WHERE context = $1 ORDER BY start_at LIMIT $2`
-    : `SELECT id, title, start_at, end_at, context, recurrence FROM events ORDER BY start_at LIMIT $1`;
+  const eventQuery = context
+    ? `SELECT id, title, start_at, end_at, context, recurrence, 'event' as type FROM events WHERE context = $1 ORDER BY start_at LIMIT $2`
+    : `SELECT id, title, start_at, end_at, context, recurrence, 'event' as type FROM events ORDER BY start_at LIMIT $1`;
+  
+  const todoQuery = context
+    ? `SELECT id, content as title, remind_at as start_at, NULL as end_at, context, 'none' as recurrence, 'todo' as type FROM todos WHERE done = false AND remind_at IS NOT NULL AND context = $1 ORDER BY remind_at LIMIT $2`
+    : `SELECT id, content as title, remind_at as start_at, NULL as end_at, context, 'none' as recurrence, 'todo' as type FROM todos WHERE done = false AND remind_at IS NOT NULL ORDER BY remind_at LIMIT $1`;
+
   const params = context ? [context, limit] : [limit];
-  const { rows } = await pool.query(query, params);
-  return rows;
+  
+  const [events, todos] = await Promise.all([
+    pool.query(eventQuery, params),
+    pool.query(todoQuery, params)
+  ]);
+
+  return [...events.rows, ...todos.rows]
+    .sort((a, b) => new Date(a.start_at) - new Date(b.start_at))
+    .slice(0, limit);
 }
 
 async function findEventByTitle(keyword) {
