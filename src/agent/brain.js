@@ -4,7 +4,7 @@ const memory = require("./memory");
 const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
-const { sendButtonMessage } = require("../whatsapp/send");
+const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -380,15 +380,16 @@ ${summaryBlock}`;
   let reply;
   if (Array.isArray(parsed.actions) && parsed.actions.length) {
     for (const item of parsed.actions) {
-      await executeAction(item.action, item.data, mode, parsed.reply);
+      await executeAction(item.action, item.data, mode, parsed.reply, replyTo);
     }
     reply = parsed.reply;
   } else {
-    reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
+    reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply, replyTo);
   }
 
   await memory.saveMessage("user", userMessage);
-  await memory.saveMessage("model", reply);
+  // reply is null when executeAction sent an interactive message directly (e.g. list_todos)
+  if (reply != null) await memory.saveMessage("model", reply);
 
   // After adding a todo, offer a reminder button so the user doesn't have to ask
   if (replyTo) {
@@ -519,7 +520,7 @@ ${insightsBlock}`;
   return reply;
 }
 
-async function executeAction(action, data, currentMode, defaultReply) {
+async function executeAction(action, data, currentMode, defaultReply, replyTo = null) {
   const context = data?.context || currentMode;
   try {
     switch (action) {
@@ -649,6 +650,25 @@ async function executeAction(action, data, currentMode, defaultReply) {
         const hex = todos.filter(t => t.context === 'hexaware');
         const srq = todos.filter(t => t.context === 'smartresq');
         const other = todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
+
+        // On WhatsApp, send a tappable list so items can be completed in one tap
+        if (replyTo) {
+          const sections = [];
+          if (hex.length) sections.push({
+            title: 'Hexaware',
+            rows: hex.map(t => ({ id: `ltdone_${t.id}`, title: t.content.slice(0, 24), description: 'Tap to mark done' })),
+          });
+          if (srq.length) sections.push({
+            title: 'SmartResQ',
+            rows: srq.map(t => ({ id: `ltdone_${t.id}`, title: t.content.slice(0, 24), description: 'Tap to mark done' })),
+          });
+          if (other.length) sections.push({
+            title: 'Personal',
+            rows: other.map(t => ({ id: `ltdone_${t.id}`, title: t.content.slice(0, 24), description: 'Tap to mark done' })),
+          });
+          await sendListMessage(replyTo, `You have ${todos.length} open todo${todos.length === 1 ? '' : 's'}.`, 'See todos', sections);
+          return null; // interactive message sent directly, no text reply needed
+        }
 
         const fmt = t => {
           const reminder = t.remind_at

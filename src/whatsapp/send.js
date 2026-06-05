@@ -58,4 +58,44 @@ async function sendButtonMessage(to, body, buttons) {
   }
 }
 
-module.exports = { sendMessage, sendButtonMessage };
+// sections: [{ title: string, rows: [{ id, title, description? }] }]
+async function sendListMessage(to, body, buttonLabel, sections) {
+  try {
+    await axios.post(
+      BASE_URL,
+      {
+        messaging_product: 'whatsapp',
+        to,
+        type: 'interactive',
+        interactive: {
+          type: 'list',
+          body: { text: body },
+          action: {
+            button: buttonLabel.slice(0, 20),
+            sections: sections.map(s => ({
+              title: s.title.slice(0, 24),
+              rows: s.rows.map(r => ({
+                id: r.id,
+                title: r.title.slice(0, 24),
+                ...(r.description ? { description: r.description.slice(0, 72) } : {}),
+              })),
+            })),
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  } catch (err) {
+    // Fall back to plain text if list messages aren't supported
+    console.error('List send failed, using text fallback:', err.response?.data?.error?.message || err.message);
+    const lines = sections.flatMap(s => [`*${s.title}*`, ...s.rows.map((r, i) => `${i + 1}. ${r.title}`)]).join('\n');
+    await sendMessage(to, `${body}\n\n${lines}`);
+  }
+}
+
+module.exports = { sendMessage, sendButtonMessage, sendListMessage };

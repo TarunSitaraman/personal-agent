@@ -32,6 +32,15 @@ function isDuplicate(msgId) {
 // Returns true if the action was handled, false to fall through to LLM.
 async function handleButtonAction(id, from) {
   try {
+    // List picker selection: tap a todo to mark it done
+    if (id.startsWith('ltdone_')) {
+      const todoId = id.slice(7);
+      await memory.completeTodo(todoId);
+      await sendMessage(from, 'Done. Removed from your list.');
+      hub.notify();
+      return true;
+    }
+
     // Todo reminder: Done — mark the specific todo complete by ID
     if (id.startsWith('rdone_')) {
       const todoId = id.slice(6);
@@ -110,6 +119,19 @@ async function handleButtonAction(id, from) {
       return true;
     }
 
+    // One Big Thing — skip
+    if (id === 'obt_skip') {
+      await sendMessage(from, 'No problem. Have a focused session.');
+      return true;
+    }
+    // One Big Thing — set: prime LLM with a goal-setting prompt
+    if (id === 'obt_set') {
+      const reply = await handleIncoming('I want to set my One Big Thing for tonight', from);
+      if (reply) await sendMessage(from, reply);
+      hub.notify();
+      return true;
+    }
+
   } catch (err) {
     console.error('[Button] Handler error:', id, err.message);
   }
@@ -165,12 +187,24 @@ router.post('/', async (req, res) => {
       }
       text = transcription;
     } else if (message.type === 'interactive') {
-      const buttonReply = message.interactive?.button_reply;
-      if (!buttonReply) return;
+      const interactive = message.interactive;
+      let buttonId, buttonTitle;
+      if (interactive?.type === 'button_reply') {
+        buttonId = interactive.button_reply?.id;
+        buttonTitle = interactive.button_reply?.title;
+      } else if (interactive?.type === 'list_reply') {
+        buttonId = interactive.list_reply?.id;
+        buttonTitle = interactive.list_reply?.title;
+      } else {
+        // older shape — button_reply at top level
+        buttonId = interactive?.button_reply?.id;
+        buttonTitle = interactive?.button_reply?.title;
+      }
+      if (!buttonId && !buttonTitle) return;
       // Try structured ID handling first — faster and more reliable than LLM
-      if (await handleButtonAction(buttonReply.id, from)) return;
-      // Fall through to LLM for unrecognised button IDs (e.g. ctx_hex/srq/per)
-      text = buttonReply.title;
+      if (buttonId && await handleButtonAction(buttonId, from)) return;
+      // Fall through to LLM for unrecognised IDs (e.g. ctx_hex/srq/per)
+      text = buttonTitle || '';
     } else if (message.type === 'image') {
       const caption = message.image?.caption || '';
       const description = await analyzeImage(message.image.id, caption);

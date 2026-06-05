@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview } = require('../agent/brain');
-const { sendMessage, sendButtonMessage } = require('../whatsapp/send');
+const { sendMessage, sendButtonMessage, sendListMessage } = require('../whatsapp/send');
 const memory = require('../agent/memory');
 
 function startScheduler() {
@@ -17,13 +17,20 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // 6:30 PM IST — SmartResQ standup
-  cron.schedule('30 18 * * *', async () => {
+  // 6:00 PM IST — Mode transition: Hexaware → SmartResQ
+  cron.schedule('0 18 * * *', async () => {
     try {
       const standup = await generateStandup('smartresq');
       await sendMessage(myNumber, standup);
+      // Follow up with a goal-setting nudge after the brief arrives
+      setTimeout(async () => {
+        await sendButtonMessage(myNumber, "What's the *One Big Thing* you want to move tonight?", [
+          { id: 'obt_set', title: "Set it now" },
+          { id: 'obt_skip', title: "Skip tonight" },
+        ]);
+      }, 1500);
     } catch (err) {
-      console.error('SmartResQ standup error:', err.message);
+      console.error('Mode transition brief error:', err.message);
     }
   }, { timezone: 'Asia/Kolkata' });
 
