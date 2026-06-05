@@ -392,8 +392,9 @@ ${insightsBlock}`;
   if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
 
   const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
+  const finalModelMessage = reply || parsed.reply || "(action executed)";
   await memory.saveMessage("user", userMessage);
-  await memory.saveMessage("model", reply);
+  await memory.saveMessage("model", finalModelMessage);
 
   if ((msgCount + 2) % 20 === 0) {
     analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
