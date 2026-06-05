@@ -12,9 +12,7 @@ const MODEL_CHAIN = [
   "google/gemini-2.0-flash-lite-preview-02-05:free",
   "meta-llama/llama-3.3-70b-instruct:free",
   "deepseek/deepseek-r1-distill-llama-70b:free",
-  "qwen/qwen-2-7b-instruct:free",
   "mistralai/mistral-7b-instruct:free",
-  "microsoft/phi-3-medium-128k-instruct:free",
 ];
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
