@@ -56,6 +56,7 @@ FORMATTING RULES:
 
 INTENT DETECTION:
 - "todo: X", "remember to X" → ADD_TODO
+- Past-tense completion ("renewed X", "finished X", "did X", "submitted X", "sent X", "fixed X", "completed X", "done with X") → COMPLETE_TODO (data.content = the thing completed). CRITICAL: past tense = task already done, NOT a new todo to add.
 - "the one big thing is X", "my main focus is X", "goal: X" → SET_GOAL
 - "goal done", "finished the big thing" → COMPLETE_GOAL
 - "note: X", "save this: X" → ADD_NOTE
@@ -67,6 +68,9 @@ INTENT DETECTION:
 - "learn a new skill: [name] - [description]" → CREATE_SKILL
 - Tarun wants to use a "learned skill" (one not in the hardcoded list but in the "Available Skills" section) → RUN_SKILL (data.skill_name = the skill name).
 - Otherwise → NONE
+
+CORRECTION HANDLING:
+- If Tarun says "no" or "no i completed it" or "no that was done" after you added something as a todo, he means you misclassified it. Look at his PREVIOUS message to identify what "it" refers to, and issue COMPLETE_TODO for that item instead. Do NOT default to the most recent completed item from history.
 
 CRITICAL: Always respond with ONLY a single valid JSON object.
 {
