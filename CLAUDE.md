@@ -21,11 +21,11 @@ A WhatsApp-based personal AI agent ("Jarvis") for Tarun. Not a todo app — an a
 ```
 WhatsApp (Meta Cloud API)
     ↓
-Node.js + Express server (Railway — always on)
+Node.js + Express server (Render — always on)
     ↓
 Gemini 2.0 Flash API (brain — free tier)
     ↓
-Supabase (memory — todos, notes, learnings, conversation history)
+Neon (PostgreSQL memory — todos, notes, learnings, conversation history)
     ↓
 node-cron (proactive briefs at 10am + 7pm IST)
 ```
@@ -33,8 +33,8 @@ node-cron (proactive briefs at 10am + 7pm IST)
 ## Stack decisions
 - **WhatsApp** over Telegram: Tarun already lives there daily
 - **Gemini 2.0 Flash** over Claude API: Tarun has Claude Pro (not API), Gemini free tier is sufficient
-- **Supabase** over local DB: persistent across deploys, free tier, easy client
-- **Railway** over Vercel: needs always-on server for webhooks + cron (Vercel serverless won't work)
+- **Neon** over local DB: persistent serverless Postgres, excellent free tier
+- **Render** over Vercel: needs always-on server for webhooks + cron (Vercel serverless won't work)
 
 ## Phase plan
 - **Phase 1 (MVP)**: Webhook → Gemini → respond. Capture todos/notes/learnings. Mode awareness.
@@ -48,7 +48,7 @@ personal-agent/
 │   ├── server.js
 │   ├── agent/
 │   │   ├── brain.js       # Gemini calls + prompt
-│   │   ├── memory.js      # Supabase CRUD
+│   │   ├── memory.js      # Postgres CRUD (Neon)
 │   │   ├── context.js     # Mode detection
 │   │   └── intents.js     # Parse intent from message
 │   ├── scheduler/
@@ -69,27 +69,26 @@ WHATSAPP_PHONE_ID=       # Phone number ID from Meta app
 WHATSAPP_VERIFY_TOKEN=   # Any string you choose (webhook verification)
 MY_WHATSAPP_NUMBER=      # Tarun's personal number (E.164 format: 91XXXXXXXXXX)
 GEMINI_API_KEY=          # From aistudio.google.com
-SUPABASE_URL=            # From Supabase project settings
-SUPABASE_ANON_KEY=       # From Supabase project settings
+DATABASE_URL=            # From Neon project settings (Postgres connection string)
 PORT=3000
 TZ=Asia/Kolkata
 ```
 
 ## Setup steps Tarun needs to do manually
 1. **Meta Developer account** → Create WhatsApp Business App → get PHONE_NUMBER_ID + TOKEN
-2. **Supabase** → New project → run schema from PLAN.md → get URL + ANON_KEY  
+2. **Neon** → New project → run schema from PLAN.md → get DATABASE_URL
 3. **Gemini API key** → aistudio.google.com → Create API key
-4. **Railway** → New project from GitHub → set env vars → deploy
+4. **Render** → New Web Service from GitHub → set env vars → deploy
 
 ## Current status
-- [ ] PLAN.md written (Gemini implementing)
-- [ ] Meta WhatsApp setup
-- [ ] Supabase schema applied  
-- [ ] Gemini API key obtained
-- [ ] Code implemented
-- [ ] Railway deployed
-- [ ] Webhook URL registered in Meta app
-- [ ] End-to-end test: message bot → response
+- [x] PLAN.md written
+- [x] Meta WhatsApp setup
+- [x] Neon schema applied  
+- [x] Gemini API key obtained
+- [x] Code implemented
+- [x] Render deployed
+- [x] Webhook URL registered in Meta app
+- [x] End-to-end test: message bot → response
 
 ## Key contacts / references
 - SmartResQ-dev lives at: `C:\Users\Tarun\Documents\SmartResQ-dev`

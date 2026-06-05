@@ -11,10 +11,10 @@ Build a WhatsApp bot that acts as a personal AI agent for Tarun. It knows his th
 - Runtime: Node.js 20+
 - Framework: Express
 - AI: Google Gemini 2.0 Flash (`@google/generative-ai`)
-- Database: Supabase (`@supabase/supabase-js`)
+- Database: Neon (PostgreSQL via `pg`)
 - Scheduling: node-cron
 - WhatsApp: Meta Cloud API (HTTP calls via axios)
-- Hosting target: Railway (always-on, not serverless)
+- Hosting target: Render (always-on, not serverless)
 
 ---
 
@@ -35,7 +35,7 @@ Build a WhatsApp bot that acts as a personal AI agent for Tarun. It knows his th
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
-    "@supabase/supabase-js": "^2.45.0",
+    "pg": "^8.12.0",
     "axios": "^1.7.0",
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
@@ -54,17 +54,16 @@ WHATSAPP_PHONE_ID=
 WHATSAPP_VERIFY_TOKEN=jarvis_verify_2024
 MY_WHATSAPP_NUMBER=91XXXXXXXXXX
 GEMINI_API_KEY=
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
+DATABASE_URL=
 PORT=3000
 TZ=Asia/Kolkata
 ```
 
 ---
 
-## 3. Supabase Schema
+## 3. Database Schema
 
-Run this SQL in the Supabase SQL editor to create all tables:
+Run this SQL in the Neon SQL editor to create all tables:
 
 ```sql
 -- Todos
@@ -104,17 +103,6 @@ create table conversations (
   content text not null,
   created_at timestamptz default now()
 );
-
--- Enable RLS but allow all for anon key (personal use, no multi-user)
-alter table todos enable row level security;
-alter table notes enable row level security;
-alter table learnings enable row level security;
-alter table conversations enable row level security;
-
-create policy "allow all" on todos for all using (true) with check (true);
-create policy "allow all" on notes for all using (true) with check (true);
-create policy "allow all" on learnings for all using (true) with check (true);
-create policy "allow all" on conversations for all using (true) with check (true);
 ```
 
 ---
@@ -266,93 +254,74 @@ module.exports = { getCurrentMode, getModeDescription };
 ### src/agent/memory.js
 
 ```javascript
-const { createClient } = require('@supabase/supabase-js');
+const { Pool } = require('pg');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 // --- Todos ---
 
 async function addTodo(content, context) {
-  const { error } = await supabase.from('todos').insert({ content, context });
-  if (error) throw error;
+  await pool.query('INSERT INTO todos (content, context) VALUES ($1, $2)', [content, context]);
 }
 
 async function getPendingTodos(context = null) {
-  let query = supabase.from('todos').select('*').eq('done', false).order('created_at', { ascending: false });
-  if (context) query = query.eq('context', context);
-  const { data, error } = await query.limit(10);
-  if (error) throw error;
-  return data || [];
+  const query = context 
+    ? 'SELECT * FROM todos WHERE done = false AND context = $1 ORDER BY created_at DESC LIMIT 10'
+    : 'SELECT * FROM todos WHERE done = false ORDER BY created_at DESC LIMIT 10';
+  const params = context ? [context] : [];
+  const { rows } = await pool.query(query, params);
+  return rows;
 }
 
 async function completeTodo(id) {
-  const { error } = await supabase
-    .from('todos')
-    .update({ done: true, completed_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
+  await pool.query('UPDATE todos SET done = true, completed_at = NOW() WHERE id = $1', [id]);
 }
 
 // --- Notes ---
 
 async function addNote(content, context, tags = []) {
-  const { error } = await supabase.from('notes').insert({ content, context, tags });
-  if (error) throw error;
+  await pool.query('INSERT INTO notes (content, context, tags) VALUES ($1, $2, $3)', [content, context, tags]);
 }
 
 async function getRecentNotes(context = null, limit = 5) {
-  let query = supabase.from('notes').select('*').order('created_at', { ascending: false });
-  if (context) query = query.eq('context', context);
-  const { data, error } = await query.limit(limit);
-  if (error) throw error;
-  return data || [];
+  const query = context
+    ? 'SELECT * FROM notes WHERE context = $1 ORDER BY created_at DESC LIMIT $2'
+    : 'SELECT * FROM notes ORDER BY created_at DESC LIMIT $1';
+  const params = context ? [context, limit] : [limit];
+  const { rows } = await pool.query(query, params);
+  return rows;
 }
 
 // --- Learnings ---
 
 async function addLearning(topic, content, source = null) {
-  const { error } = await supabase.from('learnings').insert({ topic, content, source });
-  if (error) throw error;
+  await pool.query('INSERT INTO learnings (topic, content, source) VALUES ($1, $2, $3)', [topic, content, source]);
 }
 
 async function getUnreviewedLearnings(limit = 5) {
-  const { data, error } = await supabase
-    .from('learnings')
-    .select('*')
-    .eq('reviewed', false)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return data || [];
+  const { rows } = await pool.query('SELECT * FROM learnings WHERE reviewed = false ORDER BY created_at DESC LIMIT $1', [limit]);
+  return rows;
 }
 
 async function markLearningReviewed(id) {
-  const { error } = await supabase
-    .from('learnings')
-    .update({ reviewed: true, last_reviewed_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
+  await pool.query('UPDATE learnings SET reviewed = true, last_reviewed_at = NOW() WHERE id = $1', [id]);
 }
 
 // --- Conversation history ---
 
 async function saveMessage(role, content) {
-  const { error } = await supabase.from('conversations').insert({ role, content });
-  if (error) throw error;
+  await pool.query('INSERT INTO conversations (role, content) VALUES ($1, $2)', [role, content]);
 }
 
 async function getRecentHistory(limit = 20) {
-  const { data, error } = await supabase
-    .from('conversations')
-    .select('role, content')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  // Return in chronological order for the prompt
-  return (data || []).reverse();
+  const { rows } = await pool.query(
+    'SELECT role, content FROM (SELECT * FROM conversations ORDER BY created_at DESC LIMIT $1) sub ORDER BY created_at ASC',
+    [limit]
+  );
+  return rows;
 }
 
 // --- Summary stats (for briefs) ---
@@ -458,7 +427,7 @@ Unreviewed learnings: ${stats.unreviewed.length}
 `;
 
   const historyParts = history.map(h => ({
-    role: h.role,
+    role: h.role === 'user' ? 'user' : 'model',
     parts: [{ text: h.content }],
   }));
 
@@ -587,28 +556,7 @@ module.exports = { startScheduler };
 
 ---
 
-## 5. railway.json (Railway deployment config)
-
-Create this file at the root:
-
-```json
-{
-  "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "builder": "NIXPACKS"
-  },
-  "deploy": {
-    "startCommand": "node src/server.js",
-    "healthcheckPath": "/health",
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
-  }
-}
-```
-
----
-
-## 6. .gitignore
+## 5. .gitignore
 
 ```
 node_modules/
@@ -617,7 +565,7 @@ node_modules/
 
 ---
 
-## 7. Implementation order
+## 6. Implementation order
 
 Implement in this exact order to be able to test at each step:
 
@@ -630,11 +578,10 @@ Implement in this exact order to be able to test at each step:
 7. `src/whatsapp/webhook.js`
 8. `src/scheduler/briefs.js`
 9. `src/server.js`
-10. `railway.json`
 
 ---
 
-## 8. Testing locally before deploying
+## 7. Testing locally before deploying
 
 To test the webhook locally, use ngrok:
 
@@ -658,7 +605,7 @@ Send a message to your WhatsApp test number and verify the bot responds.
 
 ---
 
-## 9. Meta WhatsApp setup steps (Tarun does this manually)
+## 8. Meta WhatsApp setup steps (Tarun does this manually)
 
 1. Go to developers.facebook.com → Create App → Business type
 2. Add "WhatsApp" product
@@ -667,41 +614,27 @@ Send a message to your WhatsApp test number and verify the bot responds.
    - Generate a permanent token → `WHATSAPP_TOKEN` (use System User token for permanence)
    - The test number is your bot's number — add your personal number as a recipient
 4. Under WhatsApp > Configuration:
-   - Set Webhook URL to your Railway URL + `/webhook`
+   - Set Webhook URL to your Render URL + `/webhook`
    - Set Verify Token to your chosen string
    - Subscribe to `messages` webhook field
 
 ---
 
-## 10. Railway deployment steps (Tarun does this manually)
+## 9. Neon setup steps (Tarun does this manually)
 
-1. Push code to a GitHub repo
-2. railway.app → New Project → Deploy from GitHub repo
-3. Add all environment variables from `.env.example` in Railway dashboard
-4. Deploy — Railway gives you a public URL
-5. Update Meta webhook URL to the Railway URL
+1. Create project on neon.tech
+2. Get the Connection String → `DATABASE_URL`
+3. Run the schema from Section 3 in the SQL Editor
 
 ---
 
-## Phase 2 additions (implement after MVP is working)
+## 10. Render deployment steps (Tarun does this manually)
 
-### Learning nudge cron (add to briefs.js)
-Every Sunday at 6pm, check for learnings not reviewed in 7+ days and send a summary.
-
-### GitHub integration (add to brain.js generateBrief)
-Use the GitHub API to pull open PRs from `TarunSitaraman/SmartResQ-dev` and include them in the evening brief. Needs `GITHUB_TOKEN` env var added.
-
-```javascript
-// Pseudocode for GitHub PR fetch
-const res = await fetch('https://api.github.com/repos/TarunSitaraman/SmartResQ-dev/pulls', {
-  headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
-});
-const prs = await res.json();
-const openPRs = prs.filter(pr => pr.state === 'open').length;
-```
-
-### Todo completion via WhatsApp
-Gemini should also support "mark done: [item]" intent — search todos by content similarity and mark the closest match complete.
+1. Push code to a GitHub repo
+2. render.com → New Web Service → Deploy from GitHub repo
+3. Add all environment variables from `.env.example` in Render dashboard
+4. Deploy — Render gives you a public URL
+5. Update Meta webhook URL to the Render URL
 
 ---
 

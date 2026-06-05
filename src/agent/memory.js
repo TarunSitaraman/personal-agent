@@ -55,10 +55,10 @@ async function completeTodoByContent(keyword) {
 
 // --- Notes ---
 
-async function addNote(content, context, tags = []) {
+async function addNote(content, context, tags = [], embedding = null) {
   const { rows } = await pool.query(
-    'INSERT INTO notes (content, context, tags) VALUES ($1, $2, $3) RETURNING id',
-    [content, context, tags]
+    'INSERT INTO notes (content, context, tags, embedding) VALUES ($1, $2, $3, $4) RETURNING id',
+    [content, context, tags, embedding ? `[${embedding.join(',')}]` : null]
   );
   return rows[0].id;
 }
@@ -78,10 +78,10 @@ async function getRecentNotes(context = null, limit = 5) {
 
 // --- Learnings ---
 
-async function addLearning(topic, content, source = null) {
+async function addLearning(topic, content, source = null, embedding = null) {
   await pool.query(
-    'INSERT INTO learnings (topic, content, source) VALUES ($1, $2, $3)',
-    [topic, content, source]
+    'INSERT INTO learnings (topic, content, source, embedding) VALUES ($1, $2, $3, $4)',
+    [topic, content, source, embedding ? `[${embedding.join(',')}]` : null]
   );
 }
 
@@ -102,8 +102,11 @@ async function markLearningReviewed(id) {
 
 // --- Permanent knowledge store ---
 
-async function saveKnowledge(fact) {
-  await pool.query('INSERT INTO knowledge (subject, fact) VALUES ($1, $2)', ['general', fact]);
+async function saveKnowledge(fact, embedding = null) {
+  await pool.query(
+    'INSERT INTO knowledge (subject, fact, embedding) VALUES ($1, $2, $3)',
+    ['general', fact, embedding ? `[${embedding.join(',')}]` : null]
+  );
 }
 
 async function getAllKnowledge() {
@@ -347,7 +350,34 @@ async function getWeeklyActivity() {
 
 // --- Search ---
 
-async function searchMemory(query) {
+async function searchMemory(query, embedding = null) {
+  if (embedding) {
+    const vectorStr = `[${embedding.join(',')}]`;
+    const [todos, notes, learnings, knowledge] = await Promise.all([
+      // Todos don't have embeddings yet, still use ILIKE
+      pool.query(
+        `SELECT 'todo' as type, content, context, 1 - (NULL::vector <=> NULL::vector) as score FROM todos WHERE content ILIKE $1 AND done = false LIMIT 3`,
+        [`%${query}%`]
+      ),
+      pool.query(
+        `SELECT 'note' as type, content, context, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
+        [vectorStr]
+      ),
+      pool.query(
+        `SELECT 'learning' as type, topic as content, context, 1 - (embedding <=> $1) as score FROM learnings ORDER BY embedding <=> $1 LIMIT 5`,
+        [vectorStr]
+      ),
+      pool.query(
+        `SELECT 'knowledge' as type, fact as content, 'personal' as context, 1 - (embedding <=> $1) as score FROM knowledge ORDER BY embedding <=> $1 LIMIT 5`,
+        [vectorStr]
+      ),
+    ]);
+    return [...todos.rows, ...notes.rows, ...learnings.rows, ...knowledge.rows]
+      .filter(r => r.score === null || r.score > 0.6) // Filter out low relevance if score exists
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+  }
+
+  // Fallback to basic ILIKE
   const [todos, notes, learnings] = await Promise.all([
     pool.query(
       `SELECT 'todo' as type, content, context FROM todos WHERE content ILIKE $1 AND done = false LIMIT 5`,
