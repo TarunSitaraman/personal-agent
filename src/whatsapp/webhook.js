@@ -14,6 +14,19 @@ function logHit(entry) {
   if (webhookLog.length > 10) webhookLog.pop();
 }
 
+// Dedup cache — WhatsApp retries webhook delivery if it doesn't get 200 fast enough.
+// We respond 200 immediately but process async, so retries can arrive and double-process.
+const seenIds = new Map();
+function isDuplicate(msgId) {
+  const now = Date.now();
+  for (const [id, ts] of seenIds) {
+    if (now - ts > 60_000) seenIds.delete(id);
+  }
+  if (seenIds.has(msgId)) return true;
+  seenIds.set(msgId, now);
+  return false;
+}
+
 router.get('/log', (req, res) => {
   res.json(webhookLog);
 });
@@ -40,6 +53,10 @@ router.post('/', async (req, res) => {
     logHit({ hasMessage: !!message, from: message?.from, type: message?.type });
 
     if (!message) return;
+    if (isDuplicate(message.id)) {
+      console.warn(`[Webhook] Duplicate message ${message.id} — skipping`);
+      return;
+    }
 
     const from = message.from;
     if (from !== process.env.MY_WHATSAPP_NUMBER) {

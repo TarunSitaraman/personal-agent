@@ -353,7 +353,14 @@ ${summaryBlock}`;
   ];
 
   // JSON mode forces the model to return only valid JSON — no leakage possible
-  const raw = await callLLM(messages, true);
+  let raw;
+  try {
+    raw = await callLLM(messages, true);
+  } catch (err) {
+    console.error('[Brain] All LLMs failed:', err.message);
+    await memory.saveMessage("user", userMessage);
+    return "All my LLMs are down right now. Try again in a moment.";
+  }
 
   let parsed;
   try {
