@@ -153,6 +153,22 @@ function extractPartialReply(content) {
   }
 }
 
+function extractFirstJSON(text) {
+  let depth = 0, start = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (text[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try { return JSON.parse(text.slice(start, i + 1)); } catch {}
+      }
+    }
+  }
+  return null;
+}
+
 async function callLLM(messages, jsonMode = false) {
   let lastErr;
   for (const model of MODEL_CHAIN) {
@@ -263,12 +279,17 @@ ${summaryBlock}`;
   let parsed;
   try {
     parsed = JSON.parse(raw);
-    if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
   } catch {
+    parsed = extractFirstJSON(raw);
+  }
+
+  if (!parsed) {
     await memory.saveMessage("user", userMessage);
     await memory.saveMessage("model", raw);
-    return raw;
+    return "Sorry, I got confused there. Could you try again?";
   }
+
+  if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
 
   const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
   await memory.saveMessage("user", userMessage);
@@ -340,12 +361,17 @@ async function handleIncomingStream(userMessage, onToken) {
   let parsed;
   try {
     parsed = JSON.parse(full);
-    if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
   } catch {
+    parsed = extractFirstJSON(full);
+  }
+
+  if (!parsed) {
     await memory.saveMessage("user", userMessage);
     await memory.saveMessage("model", full);
-    return full;
+    return "Sorry, I got confused there. Could you try again?";
   }
+
+  if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
 
   const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
   await memory.saveMessage("user", userMessage);
