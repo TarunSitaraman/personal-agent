@@ -44,60 +44,34 @@ CORE IDENTITY:
 - You bridge the gap between his morning (Hexaware) and evening (SmartResQ).
 - You proactively learn the "who, what, where" of his world.
 
-CRITICAL DATA RULES:
-- Only report data present in the context block. Never invent numbers or items.
-- You do NOT have access to calendars or emails.
+[TOOLBOX]
+You have a dynamic toolbox of skills. Always check the available skills in the context block before acting.
+- Hardcoded skills: add_todo, add_note, learn_context, add_learning, search, search_web, add_event, etc.
+- Learned skills: (See the "Available Skills" section in context).
 
 PROACTIVE BEHAVIOUR:
-- If insights reveal a pattern worth flagging, mention it naturally — one observation max, only when relevant.
-- RECURSIVE LEARNING: If Tarun mentions a new person, tool, or project entity for the first time (not in the knowledge block), save it using LEARN_CONTEXT and acknowledge naturally. If you're unsure if it's important, ask: "I noticed you mentioned [Entity]. Is this someone/something I should keep in my permanent knowledge graph?"
+- RECURSIVE LEARNING: If Tarun mentions a new person, tool, or project entity for the first time, save it using LEARN_CONTEXT.
+- SKILL ACQUISITION: If Tarun asks you to "be able to" do something new or "learn" a new ability, use CREATE_SKILL.
 
-FORMATTING RULES (critical — WhatsApp messages must be readable):
-- Use *bold* for section headers
-- Use numbered lists for todos, notes, learnings (1. 2. 3.)
-- Each item on its own line
-- Separate sections with a blank line
-- Keep replies concise — no long paragraphs
-- Never use markdown (##, **, -, etc) except WhatsApp-native (*bold*, _italic_)
-
-DISTINGUISHING NOTES FROM CONTEXT TEACHING (critical):
-- If Tarun tells you a FACT about his world — who someone is, a relationship, a recurring event, background info ("Prashant sir is my SmartResQ mentor", "standup is at 8am", "BIZ-4 is a Hexaware ticket") — this is CONTEXT TEACHING. Store it as a personal knowledge insight using LEARN_CONTEXT.
-- A NOTE is something Tarun explicitly wants to capture for later reference ("note: the auth flow works like X", "save this: new API endpoint is Y").
-- A TODO is a task to be done.
-- When in doubt between context teaching vs note: if Tarun is describing his world to you, it's context. If he's capturing something to refer back to, it's a note.
-
-REFERENCE RESOLUTION (critical):
-- When Tarun says "add that", "save that", "put that in todos", "add the thing I mentioned" — look back through conversation history, identify what "that" refers to, and use it as the content. Never ask "what should I add?" if the context is in history.
-
-IMPLICIT CAPTURE:
-- If Tarun mentions a task or deadline naturally (not as a command), proactively ask "Want me to add this to your todos?" and use action NONE. Save only on confirmation.
-- If Tarun mentions ANY meeting, call, standup, session, or event with a time — even casually — ADD_EVENT immediately without asking. A time anchor = add it.
+FORMATTING RULES:
+- Use *bold* for headers, numbered lists for items. Use plain text only.
 
 INTENT DETECTION:
-- "todo: X", "remember to X", "add task X", "add that/this to todos" → ADD_TODO. Resolve references from history. If project context not clear, use ASK_CONTEXT.
-- "note: X", "save this: X", "jot down X" → ADD_NOTE
-- Tarun describing people, relationships, facts about his world → LEARN_CONTEXT (data.content = the fact)
-- "learned X", "learning: X", "concept: X" → ADD_LEARNING
-- Any request to see todos — "my todos", "what's pending", "all todos", "list tasks" → LIST_TODOS. data.context = null means ALL todos across all contexts.
-- "done: X", "finished X", "mark X done" → COMPLETE_TODO
-- "my notes", "what did I save" → LIST_NOTES
-- "my learnings", "what have I learned" → LIST_LEARNINGS
-- "find X", "search for X", "did I note X" → SEARCH (uses vector semantic search)
-- Factual question about the external world → SEARCH_WEB only if live/current data is needed.
-- "remind me in X to Y" → SET_REMINDER
-- ANY mention of something happening at a specific time or date → ADD_EVENT immediately.
-- "my events", "what's on my calendar" → LIST_EVENTS
-- "cancel X", "remove X from calendar" → DELETE_EVENT
-- "reschedule X to Y", "move X meeting to Y time" → UPDATE_EVENT
-- Tarun signals a shift in where he is or what he's doing → SWITCH_MODE. Override lasts until midnight.
-- "that's wrong", "undo that", "revert" → UNDO_LAST
-- "brief me", "morning brief", "standup", "everything" → GENERATE_BRIEF (data.type = 'hexaware' | 'smartresq' | 'both')
+- "todo: X", "remember to X" → ADD_TODO
+- "note: X", "save this: X" → ADD_NOTE
+- Facts about the world/people → LEARN_CONTEXT
+- "learned X", "learning: X" → ADD_LEARNING
+- "find X", "search for X" → SEARCH
+- Factual external world question → SEARCH_WEB
+- Mentions of specific time/date → ADD_EVENT
+- "learn a new skill: [name] - [description]" → CREATE_SKILL
+- Tarun wants to use a "learned skill" (one not in the hardcoded list but in the "Available Skills" section) → RUN_SKILL (data.skill_name = the skill name).
 - Otherwise → NONE
 
 CRITICAL: Always respond with ONLY a single valid JSON object.
 {
   "reply": "your conversation here",
-  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | none",
+  "action": "add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | create_skill | run_skill | none",
   "data": {
     "content": "extracted content or search query",
     "topic": "topic if learning",
@@ -110,11 +84,14 @@ CRITICAL: Always respond with ONLY a single valid JSON object.
     "recurrence": "none | daily | weekdays | weekly",
     "new_title": "new event name",
     "cache": false,
-    "fact": "concise fact to save if cache=true"
+    "fact": "concise fact to save if cache=true",
+    "skill_name": "name of skill to create/run",
+    "skill_desc": "description of skill to create",
+    "skill_instr": "detailed prompt/steps for the skill"
   }
 }
 
-WHEN UNSURE: If you are uncertain about any detail — context, time, what to save — always ask a clarifying question. A wrong action is worse than a clarifying question.`;
+WHEN UNSURE: Ask a clarifying question.`;
 
 async function callLLMStream(messages, onToken) {
   let lastErr;
@@ -233,7 +210,7 @@ async function handleIncoming(userMessage) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
-  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, contextSummary] = await Promise.all([
+  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, contextSummary, learnedSkills] = await Promise.all([
     memory.getRecentHistory(10),
     memory.getSummaryStats(),
     getOpenPRs(),
@@ -243,6 +220,7 @@ async function handleIncoming(userMessage) {
     memory.getUpcomingEvents(24),
     memory.getMessageCount(),
     memory.getContextSummary(),
+    memory.getAllSkills(),
   ]);
 
   const todoBlock = [
@@ -252,6 +230,10 @@ async function handleIncoming(userMessage) {
 
   const knowledgeBlock = knowledge.length
     ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
+    : '';
+
+  const skillsBlock = learnedSkills.length
+    ? `Available Skills (Learned):\n${learnedSkills.map(s => `- ${s.name}: ${s.description}`).join('\n')}`
     : '';
 
   const insightsBlock = insights.length
@@ -276,6 +258,7 @@ Unreviewed learnings: ${stats.unreviewed.length}
 Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
 Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
 ${eventsBlock}
+${skillsBlock}
 ${knowledgeBlock}
 ${insightsBlock}
 ${summaryBlock}`;
@@ -335,7 +318,7 @@ async function handleIncomingStream(userMessage, onToken) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
-  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount] = await Promise.all([
+  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, learnedSkills] = await Promise.all([
     memory.getRecentHistory(10),
     memory.getSummaryStats(),
     getOpenPRs(),
@@ -344,20 +327,41 @@ async function handleIncomingStream(userMessage, onToken) {
     memory.getAllKnowledge(),
     memory.getUpcomingEvents(24),
     memory.getMessageCount(),
+    memory.getAllSkills(),
   ]);
 
   const todoBlock = [
     ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
     ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
   ];
+
+  const skillsBlock = learnedSkills.length
+    ? `Available Skills (Learned):\n${learnedSkills.map(s => `- ${s.name}: ${s.description}`).join('\n')}`
+    : '';
+
   const knowledgeBlock = knowledge.length
     ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}` : '';
+  
   const insightsBlock = insights.length ? `Behavioural insights:\n${insights.join('\n')}` : '';
+  
   const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
   const eventsBlock = upcomingEvents.length
     ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}` : '';
 
-  const contextBlock = `Current time: ${now} IST\nCurrent mode: ${mode}\n${modeDesc}\n\nPending todos (${todoBlock.length}):\n${todoBlock.join('\n') || 'none'}\n\nUnreviewed learnings: ${stats.unreviewed.length}\nOpen PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}\nOpen Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}\n${eventsBlock}\n${knowledgeBlock}\n${insightsBlock}`;
+  const contextBlock = `Current time: ${now} IST
+Current mode: ${mode}
+${modeDesc}
+
+Pending todos (${todoBlock.length}):
+${todoBlock.join('\n') || 'none'}
+
+Unreviewed learnings: ${stats.unreviewed.length}
+Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
+Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
+${eventsBlock}
+${skillsBlock}
+${knowledgeBlock}
+${insightsBlock}`;
 
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -623,6 +627,30 @@ async function executeAction(action, data, currentMode, defaultReply) {
         return defaultReply;
       }
 
+      case "create_skill": {
+        const { skill_name, skill_desc, skill_instr } = data;
+        if (!skill_name || !skill_desc || !skill_instr) return "I need a name, description, and instructions to learn a skill.";
+        await memory.saveSkill(skill_name, skill_desc, skill_instr);
+        return `I've learned the skill: *${skill_name}*. I can now ${skill_desc}.`;
+      }
+
+      case "run_skill": {
+        const { skill_name, content } = data;
+        const skills = await memory.getAllSkills();
+        const skill = skills.find(s => s.name === skill_name);
+        if (!skill) return `I don't know how to "${skill_name}" yet.`;
+
+        const skillPrompt = `You are performing the skill: *${skill.name}*.
+Description: ${skill.description}
+Instructions: ${skill.instructions}
+
+Input context: ${content || 'No specific input provided.'}
+
+Follow the instructions exactly and return a clear, helpful response.`;
+
+        return await callLLM([{ role: 'user', content: skillPrompt }]);
+      }
+
       default:
         return defaultReply;
     }
@@ -818,4 +846,3 @@ Tone: Enthusiastic, high-signal, concise. Use *bold* for topics. Under 10 lines.
 }
 
 module.exports = { handleIncoming, handleIncomingStream, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview, generateTechPulse };
-};

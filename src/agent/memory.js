@@ -348,7 +348,19 @@ async function getWeeklyActivity() {
   };
 }
 
-// --- Search ---
+// --- Skills (The Toolbox) ---
+
+async function getAllSkills() {
+  const { rows } = await pool.query('SELECT name, description, instructions FROM skills ORDER BY name ASC');
+  return rows;
+}
+
+async function saveSkill(name, description, instructions) {
+  await pool.query(
+    'INSERT INTO skills (name, description, instructions) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET description = $2, instructions = $3',
+    [name, description, instructions]
+  );
+}
 
 async function searchMemory(query, embedding = null, currentMode = 'personal') {
   if (embedding) {
