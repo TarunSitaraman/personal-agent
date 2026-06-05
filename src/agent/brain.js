@@ -9,10 +9,10 @@ const { sendButtonMessage } = require("../whatsapp/send");
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 const MODEL_CHAIN = [
-  "google/gemini-2.0-flash-lite-preview-02-05:free",
-  "google/gemini-2.0-flash-exp:free",
-  "mistralai/mistral-7b-instruct:free",
   "openrouter/free",
+  "nousresearch/hermes-3-llama-3.1-405b:free",
+  "qwen/qwen3-next-80b-a3b-instruct:free",
+  "meta-llama/llama-3.3-70b-instruct:free"
 ];
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
