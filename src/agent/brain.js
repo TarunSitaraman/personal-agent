@@ -9,10 +9,10 @@ const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 const MODEL_CHAIN = [
-  "openrouter/free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "deepseek/deepseek-chat:free",
   "nousresearch/hermes-3-llama-3.1-405b:free",
-  "qwen/qwen3-next-80b-a3b-instruct:free",
-  "meta-llama/llama-3.3-70b-instruct:free"
+  "google/gemma-3-27b-it:free",
 ];
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -145,11 +145,15 @@ async function callGemini(messages, jsonMode = false) {
     try {
       const model = genAI.getGenerativeModel(config);
       const chat = model.startChat({ history });
-      const result = await chat.sendMessage(lastContent);
+      // Hard 20s timeout — Render kills at 30s and WhatsApp expects <15s response
+      const result = await Promise.race([
+        chat.sendMessage(lastContent),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini timeout')), 20000)),
+      ]);
       return result.response.text();
     } catch (err) {
       const is429 = err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED');
-      console.warn(`[Gemini] ${modelId} failed${is429 ? ' (rate limited)' : ''}: ${err.message?.slice(0, 60)}`);
+      console.warn(`[Gemini] ${modelId} failed${is429 ? ' (rate limited)' : ''}: ${err.message?.slice(0, 80)}`);
       lastErr = err;
       if (is429) await new Promise(r => setTimeout(r, 2000));
     }
@@ -236,30 +240,32 @@ async function callLLM(messages, jsonMode = false) {
   let lastErr;
   for (const model of MODEL_CHAIN) {
     try {
-      const body = { model, messages };
-      if (jsonMode) body.response_format = { type: 'json_object' };
+      // Free models often don't support response_format — rely on the system prompt for JSON
       const response = await axios.post(
         OPENROUTER_URL,
-        body,
+        { model, messages },
         {
           headers: {
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
             'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
             'X-Title': 'Personal Agent',
           },
+          timeout: 20000,
         }
       );
-      const content = response.data.choices[0].message.content;
-      if (content) return content;
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (content?.trim()) return content;
+      console.warn(`[LLM] ${model} returned empty content`);
     } catch (err) {
       const status = err.response?.status;
-      console.warn(`[LLM] ${model} failed (${status || err.code || err.message}), trying next...`);
+      const detail = err.response?.data?.error?.message || err.message;
+      console.warn(`[LLM] ${model} failed (${status || err.code}): ${detail?.slice(0, 100)}`);
       lastErr = err;
-      continue;
+      if (status === 429) await new Promise(r => setTimeout(r, 1000));
     }
   }
   console.error('[LLM] All models exhausted');
-  throw lastErr;
+  throw lastErr || new Error('All models exhausted');
 }
 
 function filterKnowledge(knowledge, userMessage) {

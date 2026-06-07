@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const memory = require('../agent/memory');
 const { handleIncoming } = require('../agent/brain');
 const { sendPush } = require('../push/push');
@@ -76,6 +77,55 @@ router.post('/chat', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Live health check — tests Gemini + each OpenRouter model
+router.get('/llm-health', async (req, res) => {
+  const results = {};
+  const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+  const probe = [{ role: 'user', content: 'Reply with the single word: OK' }];
+
+  // Gemini
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const chat = model.startChat({ history: [] });
+    const r = await Promise.race([
+      chat.sendMessage('Reply with the single word: OK'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+    ]);
+    results.gemini = { ok: true, reply: r.response.text().slice(0, 20) };
+  } catch (e) {
+    results.gemini = { ok: false, error: e.message?.slice(0, 80) };
+  }
+
+  // OpenRouter models
+  const models = [
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'deepseek/deepseek-chat:free',
+    'nousresearch/hermes-3-llama-3.1-405b:free',
+    'google/gemma-3-27b-it:free',
+  ];
+  await Promise.all(models.map(async m => {
+    try {
+      const r = await axios.post(OPENROUTER_URL, { model: m, messages: probe }, {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://personal-agent',
+          'X-Title': 'Personal Agent',
+        },
+        timeout: 8000,
+      });
+      const content = r.data?.choices?.[0]?.message?.content;
+      results[m] = { ok: !!content, reply: content?.slice(0, 20) };
+    } catch (e) {
+      results[m] = { ok: false, error: (e.response?.data?.error?.message || e.message)?.slice(0, 80) };
+    }
+  }));
+
+  const anyOk = Object.values(results).some(r => r.ok);
+  res.status(anyOk ? 200 : 503).json(results);
 });
 
 // Test push (dev only)
