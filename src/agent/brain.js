@@ -340,9 +340,87 @@ function filterKnowledge(knowledge, userMessage) {
   return [...relevant, ...fallback];
 }
 
+// ── Intent pre-filter ─────────────────────────────────────────────────────────
+// Handles unambiguous common commands without touching any LLM.
+// Returns a reply string, or null to fall through to LLM.
+
+const PREFILTER_RULES = [
+  // List todos
+  {
+    match: /\b(todos?|tasks?|pending|what.*(do i have|should i do)|my list|show.*todos?)\b/i,
+    action: 'list_todos',
+  },
+  // List notes
+  {
+    match: /\b(notes?|what.*(did i (save|note)|have i noted)|show.*notes?|my notes?)\b/i,
+    action: 'list_notes',
+  },
+  // List learnings
+  {
+    match: /\b(learnings?|what.*(did i learn|have i learned)|show.*learning|my learnings?)\b/i,
+    action: 'list_learnings',
+  },
+  // List events / calendar
+  {
+    match: /\b(events?|calendar|schedule|what.*(do i have.*today|upcoming|on my calendar))\b/i,
+    action: 'list_events',
+  },
+  // Current mode
+  {
+    match: /\b(what.*mode|current mode|which mode|mode.*now)\b/i,
+    action: '_mode',
+  },
+  // Complete / done — only if very explicit
+  {
+    match: /^(done|finished|completed|done with|just (did|finished|completed)|marked.*done)[:\s]+(.+)/i,
+    action: 'complete_todo',
+    dataFn: (m) => ({ content: m[3].trim() }),
+  },
+  // Quick note: prefix
+  {
+    match: /^(note|save|jot)[:\s]+(.+)/i,
+    action: 'add_note',
+    dataFn: (m) => ({ content: m[2].trim() }),
+  },
+  // Quick todo: prefix
+  {
+    match: /^(todo|task|remind me to|add|remember to)[:\s]+(.+)/i,
+    action: 'add_todo',
+    dataFn: (m) => ({ content: m[2].trim() }),
+  },
+];
+
+async function tryPrefilter(userMessage, mode, replyTo) {
+  const msg = userMessage.trim();
+  for (const rule of PREFILTER_RULES) {
+    const m = msg.match(rule.match);
+    if (!m) continue;
+
+    if (rule.action === '_mode') {
+      const desc = getModeDescription(mode);
+      return `Current mode: *${mode}*\n${desc}`;
+    }
+
+    const data = rule.dataFn ? rule.dataFn(m) : {};
+    const reply = await executeAction(rule.action, { context: mode, ...data }, mode, null, replyTo);
+    if (reply !== null) return reply;
+    // executeAction returned null = interactive message sent (list picker) — still skip LLM
+    return null;
+  }
+  return undefined; // sentinel: no rule matched, use LLM
+}
+
 async function handleIncoming(userMessage, replyTo = null) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
+
+  // Fast path: handle unambiguous commands without LLM
+  const prefiltered = await tryPrefilter(userMessage, mode, replyTo);
+  if (prefiltered !== undefined) {
+    await memory.saveMessage('user', userMessage);
+    if (prefiltered !== null) await memory.saveMessage('model', prefiltered);
+    return prefiltered;
+  }
 
   const msgEmbedding = await getEmbedding(userMessage);
 
