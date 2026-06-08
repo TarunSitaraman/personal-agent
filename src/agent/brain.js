@@ -344,49 +344,48 @@ function filterKnowledge(knowledge, userMessage) {
 // Handles unambiguous common commands without touching any LLM.
 // Returns a reply string, or null to fall through to LLM.
 
+// ctx: null = all contexts, 'mode' = current mode
 const PREFILTER_RULES = [
-  // List todos
   {
     match: /\b(todos?|tasks?|pending|what.*(do i have|should i do)|my list|show.*todos?)\b/i,
-    action: 'list_todos',
+    action: 'list_todos', ctx: null,
   },
-  // List notes
   {
     match: /\b(notes?|what.*(did i (save|note)|have i noted)|show.*notes?|my notes?)\b/i,
-    action: 'list_notes',
+    action: 'list_notes', ctx: null,
   },
-  // List learnings
   {
     match: /\b(learnings?|what.*(did i learn|have i learned)|show.*learning|my learnings?)\b/i,
-    action: 'list_learnings',
+    action: 'list_learnings', ctx: null,
   },
-  // List events / calendar
   {
     match: /\b(events?|calendar|schedule|what.*(do i have.*today|upcoming|on my calendar))\b/i,
-    action: 'list_events',
+    action: 'list_events', ctx: null,
   },
-  // Current mode
   {
     match: /\b(what.*mode|current mode|which mode|mode.*now)\b/i,
-    action: '_mode',
+    action: '_mode', ctx: null,
   },
-  // Complete / done — only if very explicit
+  // Explicit completion — "done: X", "finished X", "done with X"
   {
     match: /^(done|finished|completed|done with|just (did|finished|completed)|marked.*done)[:\s]+(.+)/i,
-    action: 'complete_todo',
+    action: 'complete_todo', ctx: null,
     dataFn: (m) => ({ content: m[3].trim() }),
+    reply: (data) => `Marked "${data.content}" as done.`,
   },
   // Quick note: prefix
   {
     match: /^(note|save|jot)[:\s]+(.+)/i,
-    action: 'add_note',
+    action: 'add_note', ctx: 'mode',
     dataFn: (m) => ({ content: m[2].trim() }),
+    reply: (data) => `Saved as a note.`,
   },
   // Quick todo: prefix
   {
     match: /^(todo|task|remind me to|add|remember to)[:\s]+(.+)/i,
-    action: 'add_todo',
+    action: 'add_todo', ctx: 'mode',
     dataFn: (m) => ({ content: m[2].trim() }),
+    reply: (data) => `Added to your todos.`,
   },
 ];
 
@@ -397,17 +396,17 @@ async function tryPrefilter(userMessage, mode, replyTo) {
     if (!m) continue;
 
     if (rule.action === '_mode') {
-      const desc = getModeDescription(mode);
-      return `Current mode: *${mode}*\n${desc}`;
+      return `Current mode: *${mode}*\n${getModeDescription(mode)}`;
     }
 
     const data = rule.dataFn ? rule.dataFn(m) : {};
-    const reply = await executeAction(rule.action, { context: mode, ...data }, mode, null, replyTo);
-    if (reply !== null) return reply;
-    // executeAction returned null = interactive message sent (list picker) — still skip LLM
-    return null;
+    const ctx = rule.ctx === 'mode' ? mode : rule.ctx; // null or specific
+    const defaultReply = rule.reply ? rule.reply(data) : null;
+    const result = await executeAction(rule.action, { context: ctx, ...data }, mode, defaultReply, replyTo);
+    // null = interactive message already sent (e.g. list picker on WhatsApp) — still short-circuit
+    return result ?? null;
   }
-  return undefined; // sentinel: no rule matched, use LLM
+  return undefined; // sentinel: no rule matched, fall through to LLM
 }
 
 async function handleIncoming(userMessage, replyTo = null) {
