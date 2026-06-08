@@ -7,18 +7,23 @@ const { webSearch } = require("../integrations/search");
 const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
 
-// Models tried in parallel pairs — first response wins
+// ── Model registry ────────────────────────────────────────────────────────────
+// Ordered by preference. Groq is primary — fast, reliable, already keyed.
+// OpenRouter free tier has shed most of its free models as of mid-2025.
+const GROQ_MODELS = [
+  { id: "llama-3.3-70b-versatile",  quality: "high" },
+  { id: "llama-3.1-8b-instant",     quality: "fast" },
+];
 const OR_MODELS = [
   "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemma-3-27b-it:free",
-  "qwen/qwen3-30b-a3b:free",
-  "deepseek/deepseek-r1-0528:free",
 ];
+const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
 // Track failures: modelId → timestamp of last failure
 const modelFailCache = new Map();
-const MODEL_COOLDOWN_MS = 3 * 60 * 1000; // skip a failed model for 3 minutes
+const MODEL_COOLDOWN_MS = 5 * 60 * 1000;
 
 function isModelCoolingDown(id) {
   const t = modelFailCache.get(id);
@@ -135,54 +140,59 @@ Data fields:
 - skill_desc: description of skill
 - skill_instr: detailed instructions for the skill`;
 
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+// ── Individual model callers ──────────────────────────────────────────────────
+
+async function callGroqModel(modelId, messages, jsonMode) {
+  const body = { model: modelId, messages, max_tokens: 1024 };
+  if (jsonMode) body.response_format = { type: 'json_object' };
+  const r = await axios.post(GROQ_URL, body, {
+    headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+    timeout: 15000,
+  });
+  const content = r.data?.choices?.[0]?.message?.content;
+  if (!content?.trim()) throw new Error('Empty response');
+  return content;
+}
+
+async function callOpenRouterModel(modelId, messages) {
+  const r = await axios.post(OPENROUTER_URL, { model: modelId, messages, max_tokens: 1024 }, {
+    headers: {
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
+      'X-Title': 'Personal Agent',
+    },
+    timeout: 20000,
+  });
+  const content = r.data?.choices?.[0]?.message?.content;
+  if (!content?.trim()) throw new Error('Empty response');
+  return content;
+}
 
 async function callGeminiModel(modelId, messages, jsonMode) {
   const systemMsg = messages.find(m => m.role === 'system');
-  const chatMessages = messages.filter(m => m.role !== 'system');
-  if (!chatMessages.length) throw new Error('No messages');
-
-  const history = chatMessages.slice(0, -1).map(m => ({
+  const chatMsgs  = messages.filter(m => m.role !== 'system');
+  if (!chatMsgs.length) throw new Error('No messages');
+  const history = chatMsgs.slice(0, -1).map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content }],
   }));
-  const lastContent = chatMessages[chatMessages.length - 1].content;
   const config = { model: modelId };
   if (systemMsg) config.systemInstruction = systemMsg.content;
-  if (jsonMode) config.generationConfig = { responseMimeType: 'application/json' };
-
+  if (jsonMode)  config.generationConfig = { responseMimeType: 'application/json' };
   const model = genAI.getGenerativeModel(config);
-  const chat = model.startChat({ history });
+  const chat  = model.startChat({ history });
   const result = await Promise.race([
-    chat.sendMessage(lastContent),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini timeout')), 25000)),
+    chat.sendMessage(chatMsgs[chatMsgs.length - 1].content),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('Gemini timeout')), 20000)),
   ]);
   const text = result.response.text();
   if (!text?.trim()) throw new Error('Empty response');
   return text;
 }
 
-async function callOpenRouterModel(modelId, messages) {
-  const response = await axios.post(
-    OPENROUTER_URL,
-    { model: modelId, messages },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
-        'X-Title': 'Personal Agent',
-      },
-      timeout: 25000,
-    }
-  );
-  const content = response.data?.choices?.[0]?.message?.content;
-  if (!content?.trim()) throw new Error('Empty response');
-  return content;
-}
-
 async function callLLMStream(messages, onToken) {
   let lastErr;
-  for (const model of OR_MODELS.filter(id => !isModelCoolingDown(id))) {
+  for (const model of OR_MODELS) {
     try {
       const response = await axios.post(
         OPENROUTER_URL,
@@ -250,80 +260,97 @@ function extractFirstJSON(text) {
   return null;
 }
 
-// Race a batch of candidates — returns first successful response
-async function raceModels(candidates, messages, jsonMode) {
+// Try a list of async calls in parallel — resolves on first success, rejects if all fail
+function raceAll(calls) {
   return new Promise((resolve, reject) => {
-    let settled = 0;
-    const errors = [];
-
-    if (!candidates.length) { reject(new Error('No candidates')); return; }
-
-    candidates.forEach(({ type, id }) => {
-      const call = type === 'gemini'
-        ? callGeminiModel(id, messages, jsonMode)
-        : callOpenRouterModel(id, messages);
-
-      call.then(text => {
-        markModelOk(id);
-        resolve(text);
-      }).catch(err => {
-        const status = err.response?.status || (err.message?.includes('429') ? 429 : null);
-        const is429 = status === 429 || err.message?.includes('RESOURCE_EXHAUSTED');
-        console.warn(`[LLM] ${id} failed${is429 ? ' (429)' : ''}: ${err.message?.slice(0, 80)}`);
-        markModelFailed(id);
-        errors.push(err);
-        settled++;
-        if (settled === candidates.length) reject(new Error(`All failed: ${errors.map(e => e.message).join(' | ')}`));
+    if (!calls.length) { reject(new Error('No candidates')); return; }
+    let failed = 0;
+    const errs = [];
+    calls.forEach(fn => {
+      fn().then(resolve).catch(e => {
+        errs.push(e);
+        if (++failed === calls.length) reject(new Error(errs.map(x => x.message).join(' | ')));
       });
     });
   });
 }
 
 async function callLLM(messages, jsonMode = false) {
-  // Build candidate list: Gemini models first, then available OpenRouter models
-  const geminiCandidates = GEMINI_MODELS
-    .filter(id => !isModelCoolingDown(id))
-    .map(id => ({ type: 'gemini', id }));
+  const hasGroq   = !!process.env.GROQ_API_KEY;
+  const hasOR     = !!process.env.OPENROUTER_API_KEY;
+  const hasGemini = !!process.env.GEMINI_API_KEY;
 
-  const orCandidates = OR_MODELS
-    .filter(id => !isModelCoolingDown(id))
-    .map(id => ({ type: 'openrouter', id }));
-
-  // Round 1: race best Gemini model against best OR model simultaneously
-  const round1 = [
-    ...(geminiCandidates.length ? [geminiCandidates[0]] : []),
-    ...(orCandidates.length ? [orCandidates[0]] : []),
-  ];
-
-  if (round1.length) {
-    try {
-      return await raceModels(round1, messages, jsonMode);
-    } catch (err) {
-      console.warn(`[LLM] Round 1 failed, trying round 2...`);
+  // ── Round 1: Groq primary + secondary in parallel (fast, reliable) ──────
+  if (hasGroq) {
+    const available = GROQ_MODELS.filter(m => !isModelCoolingDown(m.id));
+    if (available.length) {
+      try {
+        const text = await raceAll(available.map(m => async () => {
+          try {
+            const r = await callGroqModel(m.id, messages, jsonMode);
+            markModelOk(m.id);
+            return r;
+          } catch (e) {
+            const s = e.response?.status;
+            console.warn(`[LLM] Groq ${m.id} failed (${s || e.code}): ${e.response?.data?.error?.message || e.message}`.slice(0, 120));
+            markModelFailed(m.id);
+            throw e;
+          }
+        }));
+        return text;
+      } catch { /* fall through */ }
     }
   }
 
-  // Round 2: remaining models in parallel
-  const round2 = [
-    ...geminiCandidates.slice(1),
-    ...orCandidates.slice(1),
-  ];
-
-  if (round2.length) {
-    try {
-      return await raceModels(round2, messages, jsonMode);
-    } catch (err) {
-      console.warn(`[LLM] Round 2 failed: ${err.message?.slice(0, 80)}`);
+  // ── Round 2: OpenRouter (one surviving free model) ───────────────────────
+  if (hasOR) {
+    const available = OR_MODELS.filter(id => !isModelCoolingDown(id));
+    if (available.length) {
+      try {
+        const text = await raceAll(available.map(id => async () => {
+          try {
+            const r = await callOpenRouterModel(id, messages);
+            markModelOk(id);
+            return r;
+          } catch (e) {
+            const s = e.response?.status;
+            console.warn(`[LLM] OR ${id} failed (${s || e.code}): ${e.response?.data?.error?.message || e.message}`.slice(0, 120));
+            markModelFailed(id);
+            throw e;
+          }
+        }));
+        return text;
+      } catch { /* fall through */ }
     }
   }
 
-  // Final: retry all (cooldowns may be stale — give it one last shot)
-  const allModels = [
-    ...GEMINI_MODELS.map(id => ({ type: 'gemini', id })),
-    ...OR_MODELS.map(id => ({ type: 'openrouter', id })),
-  ];
-  console.warn('[LLM] All rounds failed, attempting final retry with all models...');
-  return await raceModels(allModels, messages, jsonMode);
+  // ── Round 3: Gemini (if key present) ─────────────────────────────────────
+  if (hasGemini) {
+    for (const modelId of GEMINI_MODELS) {
+      if (isModelCoolingDown(modelId)) continue;
+      try {
+        const r = await callGeminiModel(modelId, messages, jsonMode);
+        markModelOk(modelId);
+        return r;
+      } catch (e) {
+        const is429 = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED');
+        console.warn(`[LLM] Gemini ${modelId} failed${is429 ? ' (429)' : ''}: ${e.message?.slice(0, 80)}`);
+        markModelFailed(modelId);
+      }
+    }
+  }
+
+  // ── Final: Groq retry with cleared cooldowns (covers burst rate-limit) ───
+  if (hasGroq) {
+    GROQ_MODELS.forEach(m => modelFailCache.delete(m.id));
+    try {
+      return await callGroqModel(GROQ_MODELS[GROQ_MODELS.length - 1].id, messages, jsonMode);
+    } catch (e) {
+      console.error('[LLM] Final Groq retry failed:', e.message);
+    }
+  }
+
+  throw new Error('All LLMs unavailable');
 }
 
 function filterKnowledge(knowledge, userMessage) {
@@ -423,12 +450,16 @@ async function handleIncoming(userMessage, replyTo = null) {
 
   const msgEmbedding = await getEmbedding(userMessage);
 
-  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, contextSummary, learnedSkills] = await Promise.all([
-    memory.getRecentHistory(20),
+  // GitHub calls are best-effort — don't let them block or crash the whole flow
+  const [openPRs, openIssues] = await Promise.all([
+    getOpenPRs().catch(() => []),
+    getOpenIssues().catch(() => []),
+  ]);
+
+  const [history, stats, insights, knowledge, upcomingEvents, msgCount, contextSummary, learnedSkills] = await Promise.all([
+    memory.getRecentHistory(8),           // was 20 — 8 is enough, cuts token count by 60%
     memory.getSummaryStats(),
-    getOpenPRs(),
-    getOpenIssues(),
-    memory.getRecentInsights(5),
+    memory.getRecentInsights(3),          // was 5
     memory.getAllKnowledge(),
     memory.getUpcomingEvents(24),
     memory.getMessageCount(),
@@ -488,7 +519,7 @@ ${summaryBlock}`;
     { role: "system", content: SYSTEM_PROMPT },
     ...history.map(h => ({
       role: h.role === "user" ? "user" : "assistant",
-      content: h.content,
+      content: h.content.length > 600 ? h.content.slice(0, 600) + '…' : h.content,
     })),
     { role: "user", content: `${contextBlock}\n\nUser message: ${userMessage}` },
   ];
