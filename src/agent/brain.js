@@ -8,12 +8,24 @@ const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-const MODEL_CHAIN = [
+// Models tried in parallel pairs — first response wins
+const OR_MODELS = [
   "meta-llama/llama-3.3-70b-instruct:free",
-  "deepseek/deepseek-chat:free",
-  "nousresearch/hermes-3-llama-3.1-405b:free",
   "google/gemma-3-27b-it:free",
+  "qwen/qwen3-30b-a3b:free",
+  "deepseek/deepseek-r1-0528:free",
 ];
+
+// Track failures: modelId → timestamp of last failure
+const modelFailCache = new Map();
+const MODEL_COOLDOWN_MS = 3 * 60 * 1000; // skip a failed model for 3 minutes
+
+function isModelCoolingDown(id) {
+  const t = modelFailCache.get(id);
+  return t && Date.now() - t < MODEL_COOLDOWN_MS;
+}
+function markModelFailed(id) { modelFailCache.set(id, Date.now()); }
+function markModelOk(id)     { modelFailCache.delete(id); }
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -125,45 +137,52 @@ Data fields:
 
 const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
 
-async function callGemini(messages, jsonMode = false) {
+async function callGeminiModel(modelId, messages, jsonMode) {
   const systemMsg = messages.find(m => m.role === 'system');
   const chatMessages = messages.filter(m => m.role !== 'system');
-  if (!chatMessages.length) throw new Error('No messages for Gemini');
+  if (!chatMessages.length) throw new Error('No messages');
 
   const history = chatMessages.slice(0, -1).map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content }],
   }));
   const lastContent = chatMessages[chatMessages.length - 1].content;
+  const config = { model: modelId };
+  if (systemMsg) config.systemInstruction = systemMsg.content;
+  if (jsonMode) config.generationConfig = { responseMimeType: 'application/json' };
 
-  let lastErr;
-  for (const modelId of GEMINI_MODELS) {
-    const config = { model: modelId };
-    if (systemMsg) config.systemInstruction = systemMsg.content;
-    if (jsonMode) config.generationConfig = { responseMimeType: 'application/json' };
+  const model = genAI.getGenerativeModel(config);
+  const chat = model.startChat({ history });
+  const result = await Promise.race([
+    chat.sendMessage(lastContent),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini timeout')), 25000)),
+  ]);
+  const text = result.response.text();
+  if (!text?.trim()) throw new Error('Empty response');
+  return text;
+}
 
-    try {
-      const model = genAI.getGenerativeModel(config);
-      const chat = model.startChat({ history });
-      // Hard 20s timeout — Render kills at 30s and WhatsApp expects <15s response
-      const result = await Promise.race([
-        chat.sendMessage(lastContent),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini timeout')), 20000)),
-      ]);
-      return result.response.text();
-    } catch (err) {
-      const is429 = err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED');
-      console.warn(`[Gemini] ${modelId} failed${is429 ? ' (rate limited)' : ''}: ${err.message?.slice(0, 80)}`);
-      lastErr = err;
-      if (is429) await new Promise(r => setTimeout(r, 2000));
+async function callOpenRouterModel(modelId, messages) {
+  const response = await axios.post(
+    OPENROUTER_URL,
+    { model: modelId, messages },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
+        'X-Title': 'Personal Agent',
+      },
+      timeout: 25000,
     }
-  }
-  throw lastErr;
+  );
+  const content = response.data?.choices?.[0]?.message?.content;
+  if (!content?.trim()) throw new Error('Empty response');
+  return content;
 }
 
 async function callLLMStream(messages, onToken) {
   let lastErr;
-  for (const model of MODEL_CHAIN) {
+  for (const model of OR_MODELS.filter(id => !isModelCoolingDown(id))) {
     try {
       const response = await axios.post(
         OPENROUTER_URL,
@@ -199,6 +218,7 @@ async function callLLMStream(messages, onToken) {
       });
     } catch (err) {
       console.warn(`[LLM stream] ${model} failed (${err.response?.status || err.message}), trying next...`);
+      markModelFailed(model);
       lastErr = new Error(`OpenRouter Stream Error (${err.response?.status}): ${model} - ${err.message}`);
     }
   }
@@ -230,42 +250,80 @@ function extractFirstJSON(text) {
   return null;
 }
 
-async function callLLM(messages, jsonMode = false) {
-  try {
-    return await callGemini(messages, jsonMode);
-  } catch (err) {
-    console.warn(`[LLM] Gemini failed (${err.message?.slice(0, 80)}), trying OpenRouter...`);
-  }
+// Race a batch of candidates — returns first successful response
+async function raceModels(candidates, messages, jsonMode) {
+  return new Promise((resolve, reject) => {
+    let settled = 0;
+    const errors = [];
 
-  let lastErr;
-  for (const model of MODEL_CHAIN) {
+    if (!candidates.length) { reject(new Error('No candidates')); return; }
+
+    candidates.forEach(({ type, id }) => {
+      const call = type === 'gemini'
+        ? callGeminiModel(id, messages, jsonMode)
+        : callOpenRouterModel(id, messages);
+
+      call.then(text => {
+        markModelOk(id);
+        resolve(text);
+      }).catch(err => {
+        const status = err.response?.status || (err.message?.includes('429') ? 429 : null);
+        const is429 = status === 429 || err.message?.includes('RESOURCE_EXHAUSTED');
+        console.warn(`[LLM] ${id} failed${is429 ? ' (429)' : ''}: ${err.message?.slice(0, 80)}`);
+        markModelFailed(id);
+        errors.push(err);
+        settled++;
+        if (settled === candidates.length) reject(new Error(`All failed: ${errors.map(e => e.message).join(' | ')}`));
+      });
+    });
+  });
+}
+
+async function callLLM(messages, jsonMode = false) {
+  // Build candidate list: Gemini models first, then available OpenRouter models
+  const geminiCandidates = GEMINI_MODELS
+    .filter(id => !isModelCoolingDown(id))
+    .map(id => ({ type: 'gemini', id }));
+
+  const orCandidates = OR_MODELS
+    .filter(id => !isModelCoolingDown(id))
+    .map(id => ({ type: 'openrouter', id }));
+
+  // Round 1: race best Gemini model against best OR model simultaneously
+  const round1 = [
+    ...(geminiCandidates.length ? [geminiCandidates[0]] : []),
+    ...(orCandidates.length ? [orCandidates[0]] : []),
+  ];
+
+  if (round1.length) {
     try {
-      // Free models often don't support response_format — rely on the system prompt for JSON
-      const response = await axios.post(
-        OPENROUTER_URL,
-        { model, messages },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
-            'X-Title': 'Personal Agent',
-          },
-          timeout: 20000,
-        }
-      );
-      const content = response.data?.choices?.[0]?.message?.content;
-      if (content?.trim()) return content;
-      console.warn(`[LLM] ${model} returned empty content`);
+      return await raceModels(round1, messages, jsonMode);
     } catch (err) {
-      const status = err.response?.status;
-      const detail = err.response?.data?.error?.message || err.message;
-      console.warn(`[LLM] ${model} failed (${status || err.code}): ${detail?.slice(0, 100)}`);
-      lastErr = err;
-      if (status === 429) await new Promise(r => setTimeout(r, 1000));
+      console.warn(`[LLM] Round 1 failed, trying round 2...`);
     }
   }
-  console.error('[LLM] All models exhausted');
-  throw lastErr || new Error('All models exhausted');
+
+  // Round 2: remaining models in parallel
+  const round2 = [
+    ...geminiCandidates.slice(1),
+    ...orCandidates.slice(1),
+  ];
+
+  if (round2.length) {
+    try {
+      return await raceModels(round2, messages, jsonMode);
+    } catch (err) {
+      console.warn(`[LLM] Round 2 failed: ${err.message?.slice(0, 80)}`);
+    }
+  }
+
+  // Final: retry all (cooldowns may be stale — give it one last shot)
+  const allModels = [
+    ...GEMINI_MODELS.map(id => ({ type: 'gemini', id })),
+    ...OR_MODELS.map(id => ({ type: 'openrouter', id })),
+  ];
+  console.warn('[LLM] All rounds failed, attempting final retry with all models...');
+  return await raceModels(allModels, messages, jsonMode);
 }
 
 function filterKnowledge(knowledge, userMessage) {

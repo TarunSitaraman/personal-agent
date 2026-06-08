@@ -103,9 +103,9 @@ router.get('/llm-health', async (req, res) => {
   // OpenRouter models
   const models = [
     'meta-llama/llama-3.3-70b-instruct:free',
-    'deepseek/deepseek-chat:free',
-    'nousresearch/hermes-3-llama-3.1-405b:free',
     'google/gemma-3-27b-it:free',
+    'qwen/qwen3-30b-a3b:free',
+    'deepseek/deepseek-r1-0528:free',
   ];
   await Promise.all(models.map(async m => {
     try {
