@@ -15,6 +15,7 @@ import ChatScreen from './screens/ChatScreen';
 import TodosScreen from './screens/TodosScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import NotesScreen from './screens/NotesScreen';
+import PetScreen from './screens/PetScreen';
 import { C } from './theme';
 import { registerPushToken } from './api';
 
@@ -56,8 +57,11 @@ async function setupPushNotifications() {
     });
   }
 
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
-  await registerPushToken(token).catch(e => console.warn('[Push] Register failed:', e.message));
+  const tokenData = await Notifications.getExpoPushTokenAsync().catch(() =>
+    Notifications.getDevicePushTokenAsync()
+  );
+  const token = tokenData?.data;
+  if (token) await registerPushToken(token).catch(e => console.warn('[Push] Register failed:', e.message));
 }
 
 const Tab = createBottomTabNavigator();
@@ -68,8 +72,8 @@ const NAV_THEME = {
 };
 
 function TabIcon({ label, focused }) {
-  const icons = { Home: '🏠', Chat: '💬', Todos: '☑️', Calendar: '📅', Notes: '📝' };
-  const accs = { Home: C.hex, Chat: C.srq, Todos: C.hex, Calendar: C.per, Notes: C.per };
+  const icons = { Home: '🏠', Chat: '💬', Todos: '☑️', Calendar: '📅', Notes: '📝', Hex: '👾' };
+  const accs = { Home: C.hex, Chat: C.srq, Todos: C.hex, Calendar: C.per, Notes: C.per, Hex: C.per };
   const acc = accs[label] || C.hex;
   return (
     <View style={[s.iconWrap, focused && { borderTopColor: acc }]}>
@@ -128,6 +132,7 @@ export default function App() {
           <Tab.Screen name="Todos"    component={TodosScreen} />
           <Tab.Screen name="Calendar" component={CalendarScreen} />
           <Tab.Screen name="Notes"    component={NotesScreen} />
+          <Tab.Screen name="Hex"      component={PetScreen} />
         </Tab.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

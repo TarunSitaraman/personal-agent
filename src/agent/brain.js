@@ -13,8 +13,9 @@ const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
 // Ordered by preference. Groq is primary — fast, reliable, already keyed.
 // OpenRouter free tier has shed most of its free models as of mid-2025.
 const GROQ_MODELS = [
-  { id: "llama-3.3-70b-versatile",  quality: "high" },
-  { id: "llama-3.1-8b-instant",     quality: "fast" },
+  { id: "deepseek-r1-distill-llama-70b", quality: "reasoning" }, // chain-of-thought, best contextual understanding
+  { id: "llama-3.3-70b-versatile",       quality: "high" },
+  { id: "llama-3.1-8b-instant",          quality: "fast" },
 ];
 const OR_MODELS = [
   "meta-llama/llama-3.3-70b-instruct:free",
@@ -143,14 +144,18 @@ Data fields:
 // ── Individual model callers ──────────────────────────────────────────────────
 
 async function callGroqModel(modelId, messages, jsonMode) {
-  const body = { model: modelId, messages, max_tokens: 1024 };
-  if (jsonMode) body.response_format = { type: 'json_object' };
+  const isReasoning = modelId.includes('deepseek-r1');
+  const body = { model: modelId, messages, max_tokens: 2048 };
+  // R1 doesn't support json_object mode — strip <think> blocks instead
+  if (jsonMode && !isReasoning) body.response_format = { type: 'json_object' };
   const r = await axios.post(GROQ_URL, body, {
     headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-    timeout: 15000,
+    timeout: 25000,
   });
-  const content = r.data?.choices?.[0]?.message?.content;
+  let content = r.data?.choices?.[0]?.message?.content;
   if (!content?.trim()) throw new Error('Empty response');
+  // Strip chain-of-thought reasoning block from R1 output
+  if (isReasoning) content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   return content;
 }
 

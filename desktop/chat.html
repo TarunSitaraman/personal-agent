@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 320px; height: 440px;
+      font-family: -apple-system, 'Segoe UI', sans-serif;
+      background: #0f0f14;
+      color: #fafafa;
+      overflow: hidden;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* Drag handle / header */
+    #header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid #1c1c24;
+      -webkit-app-region: drag;
+      cursor: default;
+      flex-shrink: 0;
+    }
+    #header-left { display: flex; align-items: center; gap: 8px; }
+    #avatar { font-size: 20px; line-height: 1; }
+    #header-name { font-size: 13px; font-weight: 700; color: #fafafa; }
+    #header-sub  { font-size: 10px; color: #52525b; margin-top: 1px; }
+    #close-btn {
+      -webkit-app-region: no-drag;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #27272f; border: none; color: #71717a;
+      font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    #close-btn:hover { background: #ef4444; color: #fff; }
+
+    /* Quick action chips */
+    #chips {
+      display: flex; gap: 6px; padding: 8px 12px;
+      border-bottom: 1px solid #1c1c24;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    .chip {
+      padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+      border: 1px solid #27272f; background: #18181d; color: #a1a1aa;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .chip:hover { background: #27272f; color: #fafafa; }
+    .chip.loading { opacity: 0.5; pointer-events: none; }
+
+    /* Messages */
+    #messages {
+      flex: 1; overflow-y: auto; padding: 12px;
+      display: flex; flex-direction: column; gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar-thumb { background: #27272f; border-radius: 2px; }
+
+    .msg { display: flex; flex-direction: column; max-width: 88%; }
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.hex  { align-self: flex-start; }
+
+    .msg-label { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; color: #52525b; margin-bottom: 3px; text-transform: uppercase; }
+    .msg-body {
+      padding: 8px 12px; border-radius: 12px; font-size: 12px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .msg.user .msg-body { background: #4f8ef7; color: #fff; border-bottom-right-radius: 3px; }
+    .msg.hex  .msg-body { background: #18181d; color: #e4e4e7; border-bottom-left-radius: 3px; border: 1px solid #27272f; }
+    .msg.hex.typing .msg-body { color: #52525b; font-style: italic; }
+
+    /* Input */
+    #input-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid #1c1c24;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    #input {
+      flex: 1; background: #18181d; border: 1px solid #27272f;
+      border-radius: 20px; padding: 8px 14px;
+      color: #fafafa; font-size: 12px; outline: none;
+      resize: none; line-height: 1.4;
+    }
+    #input::placeholder { color: #52525b; }
+    #input:focus { border-color: #4f8ef7; }
+    #send {
+      width: 34px; height: 34px; border-radius: 50%;
+      background: #4f8ef7; border: none; color: #fff;
+      font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s; flex-shrink: 0;
+    }
+    #send:hover { background: #3b7de8; }
+    #send:disabled { background: #27272f; color: #52525b; cursor: default; }
+  </style>
+</head>
+<body style="display:flex;flex-direction:column;height:440px;">
+  <div id="header">
+    <div id="header-left">
+      <span id="avatar">👾</span>
+      <div>
+        <div id="header-name">Blu</div>
+        <div id="header-sub">Your Intelligent Companion</div>
+      </div>
+    </div>
+    <button id="close-btn">✕</button>
+  </div>
+
+  <div id="chips">
+    <button class="chip" data-q="What are my todos?">📋 Todos</button>
+    <button class="chip" data-q="What's my mode right now?">🎯 Mode</button>
+    <button class="chip" data-q="Any upcoming events?">🗓️ Events</button>
+  </div>
+
+  <div id="messages"></div>
+
+  <div id="input-row">
+    <input id="input" placeholder="Ask Hex anything…" autocomplete="off" />
+    <button id="send">↑</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    const msgList  = document.getElementById('messages');
+    const inputEl  = document.getElementById('input');
+    const sendBtn  = document.getElementById('send');
+    const closeBtn = document.getElementById('close-btn');
+
+    function addMsg(from, text, typing = false) {
+      const div = document.createElement('div');
+      div.className = `msg ${from}${typing ? ' typing' : ''}`;
+      if (from === 'hex') div.innerHTML = `<span class="msg-label">Hex</span><div class="msg-body">${esc(text)}</div>`;
+      else div.innerHTML = `<div class="msg-body">${esc(text)}</div>`;
+      msgList.appendChild(div);
+      msgList.scrollTop = msgList.scrollHeight;
+      return div;
+    }
+
+    function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+
+    // Greeting
+    addMsg('hex', "Hey! I'm Hex 👾 — powered by Blu.\nAsk me anything, or use the quick chips above.");
+
+    async function send(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      inputEl.value = '';
+      sendBtn.disabled = true;
+      addMsg('user', trimmed);
+      const placeholder = addMsg('hex', 'thinking…', true);
+      try {
+        const reply = await ipcRenderer.invoke('api-chat', trimmed);
+        placeholder.remove();
+        addMsg('hex', reply);
+      } catch {
+        placeholder.remove();
+        addMsg('hex', 'Could not reach Blu right now. Try again?');
+      } finally {
+        sendBtn.disabled = false;
+        inputEl.focus();
+      }
+    }
+
+    sendBtn.addEventListener('click', () => send(inputEl.value));
+    inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(inputEl.value); } });
+    closeBtn.addEventListener('click', () => ipcRenderer.send('close-chat'));
+
+    // Quick-action chips
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        chip.classList.add('loading');
+        send(chip.dataset.q).finally(() => chip.classList.remove('loading'));
+      });
+    });
+
+    inputEl.focus();
+  </script>
+</body>
+</html>

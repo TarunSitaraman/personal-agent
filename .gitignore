@@ -8,3 +8,6 @@ node_modules/
 # Mobile app
 mobile/node_modules/
 mobile/.expo/
+
+# Desktop pet
+desktop/node_modules/
