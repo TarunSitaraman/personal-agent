@@ -18,7 +18,8 @@ const GROQ_MODELS = [
   { id: "llama-3.1-8b-instant",          quality: "fast" },
 ];
 const OR_MODELS = [
-  "meta-llama/llama-3.3-70b-instruct:free",
+  "openrouter/owl-alpha",
+  "meta-llama/llama-3.3-70b-instruct:free", // fallback
 ];
 const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
