@@ -195,49 +195,79 @@ async function callGeminiModel(modelId, messages, jsonMode) {
   return text;
 }
 
+async function streamFromUrl(url, headers, body, onToken) {
+  const response = await axios.post(url, { ...body, stream: true }, {
+    headers,
+    responseType: 'stream',
+    timeout: 60000,
+  });
+  return new Promise((resolve, reject) => {
+    let buf = '', full = '';
+    response.data.on('data', chunk => {
+      buf += chunk.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') return;
+        try {
+          const token = JSON.parse(raw).choices?.[0]?.delta?.content || '';
+          if (token) { full += token; onToken(token, full); }
+        } catch {}
+      }
+    });
+    response.data.on('end', () => resolve(full));
+    response.data.on('error', reject);
+  });
+}
+
 async function callLLMStream(messages, onToken) {
-  let lastErr;
-  for (const model of OR_MODELS) {
-    try {
-      const response = await axios.post(
-        OPENROUTER_URL,
-        { model, messages, stream: true },
-        {
-          headers: {
+  // Try Groq streaming first (fast, reliable)
+  if (process.env.GROQ_API_KEY) {
+    for (const model of GROQ_MODELS) {
+      if (isModelCoolingDown(model.id)) continue;
+      try {
+        const full = await streamFromUrl(
+          GROQ_URL,
+          { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+          { model: model.id, messages, max_tokens: 2048 },
+          onToken,
+        );
+        markModelOk(model.id);
+        return full;
+      } catch (err) {
+        console.warn(`[LLM stream] Groq ${model.id} failed (${err.response?.status || err.message})`);
+        markModelFailed(model.id);
+      }
+    }
+  }
+
+  // Fallback: OpenRouter
+  if (process.env.OPENROUTER_API_KEY) {
+    for (const model of OR_MODELS) {
+      if (isModelCoolingDown(model)) continue;
+      try {
+        const full = await streamFromUrl(
+          OPENROUTER_URL,
+          {
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
             'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
             'X-Title': 'Personal Agent',
           },
-          responseType: 'stream',
-          timeout: 60000,
-        }
-      );
-      return await new Promise((resolve, reject) => {
-        let buf = '', full = '';
-        response.data.on('data', chunk => {
-          buf += chunk.toString();
-          const lines = buf.split('\n');
-          buf = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const raw = line.slice(6).trim();
-            if (raw === '[DONE]') return;
-            try {
-              const token = JSON.parse(raw).choices?.[0]?.delta?.content || '';
-              if (token) { full += token; onToken(token, full); }
-            } catch {}
-          }
-        });
-        response.data.on('end', () => resolve(full));
-        response.data.on('error', reject);
-      });
-    } catch (err) {
-      console.warn(`[LLM stream] ${model} failed (${err.response?.status || err.message}), trying next...`);
-      markModelFailed(model);
-      lastErr = new Error(`OpenRouter Stream Error (${err.response?.status}): ${model} - ${err.message}`);
+          { model, messages },
+          onToken,
+        );
+        markModelOk(model);
+        return full;
+      } catch (err) {
+        console.warn(`[LLM stream] OR ${model} failed (${err.response?.status || err.message})`);
+        markModelFailed(model);
+      }
     }
   }
-  throw lastErr || new Error('All models failed');
+
+  throw new Error('All streaming models failed');
 }
 
 // Extracts the reply string from partial streaming JSON
