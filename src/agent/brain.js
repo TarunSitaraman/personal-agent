@@ -176,6 +176,55 @@ User: summarise our last week of conversations
 // Save the system prompt version in DB automatically on load
 memory.savePromptVersion(PROMPT_VERSION, SYSTEM_PROMPT).catch(err => console.error('[Prompt Versioning] Save failed:', err.message));
 
+const CLASSIFIER_PROMPT = `You are Tarun's personal agent classifier. Your ONLY job is to classify the user's message intent and extract raw data.
+
+About Tarun:
+- Hexaware intern (10am-6pm weekdays)
+- SmartResQ founder (evenings)
+- GenAI learner
+
+Allowed Action Names:
+- add_todo: user wants to capture a task to do later (e.g., "remember to X", "todo: X")
+- complete_todo: user completed a task (past tense, e.g., "renewed X", "did X")
+- add_note: user wants to jot down information (e.g., "note: X", "save this: X")
+- add_learning: user captured a new concept/lesson (e.g., "learned X", "learning: X")
+- learn_context: user tells you a fact about their world/people/projects (e.g., "Rohan is X")
+- list_todos: user asks to see tasks
+- list_notes: user asks to see notes
+- list_learnings: user asks to see learnings
+- search: user asks to find/lookup information (e.g., "what do I know about X", "find X")
+- search_web: user asks a factual question requiring external search
+- set_reminder: user wants a task with a specific reminder time/date
+- add_event: user wants to schedule a calendar event
+- list_events: user asks for calendar list
+- delete_event: user wants to delete an event
+- update_event: user wants to update an event
+- switch_mode: user requests mode change
+- undo_last: user wants to undo
+- review_learning: user is reviewing learnings
+- summarise_conversation: user requests a weekly conversation summary
+- none: default chat / question
+
+CRITICAL: Return ONLY a valid JSON object in this exact schema, with no additional text or formatting:
+{
+  "action": "action_name",
+  "data": {
+    "content": "extracted content or search query",
+    "topic": "topic if learning",
+    "source": "source if learning",
+    "context": "hexaware | smartresq | personal | null",
+    "title": "event title",
+    "datetime": "ISO datetime in IST (e.g. 2026-06-05T21:00:00+05:30) if time mentioned",
+    "minutes": "integer minutes from now for reminder if relative",
+    "duration": "integer duration in minutes (default 60)",
+    "recurrence": "none | daily | weekdays | weekly",
+    "new_title": "new event name if updating",
+    "id": "learning id for review_learning",
+    "gotRight": "boolean for review_learning"
+  },
+  "confidence": <float between 0.0 and 1.0 indicating intent classification certainty>
+}`;
+
 // ── Individual model callers ──────────────────────────────────────────────────
 
 async function callGroqModel(modelId, messages, jsonMode) {
@@ -345,14 +394,45 @@ function raceAll(calls) {
   });
 }
 
-async function callLLM(messages, jsonMode = false) {
+async function callLLM(messages, jsonMode = false, routeType = 'default') {
   const hasGroq   = !!process.env.GROQ_API_KEY;
   const hasOR     = !!process.env.OPENROUTER_API_KEY;
   const hasGemini = !!process.env.GEMINI_API_KEY;
 
+  let groqOrder = [...GROQ_MODELS];
+  let geminiOrder = [...GEMINI_MODELS];
+  
+  if (routeType === 'classifier') {
+    groqOrder = [
+      { id: "llama-3.1-8b-instant", quality: "fast" },
+      { id: "llama-3.3-70b-versatile", quality: "high" },
+      { id: "deepseek-r1-distill-llama-70b", quality: "reasoning" }
+    ];
+    geminiOrder = ["gemini-2.0-flash", "gemini-1.5-flash"];
+  } else if (routeType === 'reasoner') {
+    groqOrder = [
+      { id: "deepseek-r1-distill-llama-70b", quality: "reasoning" },
+      { id: "llama-3.3-70b-versatile", quality: "high" },
+      { id: "llama-3.1-8b-instant", quality: "fast" }
+    ];
+  } else if (routeType === 'synthesizer') {
+    if (hasGemini) {
+      for (const modelId of geminiOrder) {
+        if (isModelCoolingDown(modelId)) continue;
+        try {
+          const r = await callGeminiModel(modelId, messages, jsonMode);
+          markModelOk(modelId);
+          return r;
+        } catch (e) {
+          markModelFailed(modelId);
+        }
+      }
+    }
+  }
+
   // ── Round 1: Groq primary + secondary in parallel (fast, reliable) ──────
   if (hasGroq) {
-    const available = GROQ_MODELS.filter(m => !isModelCoolingDown(m.id));
+    const available = groqOrder.filter(m => !isModelCoolingDown(m.id));
     if (available.length) {
       try {
         const text = await raceAll(available.map(m => async () => {
@@ -396,7 +476,7 @@ async function callLLM(messages, jsonMode = false) {
 
   // ── Round 3: Gemini (if key present) ─────────────────────────────────────
   if (hasGemini) {
-    for (const modelId of GEMINI_MODELS) {
+    for (const modelId of geminiOrder) {
       if (isModelCoolingDown(modelId)) continue;
       try {
         const r = await callGeminiModel(modelId, messages, jsonMode);
@@ -412,9 +492,9 @@ async function callLLM(messages, jsonMode = false) {
 
   // ── Final: Groq retry with cleared cooldowns (covers burst rate-limit) ───
   if (hasGroq) {
-    GROQ_MODELS.forEach(m => modelFailCache.delete(m.id));
+    groqOrder.forEach(m => modelFailCache.delete(m.id));
     try {
-      return await callGroqModel(GROQ_MODELS[GROQ_MODELS.length - 1].id, messages, jsonMode);
+      return await callGroqModel(groqOrder[groqOrder.length - 1].id, messages, jsonMode);
     } catch (e) {
       console.error('[LLM] Final Groq retry failed:', e.message);
     }
@@ -588,57 +668,103 @@ async function handleIncoming(userMessage, replyTo = null) {
     return prefiltered;
   }
 
-  const msgEmbedding = await getEmbedding(userMessage);
+  // Get history first to feed into Classifier
+  const history = await memory.getRecentHistory(8);
 
-  // GitHub calls are best-effort — don't let them block or crash the whole flow
-  const [openPRs, openIssues] = await Promise.all([
-    getOpenPRs().catch(() => []),
-    getOpenIssues().catch(() => []),
-  ]);
-
-  const [history, stats, insights, knowledge, upcomingEvents, msgCount, contextSummary, learnedSkills] = await Promise.all([
-    memory.getRecentHistory(8),
-    memory.getSummaryStats(),
-    memory.getRecentInsights(3),
-    memory.getAllKnowledge(),
-    memory.getUpcomingEvents(24),
-    memory.getMessageCount(),
-    memory.getContextSummary(),
-    memory.getAllSkills(),
-  ]);
-
-  const semanticMatches = msgEmbedding
-    ? await memory.searchMemory(userMessage, msgEmbedding, mode)
-    : [];
-  const semanticBlock = semanticMatches.length
-    ? `Relevant past memory:\n${semanticMatches.slice(0, 5).map(r => `[${r.type}][${r.context}] ${r.content}`).join('\n')}`
-    : '';
-
-  const todoBlock = [
-    ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
-    ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
+  // 1. Run Classifier model with CLASSIFIER_PROMPT on history.slice(-3)
+  const classifierMessages = [
+    { role: "system", content: CLASSIFIER_PROMPT },
+    ...history.slice(-3).map(h => ({
+      role: h.role === "user" ? "user" : "assistant",
+      content: h.content.length > 300 ? h.content.slice(0, 300) + '…' : h.content,
+    })),
+    { role: "user", content: `Current Mode: ${mode}\nUser message: ${userMessage}` }
   ];
 
-  const knowledgeBlock = knowledge.length
-    ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
-    : '';
+  const classifierInputCharCount = classifierMessages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
+  const classifierTokensInput = Math.ceil(classifierInputCharCount / 4);
 
-  const skillsBlock = learnedSkills.length
-    ? `Available Skills (Learned):\n${learnedSkills.map(s => `- ${s.name}: ${s.description}`).join('\n')}`
-    : '';
+  let rawClassifier;
+  try {
+    rawClassifier = await callLLM(classifierMessages, true, 'classifier');
+  } catch (err) {
+    console.error('[Brain] Classifier failed:', err.message);
+    await memory.saveMessage("user", userMessage, PROMPT_VERSION, classifierTokensInput, 0);
+    // Item 4: Graceful LLM degradation
+    return "I'm offline right now, I've saved your message and will process it when I'm back.";
+  }
 
-  const insightsBlock = insights.length
-    ? `Behavioural insights:\n${insights.join('\n')}`
-    : '';
+  const classifierTokensOutput = Math.ceil(rawClassifier.length / 4);
 
-  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
-  const eventsBlock = upcomingEvents.length
-    ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}`
-    : '';
+  let parsedClassifier;
+  try {
+    parsedClassifier = JSON.parse(rawClassifier);
+  } catch {
+    parsedClassifier = extractFirstJSON(rawClassifier);
+  }
 
-  const summaryBlock = contextSummary ? `Earlier conversation summary:\n${contextSummary}` : '';
+  // Fallback if parsing fails completely
+  if (!parsedClassifier || typeof parsedClassifier !== 'object') {
+    parsedClassifier = { action: 'none', confidence: 0 };
+  }
 
-  const contextBlock = `Current time: ${now} IST
+  const primaryAction = parsedClassifier.action || 'none';
+  const primaryData = parsedClassifier.data || {};
+  const confidence = parsedClassifier.confidence !== undefined ? parsedClassifier.confidence : 1.0;
+
+  const RETRIEVAL_ACTIONS = ['list_todos', 'list_notes', 'list_learnings', 'list_events', 'search', 'search_web', 'summarise_conversation', 'run_skill'];
+
+  if (primaryAction === 'none' || RETRIEVAL_ACTIONS.includes(primaryAction)) {
+    // Path A: None or Retrieval -> Full Context & Synthesizer
+    const msgEmbedding = await getEmbedding(userMessage);
+
+    const [openPRs, openIssues] = await Promise.all([
+      getOpenPRs().catch(() => []),
+      getOpenIssues().catch(() => []),
+    ]);
+
+    const [stats, insights, knowledge, upcomingEvents, msgCount, contextSummary, learnedSkills] = await Promise.all([
+      memory.getSummaryStats(),
+      memory.getRecentInsights(3),
+      memory.getAllKnowledge(),
+      memory.getUpcomingEvents(24),
+      memory.getMessageCount(),
+      memory.getContextSummary(),
+      memory.getAllSkills(),
+    ]);
+
+    const semanticMatches = msgEmbedding
+      ? await memory.searchMemory(userMessage, msgEmbedding, mode)
+      : [];
+    const semanticBlock = semanticMatches.length
+      ? `Relevant past memory:\n${semanticMatches.slice(0, 5).map(r => `[${r.type}][${r.context}] ${r.content}`).join('\n')}`
+      : '';
+
+    const todoBlock = [
+      ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
+      ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
+    ];
+
+    const knowledgeBlock = knowledge.length
+      ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
+      : '';
+
+    const skillsBlock = learnedSkills.length
+      ? `Available Skills (Learned):\n${learnedSkills.map(s => `- ${s.name}: ${s.description}`).join('\n')}`
+      : '';
+
+    const insightsBlock = insights.length
+      ? `Behavioural insights:\n${insights.join('\n')}`
+      : '';
+
+    const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+    const eventsBlock = upcomingEvents.length
+      ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}`
+      : '';
+
+    const summaryBlock = contextSummary ? `Earlier conversation summary:\n${contextSummary}` : '';
+
+    const contextBlock = `Current time: ${now} IST
 Current mode: ${mode}
 ${modeDesc}
 
@@ -655,88 +781,177 @@ ${knowledgeBlock}
 ${insightsBlock}
 ${summaryBlock}`;
 
-  const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...history.map(h => ({
-      role: h.role === "user" ? "user" : "assistant",
-      content: h.content.length > 600 ? h.content.slice(0, 600) + '…' : h.content,
-    })),
-    { role: "user", content: `${contextBlock}\n\nUser message: ${userMessage}` },
-  ];
+    const messages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history.map(h => ({
+        role: h.role === "user" ? "user" : "assistant",
+        content: h.content.length > 600 ? h.content.slice(0, 600) + '…' : h.content,
+      })),
+      { role: "user", content: `${contextBlock}\n\nUser message: ${userMessage}` },
+    ];
 
-  const inputCharCount = messages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
-  const tokensInput = Math.ceil(inputCharCount / 4);
+    const inputCharCount = messages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
+    const tokensInput = Math.ceil(inputCharCount / 4);
 
-  // JSON mode forces the model to return only valid JSON
-  let raw;
-  try {
-    raw = await callLLM(messages, true);
-  } catch (err) {
-    console.error('[Brain] All LLMs failed:', err.message);
-    await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
-    // Item 4: Graceful LLM degradation
-    return "I'm offline right now, I've saved your message and will process it when I'm back.";
-  }
+    let raw;
+    try {
+      raw = await callLLM(messages, true, 'synthesizer');
+    } catch (err) {
+      console.error('[Brain] All LLMs failed in synthesizer route:', err.message);
+      await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+      return "I'm offline right now, I've saved your message and will process it when I'm back.";
+    }
 
-  const tokensOutput = Math.ceil(raw.length / 4);
+    const tokensOutput = Math.ceil(raw.length / 4);
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = extractFirstJSON(raw);
-  }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = extractFirstJSON(raw);
+    }
 
-  // Item 18: Validate JSON schema
-  if (!parsed || !validateJsonSchema(parsed)) {
-    console.warn('[Brain] Malformed JSON response validation failed:', raw);
-    await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
-    await memory.saveMessage("model", raw, PROMPT_VERSION, 0, tokensOutput);
-    return "Sorry, I got confused there. Could you try again?";
-  }
+    if (!parsed || !validateJsonSchema(parsed)) {
+      console.warn('[Brain] Malformed JSON response validation failed:', raw);
+      await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+      await memory.saveMessage("model", raw, PROMPT_VERSION, 0, tokensOutput);
+      return "Sorry, I got confused there. Could you try again?";
+    }
 
-  if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
+    if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
 
-  // Item 17: Confidence scoring for destructive actions
-  const primaryAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
-  const primaryData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
-  const confidence = parsed.confidence !== undefined ? parsed.confidence : 1.0;
+    const synthAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
+    const synthData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
+    const synthConfidence = parsed.confidence !== undefined ? parsed.confidence : 1.0;
 
-  if (replyTo && confidence < 0.8 && ['complete_todo', 'delete_event'].includes(primaryAction)) {
-    await memory.saveState(`pending_clarification:${replyTo}`, {
-      type: 'destructive_action',
-      data: { action: primaryAction, data: primaryData, currentMode: mode, defaultReply: parsed.reply }
-    });
+    if (replyTo && synthConfidence < 0.8 && ['complete_todo', 'delete_event'].includes(synthAction)) {
+      await memory.saveState(`pending_clarification:${replyTo}`, {
+        type: 'destructive_action',
+        data: { action: synthAction, data: synthData, currentMode: mode, defaultReply: parsed.reply }
+      });
 
-    let confirmationQuestion = `Are you sure you want to complete the task "${primaryData?.content || ''}"?`;
-    if (primaryAction === 'delete_event') {
-      confirmationQuestion = `Are you sure you want to delete the event "${primaryData?.title || ''}"?`;
+      let confirmationQuestion = `Are you sure you want to complete the task "${synthData?.content || ''}"?`;
+      if (synthAction === 'delete_event') {
+        confirmationQuestion = `Are you sure you want to delete the event "${synthData?.title || ''}"?`;
+      }
+
+      await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+      await memory.saveMessage("model", confirmationQuestion, PROMPT_VERSION, 0, Math.ceil(confirmationQuestion.length / 4));
+      return confirmationQuestion;
+    }
+
+    let reply;
+    if (Array.isArray(parsed.actions) && parsed.actions.length) {
+      for (const item of parsed.actions) {
+        await executeAction(item.action, item.data, mode, parsed.reply, replyTo);
+      }
+      reply = parsed.reply;
+    } else {
+      reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply, replyTo);
     }
 
     await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
-    await memory.saveMessage("model", confirmationQuestion, PROMPT_VERSION, 0, Math.ceil(confirmationQuestion.length / 4));
-    return confirmationQuestion;
-  }
+    const finalModelMessage = reply || parsed.reply || "(action executed)";
+    if (reply != null) await memory.saveMessage("model", finalModelMessage, PROMPT_VERSION, 0, Math.ceil(finalModelMessage.length / 4));
 
-  let reply;
-  if (Array.isArray(parsed.actions) && parsed.actions.length) {
-    for (const item of parsed.actions) {
-      await executeAction(item.action, item.data, mode, parsed.reply, replyTo);
+    if (replyTo) {
+      const finalAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
+      const finalData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
+      if (finalAction === 'add_todo' && finalData?.content) {
+        const key = finalData.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
+        setTimeout(async () => {
+          try {
+            await sendButtonMessage(replyTo, 'Want a reminder for this?', [
+              { id: `rem_tonight_${key}`, title: 'Tonight 9pm' },
+              { id: `rem_tmrw_${key}`, title: 'Tomorrow 8am' },
+              { id: 'rem_no', title: 'Skip' },
+            ]);
+          } catch (e) { console.error('[Brain] Follow-up button error:', e.message); }
+        }, 800);
+      }
     }
-    reply = parsed.reply;
+
+    const finalMsgCount = await memory.getMessageCount();
+    if ((finalMsgCount + 2) % 20 === 0) {
+      analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
+      refreshContextSummary().catch(err => console.error('Summary refresh error:', err.message));
+    }
+
+    return reply;
+
   } else {
-    reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply, replyTo);
-  }
+    // Path B: Capture or Mutation -> Decoupled execution + lightweight synthesis
+    if (replyTo && confidence < 0.8 && ['complete_todo', 'delete_event'].includes(primaryAction)) {
+      await memory.saveState(`pending_clarification:${replyTo}`, {
+        type: 'destructive_action',
+        data: { action: primaryAction, data: primaryData, currentMode: mode, defaultReply: `Marked "${primaryData?.content || primaryData?.title || ''}" as completed.` }
+      });
 
-  await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
-  const finalModelMessage = reply || parsed.reply || "(action executed)";
-  if (reply != null) await memory.saveMessage("model", finalModelMessage, PROMPT_VERSION, 0, Math.ceil(finalModelMessage.length / 4));
+      let confirmationQuestion = `Are you sure you want to complete the task "${primaryData?.content || ''}"?`;
+      if (primaryAction === 'delete_event') {
+        confirmationQuestion = `Are you sure you want to delete the event "${primaryData?.title || ''}"?`;
+      }
 
-  // After adding a todo, offer a reminder button so the user doesn't have to ask
-  if (replyTo) {
-    const primaryAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
-    const primaryData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
-    if (primaryAction === 'add_todo' && primaryData?.content) {
+      await memory.saveMessage("user", userMessage, PROMPT_VERSION, classifierTokensInput, 0);
+      await memory.saveMessage("model", confirmationQuestion, PROMPT_VERSION, 0, Math.ceil(confirmationQuestion.length / 4));
+      return confirmationQuestion;
+    }
+
+    let executionStatus;
+    try {
+      executionStatus = await executeAction(primaryAction, primaryData, mode, null, replyTo);
+    } catch (err) {
+      console.error('[Brain] Capture/mutation execution error:', err.message);
+      executionStatus = `Failed to perform action ${primaryAction}.`;
+    }
+
+    // If executionStatus is null (e.g. interactive message already sent), we don't synthesize anything
+    if (executionStatus === null) {
+      await memory.saveMessage("user", userMessage, PROMPT_VERSION, classifierTokensInput, 0);
+      return null;
+    }
+
+    const synthesisMessages = [
+      {
+        role: "system",
+        content: `You are Blu, Tarun's Hermes Agent on WhatsApp.
+Draft a short, direct confirmation message for the user based on the action execution result.
+Rules:
+- Plain text ONLY. No markdown headers (# / ##). No emojis. No ✅ ❌ 🔔.
+- Keep it 1-2 lines, conversational.
+- Do not repeat the action execution result word-for-word, make it sound like a natural human assistant.
+- Use *bold* with single asterisks for emphasis inside a sentence if appropriate.`
+      },
+      ...history.slice(-2).map(h => ({
+        role: h.role === "user" ? "user" : "assistant",
+        content: h.content.length > 200 ? h.content.slice(0, 200) + '…' : h.content,
+      })),
+      {
+        role: "user",
+        content: `User message: "${userMessage}"\nAction execution result: "${executionStatus}"`
+      }
+    ];
+
+    const synthInputCharCount = synthesisMessages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
+    const synthTokensInput = Math.ceil(synthInputCharCount / 4);
+
+    let replyText;
+    try {
+      replyText = await callLLM(synthesisMessages, false, 'synthesizer');
+    } catch (err) {
+      console.error('[Brain] Synthesis model failed, using executionStatus directly:', err.message);
+      replyText = executionStatus;
+    }
+
+    const synthTokensOutput = Math.ceil(replyText.length / 4);
+
+    const totalTokensInput = classifierTokensInput + synthTokensInput;
+    const totalTokensOutput = classifierTokensOutput + synthTokensOutput;
+
+    await memory.saveMessage("user", userMessage, PROMPT_VERSION, totalTokensInput, 0);
+    await memory.saveMessage("model", replyText, PROMPT_VERSION, 0, totalTokensOutput);
+
+    if (replyTo && primaryAction === 'add_todo' && primaryData?.content) {
       const key = primaryData.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
       setTimeout(async () => {
         try {
@@ -748,14 +963,15 @@ ${summaryBlock}`;
         } catch (e) { console.error('[Brain] Follow-up button error:', e.message); }
       }, 800);
     }
-  }
 
-  if ((msgCount + 2) % 20 === 0) {
-    analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
-    refreshContextSummary().catch(err => console.error('Summary refresh error:', err.message));
-  }
+    const finalMsgCount = await memory.getMessageCount();
+    if ((finalMsgCount + 2) % 20 === 0) {
+      analyzePatterns().catch(err => console.error('Insight analysis error:', err.message));
+      refreshContextSummary().catch(err => console.error('Summary refresh error:', err.message));
+    }
 
-  return reply;
+    return replyText;
+  }
 }
 
 async function refreshContextSummary() {
@@ -866,8 +1082,11 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
   try {
     switch (action) {
       case "set_goal":
-        if (data?.content) await memory.saveGoal(data.content, context);
-        return defaultReply;
+        if (data?.content) {
+          await memory.saveGoal(data.content, context);
+          return `Goal set: "${data.content}" for ${context}.`;
+        }
+        return "No goal content provided.";
 
       case "complete_goal": {
         const goal = await memory.getPendingGoal();
@@ -908,23 +1127,26 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           const noteId = await memory.addNote(data.content, context, [], embedding);
           autoTagNote(noteId, data.content).catch(() => {});
           findConnections(callLLM, data.content, 'note').catch(() => {});
+          return `Note saved to ${context}: "${data.content}"`;
         }
-        return defaultReply;
+        return "No note content provided.";
 
       case "add_todo":
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
           await memory.addTodo(data.content, context, null, embedding);
+          return `Todo added to ${context}: "${data.content}"`;
         }
-        return defaultReply;
+        return "No todo content provided.";
 
       case "add_learning":
         if (data?.topic && data?.content) {
           const embedding = await getEmbedding(`${data.topic}: ${data.content}`);
           await memory.addLearning(data.topic, data.content, data.source, embedding);
           findConnections(callLLM, `${data.topic}: ${data.content}`, 'learning').catch(() => {});
+          return `Learning captured on *${data.topic}*: "${data.content}"`;
         }
-        return defaultReply;
+        return "Topic and content are required for learnings.";
 
       case "learn_context":
         if (data?.content) {
@@ -934,24 +1156,30 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           
           extractAndLinkEntities(data.content, knowledgeId).catch(err => console.error('[Entity Graph] Error:', err.message));
 
+          let confirmation = `Learned fact for ${context}: "${data.content}"`;
           if (contradiction) {
-            return `${defaultReply}\n\n*Note:* This contradicts what I already know:\n${contradiction.replace('CONTRADICTION:', '').trim()}`;
+            return `${confirmation}\n\n*Note:* This contradicts what I already know:\n${contradiction.replace('CONTRADICTION:', '').trim()}`;
           }
+          return confirmation;
         }
-        return defaultReply;
+        return "No content to learn.";
 
       case "complete_todo":
-        if (data?.content) await memory.completeTodoByContent(data.content);
-        return defaultReply;
+        if (data?.content) {
+          await memory.completeTodoByContent(data.content);
+          return `Marked todo as completed: "${data.content}"`;
+        }
+        return "No todo content specified to complete.";
 
       case "set_reminder": {
-        if (!data?.content) return defaultReply;
+        if (!data?.content) return "No reminder content provided.";
         const remindAt = data?.datetime
           ? new Date(data.datetime)
           : new Date(Date.now() + (parseInt(data?.minutes) || 60) * 60 * 1000);
         const embedding = await getEmbedding(data.content);
         await memory.addTodo(data.content, context, remindAt, embedding);
-        return defaultReply;
+        const timeStr = remindAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+        return `Reminder set for ${timeStr}: "${data.content}"`;
       }
 
       case "add_event": {
@@ -962,8 +1190,10 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           const recurrence = ['none', 'daily', 'weekdays', 'weekly'].includes(data?.recurrence)
             ? data.recurrence : 'none';
           await memory.addEvent(data.title, startAt, endAt, context, recurrence);
+          const timeStr = startAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+          return `Event added to calendar on ${timeStr}: "${data.title}"`;
         }
-        return defaultReply;
+        return "Event title and datetime are required.";
       }
 
       case "list_events": {
@@ -978,7 +1208,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       }
 
       case "delete_event": {
-        if (!data?.title) return defaultReply;
+        if (!data?.title) return "No event title provided to delete.";
         const matches = await memory.findEventByTitle(data.title);
         if (!matches.length) return `Couldn't find an event matching "${data.title}".`;
         if (matches.length === 1) {
@@ -993,7 +1223,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       }
 
       case "update_event": {
-        if (!data?.title) return defaultReply;
+        if (!data?.title) return "No event title provided to update.";
         const hits = await memory.findEventByTitle(data.title);
         if (!hits.length) return `Couldn't find an event matching "${data.title}".`;
         const ev = hits[0];
@@ -1008,7 +1238,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           updates.recurrence = data.recurrence;
         }
         await memory.updateEvent(ev.id, updates);
-        return defaultReply;
+        return `Updated event "${ev.title}".`;
       }
 
       case "list_todos": {
@@ -1152,7 +1382,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           await memory.deleteEvent(last.id);
           return `Removed "${last.content}" from your calendar.`;
         }
-        return defaultReply;
+        return "Undo completed.";
       }
 
       case "generate_brief": {
@@ -1169,8 +1399,9 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
         const newMode = data?.mode;
         if (newMode && ['hexaware', 'smartresq', 'personal'].includes(newMode)) {
           await setModeOverride(newMode);
+          return `Switched active mode to ${newMode}.`;
         }
-        return defaultReply;
+        return "Please specify a valid mode: hexaware, smartresq, or personal.";
       }
 
       case "create_skill": {
