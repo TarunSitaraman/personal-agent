@@ -89,10 +89,10 @@ module.exports = async (req, res) => {
     if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
       return res.status(200).send(challenge);
     }
-    return res.sendStatus(403);
+    return res.status(403).end();
   }
 
-  if (req.method !== 'POST') return res.sendStatus(405);
+  if (req.method !== 'POST') return res.status(405).end();
 
   // Process the message synchronously — Vercel terminates after res.send()
   // maxDuration: 60 gives us enough headroom for LLM calls
@@ -103,11 +103,11 @@ module.exports = async (req, res) => {
     const change  = entry?.changes?.[0];
     const message = change?.value?.messages?.[0];
 
-    if (!message) return res.sendStatus(200);
-    if (isDuplicate(message.id)) return res.sendStatus(200);
+    if (!message) return res.status(200).end();
+    if (isDuplicate(message.id)) return res.status(200).end();
 
     const from = message.from;
-    if (from !== process.env.MY_WHATSAPP_NUMBER) return res.sendStatus(200);
+    if (from !== process.env.MY_WHATSAPP_NUMBER) return res.status(200).end();
 
     let text = '';
 
@@ -117,7 +117,7 @@ module.exports = async (req, res) => {
       const transcription = await transcribeAudio(message.audio.id);
       if (!transcription) {
         await sendMessage(from, "Couldn't transcribe the voice message. Try again or type it.");
-        return res.sendStatus(200);
+        return res.status(200).end();
       }
       text = transcription;
     } else if (message.type === 'interactive') {
@@ -133,28 +133,28 @@ module.exports = async (req, res) => {
         buttonId = interactive?.button_reply?.id;
         buttonTitle = interactive?.button_reply?.title;
       }
-      if (!buttonId && !buttonTitle) return res.sendStatus(200);
-      if (buttonId && await handleButtonAction(buttonId, from)) return res.sendStatus(200);
+      if (!buttonId && !buttonTitle) return res.status(200).end();
+      if (buttonId && await handleButtonAction(buttonId, from)) return res.status(200).end();
       text = buttonTitle || '';
     } else if (message.type === 'image') {
       const caption = message.image?.caption || '';
       const description = await analyzeImage(message.image.id, caption);
       if (!description) {
         await sendMessage(from, "Couldn't process the image. Try again.");
-        return res.sendStatus(200);
+        return res.status(200).end();
       }
       text = `[Image received] ${description}${caption ? `\nCaption: ${caption}` : ''}`;
     } else {
-      return res.sendStatus(200);
+      return res.status(200).end();
     }
 
     const reply = await handleIncoming(text, from);
     if (reply) await sendMessage(from, reply);
 
-    res.sendStatus(200);
+    res.status(200).end();
   } catch (err) {
     console.error('Webhook error:', err.message);
     try { await sendMessage(process.env.MY_WHATSAPP_NUMBER, `Error: ${err.message}`); } catch {}
-    res.sendStatus(200); // always 200 to WhatsApp
+    res.status(200).end(); // always 200 to WhatsApp
   }
 };
