@@ -48,6 +48,8 @@ async function getEmbedding(text) {
   }
 }
 
+const PROMPT_VERSION = "v1.2";
+
 const SYSTEM_PROMPT = `You are Blu, Tarun's Hermes Agent on WhatsApp — a context-bridge and second brain across his three life modes.
 
 ## Identity
@@ -80,12 +82,14 @@ CRITICAL: Past tense = already done. Never add these as new todos.
 - "my learnings" → LIST_LEARNINGS
 - "find X", "search for X", "what do I know about X" → SEARCH
 - Factual external question → SEARCH_WEB
+- "summarise our last week of conversations" / "weekly conversation summary" → SUMMARISE_CONVERSATION
 
 **System**:
 - "switch to X mode" → SWITCH_MODE
 - "undo", "undo that" → UNDO_LAST
 - "learn a new skill: [name] - [desc]" → CREATE_SKILL
 - Tarun wants to use a learned skill from "Available Skills" → RUN_SKILL
+- "reviewed learning [id] yes" / "no to learning [id]" → REVIEW_LEARNING
 
 ## DISAMBIGUATION — ask don't guess
 If a message is genuinely ambiguous (50/50 between completing and adding — e.g., a single noun like "gym" or "bus pass"), ask:
@@ -118,12 +122,12 @@ If Tarun mentions a new person, tool, company, or project entity for the first t
 ## RESPONSE FORMAT — return ONLY valid JSON, nothing else
 
 For a single action:
-{"reply": "...", "action": "action_name", "data": {...}}
+{"reply": "your natural WhatsApp reply", "action": "action_name", "data": {...}, "confidence": <float between 0.0 and 1.0>}
 
 For compound requests (multiple things to do in one message), use the "actions" array instead:
-{"reply": "...", "actions": [{"action": "add_event", "data": {...}}, {"action": "set_reminder", "data": {...}}]}
+{"reply": "your natural WhatsApp reply", "actions": [{"action": "add_event", "data": {...}}, {"action": "set_reminder", "data": {...}}], "confidence": <float between 0.0 and 1.0>}
 
-Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | none
+Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | review_learning | summarise_conversation | none
 
 Data fields:
 - content: extracted content or search query
@@ -140,7 +144,37 @@ Data fields:
 - fact: concise fact to save if cache=true
 - skill_name: name of skill to create/run
 - skill_desc: description of skill
-- skill_instr: detailed instructions for the skill`;
+- skill_instr: detailed instructions for the skill
+- id: learning id (uuid) for review_learning
+- gotRight: true/false for review_learning
+
+## FEW-SHOT EXAMPLES
+User: remember to buy groceries tonight
+{"reply": "Got it, I'll add groceries to your personal todo list.", "action": "add_todo", "data": {"content": "buy groceries", "context": "personal"}, "confidence": 1.0}
+
+User: renew my parking pass
+{"reply": "Did you just renew your parking pass, or should I add it as a task?", "action": "ask_context", "data": {"content": "renew parking pass"}, "confidence": 0.5}
+
+User: no i finished it
+{"reply": "Understood, marking the parking pass todo as completed.", "action": "complete_todo", "data": {"content": "renew parking pass"}, "confidence": 0.9}
+
+User: learned that Vite uses esbuild for dev bundler
+{"reply": "Awesome learning saved about Vite using esbuild.", "action": "add_learning", "data": {"topic": "Vite dev bundler", "content": "uses esbuild for dev bundling"}, "confidence": 1.0}
+
+User: delete the client meeting tomorrow
+{"reply": "Are you sure you want to delete the event 'client meeting'?", "action": "delete_event", "data": {"title": "client meeting"}, "confidence": 0.7}
+
+User: what's pending on Hexaware?
+{"reply": "Here are your open Hexaware todos.", "action": "list_todos", "data": {"context": "hexaware"}, "confidence": 1.0}
+
+User: reviewed learning 4a3e-2b1c yes
+{"reply": "Awesome, I've scheduled your next review for this topic.", "action": "review_learning", "data": {"id": "4a3e-2b1c", "gotRight": true}, "confidence": 1.0}
+
+User: summarise our last week of conversations
+{"reply": "Synthesising conversation logs for the past 7 days...", "action": "summarise_conversation", "data": {}, "confidence": 1.0}`;
+
+// Save the system prompt version in DB automatically on load
+memory.savePromptVersion(PROMPT_VERSION, SYSTEM_PROMPT).catch(err => console.error('[Prompt Versioning] Save failed:', err.message));
 
 // ── Individual model callers ──────────────────────────────────────────────────
 
@@ -472,15 +506,85 @@ async function tryPrefilter(userMessage, mode, replyTo) {
   return undefined; // sentinel: no rule matched, fall through to LLM
 }
 
+function validateJsonSchema(parsed) {
+  if (!parsed || typeof parsed !== 'object') return false;
+  if (typeof parsed.reply !== 'string') return false;
+  if (parsed.actions !== undefined) {
+    if (!Array.isArray(parsed.actions)) return false;
+    for (const act of parsed.actions) {
+      if (typeof act !== 'object' || typeof act.action !== 'string') return false;
+    }
+  } else {
+    if (parsed.action !== undefined && typeof parsed.action !== 'string') return false;
+  }
+  if (parsed.confidence !== undefined && typeof parsed.confidence !== 'number') return false;
+  return true;
+}
+
 async function handleIncoming(userMessage, replyTo = null) {
   const mode = getCurrentMode();
   const modeDesc = getModeDescription(mode);
 
+  // Check for active multi-turn clarifications (Items 12, 16, 17)
+  if (replyTo) {
+    const clarification = await memory.getState(`pending_clarification:${replyTo}`);
+    if (clarification) {
+      if (clarification.type === 'note_merge') {
+        const isYes = userMessage.toLowerCase().match(/\b(yes|yep|yeah|merge|ok|sure|do it)\b/);
+        const isNo = userMessage.toLowerCase().match(/\b(no|nope|dont|separate|skip)\b/);
+        
+        if (isYes) {
+          const pending = clarification.data;
+          const mergedContent = `${pending.existingContent}\n${pending.newContent}`;
+          const newEmbedding = await getEmbedding(mergedContent);
+          await memory.updateNoteContent(pending.existingId, mergedContent, newEmbedding);
+          await memory.deleteState(`pending_clarification:${replyTo}`);
+          
+          const replyText = `Merged! The note is now:\n${mergedContent}`;
+          await memory.saveMessage('user', userMessage, PROMPT_VERSION, Math.ceil(userMessage.length / 4), 0);
+          await memory.saveMessage('model', replyText, PROMPT_VERSION, 0, Math.ceil(replyText.length / 4));
+          return replyText;
+        } else if (isNo) {
+          const pending = clarification.data;
+          const embedding = await getEmbedding(pending.newContent);
+          const noteId = await memory.addNote(pending.newContent, pending.context, [], embedding);
+          await memory.deleteState(`pending_clarification:${replyTo}`);
+          
+          const replyText = `Saved as a separate note.`;
+          await memory.saveMessage('user', userMessage, PROMPT_VERSION, Math.ceil(userMessage.length / 4), 0);
+          await memory.saveMessage('model', replyText, PROMPT_VERSION, 0, Math.ceil(replyText.length / 4));
+          return replyText;
+        }
+      }
+      
+      if (clarification.type === 'destructive_action') {
+        const isYes = userMessage.toLowerCase().match(/\b(yes|yep|yeah|delete|complete|do it|ok|sure)\b/);
+        if (isYes) {
+          const { action, data, currentMode, defaultReply } = clarification.data;
+          await memory.deleteState(`pending_clarification:${replyTo}`);
+          const reply = await executeAction(action, data, currentMode, defaultReply, replyTo);
+          const finalReply = reply || defaultReply;
+          await memory.saveMessage('user', userMessage, PROMPT_VERSION, Math.ceil(userMessage.length / 4), 0);
+          await memory.saveMessage('model', finalReply, PROMPT_VERSION, 0, Math.ceil(finalReply.length / 4));
+          return finalReply;
+        } else {
+          await memory.deleteState(`pending_clarification:${replyTo}`);
+          const replyText = `Action cancelled.`;
+          await memory.saveMessage('user', userMessage, PROMPT_VERSION, Math.ceil(userMessage.length / 4), 0);
+          await memory.saveMessage('model', replyText, PROMPT_VERSION, 0, Math.ceil(replyText.length / 4));
+          return replyText;
+        }
+      }
+    }
+  }
+
   // Fast path: handle unambiguous commands without LLM
   const prefiltered = await tryPrefilter(userMessage, mode, replyTo);
   if (prefiltered !== undefined) {
-    await memory.saveMessage('user', userMessage);
-    if (prefiltered !== null) await memory.saveMessage('model', prefiltered);
+    const promptLen = Math.ceil(userMessage.length / 4);
+    const replyLen = prefiltered ? Math.ceil(prefiltered.length / 4) : 0;
+    await memory.saveMessage('user', userMessage, PROMPT_VERSION, promptLen, 0);
+    if (prefiltered !== null) await memory.saveMessage('model', prefiltered, PROMPT_VERSION, 0, replyLen);
     return prefiltered;
   }
 
@@ -493,9 +597,9 @@ async function handleIncoming(userMessage, replyTo = null) {
   ]);
 
   const [history, stats, insights, knowledge, upcomingEvents, msgCount, contextSummary, learnedSkills] = await Promise.all([
-    memory.getRecentHistory(8),           // was 20 — 8 is enough, cuts token count by 60%
+    memory.getRecentHistory(8),
     memory.getSummaryStats(),
-    memory.getRecentInsights(3),          // was 5
+    memory.getRecentInsights(3),
     memory.getAllKnowledge(),
     memory.getUpcomingEvents(24),
     memory.getMessageCount(),
@@ -560,15 +664,21 @@ ${summaryBlock}`;
     { role: "user", content: `${contextBlock}\n\nUser message: ${userMessage}` },
   ];
 
-  // JSON mode forces the model to return only valid JSON — no leakage possible
+  const inputCharCount = messages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
+  const tokensInput = Math.ceil(inputCharCount / 4);
+
+  // JSON mode forces the model to return only valid JSON
   let raw;
   try {
     raw = await callLLM(messages, true);
   } catch (err) {
     console.error('[Brain] All LLMs failed:', err.message);
-    await memory.saveMessage("user", userMessage);
-    return "All my LLMs are down right now. Try again in a moment.";
+    await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+    // Item 4: Graceful LLM degradation
+    return "I'm offline right now, I've saved your message and will process it when I'm back.";
   }
+
+  const tokensOutput = Math.ceil(raw.length / 4);
 
   let parsed;
   try {
@@ -577,13 +687,36 @@ ${summaryBlock}`;
     parsed = extractFirstJSON(raw);
   }
 
-  if (!parsed) {
-    await memory.saveMessage("user", userMessage);
-    await memory.saveMessage("model", raw);
+  // Item 18: Validate JSON schema
+  if (!parsed || !validateJsonSchema(parsed)) {
+    console.warn('[Brain] Malformed JSON response validation failed:', raw);
+    await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+    await memory.saveMessage("model", raw, PROMPT_VERSION, 0, tokensOutput);
     return "Sorry, I got confused there. Could you try again?";
   }
 
   if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
+
+  // Item 17: Confidence scoring for destructive actions
+  const primaryAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
+  const primaryData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
+  const confidence = parsed.confidence !== undefined ? parsed.confidence : 1.0;
+
+  if (replyTo && confidence < 0.8 && ['complete_todo', 'delete_event'].includes(primaryAction)) {
+    await memory.saveState(`pending_clarification:${replyTo}`, {
+      type: 'destructive_action',
+      data: { action: primaryAction, data: primaryData, currentMode: mode, defaultReply: parsed.reply }
+    });
+
+    let confirmationQuestion = `Are you sure you want to complete the task "${primaryData?.content || ''}"?`;
+    if (primaryAction === 'delete_event') {
+      confirmationQuestion = `Are you sure you want to delete the event "${primaryData?.title || ''}"?`;
+    }
+
+    await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+    await memory.saveMessage("model", confirmationQuestion, PROMPT_VERSION, 0, Math.ceil(confirmationQuestion.length / 4));
+    return confirmationQuestion;
+  }
 
   let reply;
   if (Array.isArray(parsed.actions) && parsed.actions.length) {
@@ -595,9 +728,9 @@ ${summaryBlock}`;
     reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply, replyTo);
   }
 
-  await memory.saveMessage("user", userMessage);
-  // reply is null when executeAction sent an interactive message directly (e.g. list_todos)
-  if (reply != null) await memory.saveMessage("model", reply);
+  await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
+  const finalModelMessage = reply || parsed.reply || "(action executed)";
+  if (reply != null) await memory.saveMessage("model", finalModelMessage, PROMPT_VERSION, 0, Math.ceil(finalModelMessage.length / 4));
 
   // After adding a todo, offer a reminder button so the user doesn't have to ask
   if (replyTo) {
@@ -756,9 +889,32 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       case "add_note":
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
+          const matches = embedding ? await memory.searchMemory(data.content, embedding, context) : [];
+          const similarNote = matches.find(m => m.type === 'note' && m.score > 0.85);
+
+          if (similarNote && replyTo) {
+            await memory.saveState(`pending_clarification:${replyTo}`, {
+              type: 'note_merge',
+              data: {
+                newContent: data.content,
+                existingId: similarNote.id,
+                existingContent: similarNote.content,
+                context
+              }
+            });
+            return `I found a similar note: "${similarNote.content}". Would you like to merge this new note with the existing one? (Reply "yes" to merge, "no" to save as separate)`;
+          }
+
           const noteId = await memory.addNote(data.content, context, [], embedding);
           autoTagNote(noteId, data.content).catch(() => {});
           findConnections(callLLM, data.content, 'note').catch(() => {});
+        }
+        return defaultReply;
+
+      case "add_todo":
+        if (data?.content) {
+          const embedding = await getEmbedding(data.content);
+          await memory.addTodo(data.content, context, null, embedding);
         }
         return defaultReply;
 
@@ -773,7 +929,14 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       case "learn_context":
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
-          await memory.saveKnowledge(data.content, embedding, context);
+          const contradiction = await detectContradiction(data.content, embedding);
+          const knowledgeId = await memory.saveKnowledge(data.content, embedding, context);
+          
+          extractAndLinkEntities(data.content, knowledgeId).catch(err => console.error('[Entity Graph] Error:', err.message));
+
+          if (contradiction) {
+            return `${defaultReply}\n\n*Note:* This contradicts what I already know:\n${contradiction.replace('CONTRADICTION:', '').trim()}`;
+          }
         }
         return defaultReply;
 
@@ -786,7 +949,8 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
         const remindAt = data?.datetime
           ? new Date(data.datetime)
           : new Date(Date.now() + (parseInt(data?.minutes) || 60) * 60 * 1000);
-        await memory.addTodo(data.content, context, remindAt);
+        const embedding = await getEmbedding(data.content);
+        await memory.addTodo(data.content, context, remindAt, embedding);
         return defaultReply;
       }
 
@@ -904,15 +1068,43 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       }
 
       case "list_learnings": {
-        const learnings = await memory.getUnreviewedLearnings(8);
-        if (!learnings.length) return 'No unreviewed learnings. You\'re all caught up!';
-        return `*Unreviewed Learnings* (${learnings.length})\n\n` +
-          learnings.map((l, i) => `${i + 1}. *${l.topic}*\n   ${l.content}`).join('\n\n');
+        const learnings = await memory.getDueLearnings(8);
+        if (!learnings.length) return "No learnings due for review right now. You're all caught up!";
+        return `*Learnings for Review (Spaced Repetition)* (${learnings.length})\n\n` +
+          learnings.map((l, i) => `${i + 1}. *${l.topic}*\n   ${l.content}\n   _(Id: ${l.id})_`).join('\n\n');
+      }
+
+      case "review_learning": {
+        if (data?.id) {
+          const gotRight = data.gotRight !== false;
+          await memory.reviewLearning(data.id, gotRight);
+          return `Reviewed learning. Next review scheduled.`;
+        }
+        return defaultReply;
+      }
+
+      case "summarise_conversation": {
+        const convs = await memory.getConversationsLastWeek();
+        if (!convs.length) return "No conversation history found for the last week.";
+        
+        const convsText = convs.map(c => `${c.role === 'user' ? 'Tarun' : 'Blu'}: ${c.content}`).join('\n');
+        const prompt = `Here is the conversation history of Tarun and his agent Blu for the last week:\n\n${convsText}\n\nSummarize the key events, decisions, items captured (todos/notes/learnings), and status updates. Make it concise and easy to read on WhatsApp (under 10 lines).`;
+        
+        const synthesis = await callLLM([{ role: 'user', content: prompt }]);
+        return synthesis.trim();
       }
 
       case "search": {
         const query = data?.content;
         if (!query) return 'What should I search for?';
+        
+        const entName = query.toLowerCase().replace(/what\s+do\s+i\s+know\s+about/i, '').replace(/find/i, '').replace(/search/i, '').trim();
+        const entityKnowledge = await memory.getKnowledgeByEntity(entName);
+        if (entityKnowledge.length) {
+          return `*What I know about ${entName}*:\n\n` + 
+            entityKnowledge.map((k, i) => `${i + 1}. ${k.fact}`).join('\n');
+        }
+        
         const embedding = await getEmbedding(query);
         const results = await memory.searchMemory(query, embedding);
         if (!results.length) return `Nothing found for "${query}".`;
@@ -1206,4 +1398,100 @@ Tone: Enthusiastic, high-signal, concise. Use *bold* for topics. Under 10 lines.
   return await callLLM([{ role: 'user', content: synthesisPrompt }]);
 }
 
-module.exports = { handleIncoming, handleIncomingStream, generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview, generateTechPulse };
+async function detectContradiction(newFact, embedding) {
+  if (!embedding) return null;
+  const matches = await memory.searchMemory(newFact, embedding);
+  const existingFacts = matches.filter(m => m.type === 'knowledge').map(m => m.content);
+  if (!existingFacts.length) return null;
+  
+  const checkPrompt = `Compare this new fact against the existing facts about Tarun's world to see if there is any direct contradiction.
+  
+New Fact: "${newFact}"
+
+Existing Facts:
+${existingFacts.map(f => `- ${f}`).join('\n')}
+
+Reply with "CONTRADICTION: [short explanation of what contradicts]" if there is a contradiction (e.g. conflicting info about names, tools, times, schedules). Otherwise, reply with exactly "NONE".`;
+  
+  try {
+    const response = await callLLM([{ role: 'user', content: checkPrompt }]);
+    const trimRes = response.trim();
+    if (trimRes.startsWith('CONTRADICTION:')) {
+      return trimRes;
+    }
+  } catch (err) {
+    console.error('[Contradiction Check Error]:', err.message);
+  }
+  return null;
+}
+
+async function extractAndLinkEntities(factText, knowledgeId) {
+  const prompt = `Extract all key entities (people, projects, tools, companies, locations) from this text:
+  
+Text: "${factText}"
+
+Return a JSON array of objects representing the entities, where each object has:
+- name: canonical name of the entity (e.g. "Rohan", "SmartResQ", "Gemini")
+- type: "person", "project", "tool", "company", or "other"
+
+Return ONLY the raw JSON array (e.g. [{"name": "Rohan", "type": "person"}]), nothing else.`;
+
+  try {
+    const raw = await callLLM([{ role: 'user', content: prompt }], true);
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    const entities = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+    if (Array.isArray(entities)) {
+      for (const ent of entities) {
+        if (ent.name) {
+          await memory.linkEntityToKnowledge(ent.name, ent.type, knowledgeId);
+          console.log(`[Entity Graph] Linked entity "${ent.name}" (${ent.type}) to knowledge ${knowledgeId}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Entity Graph Link Error]:', err.message);
+  }
+}
+
+async function autoSummarizeOldNotes() {
+  try {
+    const oldNotes = await memory.getOldNotes(30);
+    if (!oldNotes.length) return;
+    
+    console.log(`[Notes Summarizer] Found ${oldNotes.length} notes older than 30 days. Summarizing...`);
+    for (const note of oldNotes) {
+      try {
+        const prompt = `Convert the following temporary note into a concise, permanent factual statement about Tarun's life or work.
+  
+Note Content: "${note.content}"
+
+Output only the single summarized factual statement, nothing else.`;
+        
+        const summaryFact = await callLLM([{ role: 'user', content: prompt }]);
+        const fact = summaryFact.trim();
+        if (fact) {
+          const embedding = await getEmbedding(fact);
+          const knowledgeId = await memory.saveKnowledge(fact, embedding, note.context);
+          await extractAndLinkEntities(fact, knowledgeId);
+          await memory.deleteNote(note.id);
+          console.log(`[Notes Summarizer] Note ${note.id} summarized and archived.`);
+        }
+      } catch (err) {
+        console.error(`[Notes Summarizer] Error summarizing note ${note.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[Notes Summarizer] Main loop failed:', e.message);
+  }
+}
+
+module.exports = { 
+  handleIncoming, 
+  handleIncomingStream, 
+  generateStandup, 
+  generateProactiveNudge, 
+  generateStaleAlert, 
+  generateWeeklyReview, 
+  generateTechPulse,
+  autoSummarizeOldNotes
+};

@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { getCurrentMode, getModeDescription } = require('../agent/context');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
@@ -984,12 +984,24 @@ router.get('/api/notes', async (req, res) => {
   }
 });
 
-// GET /dashboard/api/learnings  — unreviewed learnings (mobile notes screen)
+// GET /dashboard/api/learnings  — learnings due for review (spaced repetition)
 router.get('/api/learnings', async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const learnings = await getUnreviewedLearnings(20);
+    const learnings = await getDueLearnings(20);
     res.json(learnings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /dashboard/api/learnings/:id/review — review a learning (spaced repetition result)
+router.post('/api/learnings/:id/review', async (req, res) => {
+  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const { gotRight } = req.body;
+    await reviewLearning(req.params.id, gotRight !== false);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -76,7 +76,7 @@ function startScheduler() {
     }
   });
 
-  // Midnight daily — run memory decay check (Item 8)
+  // Midnight daily — run memory decay check + auto-summarise old notes (Item 8 & 13)
   cron.schedule('0 0 * * *', async () => {
     try {
       console.log('Running daily memory decay check...');
@@ -84,6 +84,14 @@ function startScheduler() {
       console.log(`Memory decay complete: flagged ${decayResults.flagged} facts, pruned ${decayResults.pruned} facts.`);
     } catch (err) {
       console.error('Memory decay check error:', err.message);
+    }
+
+    try {
+      console.log('Running daily notes auto-summarization and archiving...');
+      const { autoSummarizeOldNotes } = require('../agent/brain');
+      await autoSummarizeOldNotes();
+    } catch (err) {
+      console.error('Auto-summarize old notes error:', err.message);
     }
   }, { timezone: 'Asia/Kolkata' });
 

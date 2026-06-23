@@ -391,15 +391,15 @@ async function searchMemory(query, embedding = null, currentMode = 'personal') {
     const vectorStr = `[${embedding.join(',')}]`;
     const [todos, notes, learnings, knowledge] = await Promise.all([
       pool.query(
-        `SELECT 'todo' as type, content, context, 1 - (embedding <=> $1) as score FROM todos WHERE done = false ORDER BY embedding <=> $1 LIMIT 3`,
+        `SELECT 'todo' as type, id, content, context, 1 - (embedding <=> $1) as score FROM todos WHERE done = false ORDER BY embedding <=> $1 LIMIT 3`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'note' as type, content, context, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
+        `SELECT 'note' as type, id, content, context, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'learning' as type, topic as content, context, 1 - (embedding <=> $1) as score FROM learnings ORDER BY embedding <=> $1 LIMIT 5`,
+        `SELECT 'learning' as type, id, topic as content, context, 1 - (embedding <=> $1) as score FROM learnings ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
       pool.query(
@@ -763,6 +763,51 @@ async function getDueLearnings(limit = 5) {
   return rows;
 }
 
+async function updateNoteContent(id, content, embedding = null) {
+  await pool.query(
+    'UPDATE notes SET content = $1, embedding = $2 WHERE id = $3',
+    [content, embedding ? `[${embedding.join(',')}]` : null, id]
+  );
+}
+
+async function saveState(key, value, ttlMinutes = 5) {
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+  await pool.query('DELETE FROM state WHERE key = $1', [key]);
+  await pool.query(
+    `INSERT INTO state (key, value, expires_at) VALUES ($1, $2, $3)`,
+    [key, JSON.stringify(value), expiresAt]
+  );
+}
+
+async function getState(key) {
+  const { rows } = await pool.query(
+    `SELECT value FROM state WHERE key = $1 AND expires_at > NOW()`,
+    [key]
+  );
+  return rows[0] ? JSON.parse(rows[0].value) : null;
+}
+
+async function deleteState(key) {
+  await pool.query('DELETE FROM state WHERE key = $1', [key]);
+}
+
+async function getOldNotes(days = 30) {
+  const { rows } = await pool.query(
+    `SELECT * FROM notes WHERE created_at < NOW() - ($1 || ' days')::interval`,
+    [days]
+  );
+  return rows;
+}
+
+async function getConversationsLastWeek() {
+  const { rows } = await pool.query(
+    `SELECT role, content, created_at FROM conversations
+     WHERE created_at >= NOW() - INTERVAL '7 days'
+     ORDER BY created_at ASC`
+  );
+  return rows;
+}
+
 module.exports = {
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
   addNote, updateNoteTags, getRecentNotes, deleteNote, getLastCreatedItem,
@@ -791,4 +836,6 @@ module.exports = {
   savePromptVersion, getPromptText,
   linkEntityToKnowledge, getKnowledgeByEntity,
   reviewLearning, getDueLearnings,
+  updateNoteContent, saveState, getState, deleteState,
+  getOldNotes, getConversationsLastWeek,
 };
