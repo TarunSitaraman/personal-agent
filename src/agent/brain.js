@@ -773,14 +773,27 @@ async function handleIncoming(userMessage, replyTo = null) {
     const semanticMatches = msgEmbedding
       ? await memory.searchMemory(userMessage, msgEmbedding, mode)
       : [];
+    // Phase 4: Prune embedding queries to top 2 instead of 5
     const semanticBlock = semanticMatches.length
-      ? `Relevant past memory:\n${semanticMatches.slice(0, 5).map(r => `[${r.type}][${r.context}] ${r.content}`).join('\n')}`
+      ? `Relevant past memory:\n${semanticMatches.slice(0, 2).map(r => `[${r.type}][${r.context}] ${r.content}`).join('\n')}`
       : '';
 
-    const todoBlock = [
-      ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
-      ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
-    ];
+    // Phase 4: Context Slicing by Life Mode (only feed relevant todos)
+    let todoBlock = [];
+    if (mode === 'hexaware') {
+      todoBlock = stats.hexTodos.map(t => `[hexaware] ${t.content}`);
+    } else if (mode === 'smartresq') {
+      todoBlock = stats.srqTodos.map(t => `[smartresq] ${t.content}`);
+    } else {
+      todoBlock = [
+        ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
+        ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
+      ];
+    }
+
+    // Phase 4: Context Slicing for GitHub open PRs/issues (only relevant in smartresq mode)
+    const prs = mode === 'smartresq' ? openPRs : [];
+    const issues = mode === 'smartresq' ? openIssues : [];
 
     const knowledgeBlock = knowledge.length
       ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
@@ -809,8 +822,8 @@ Pending todos (${todoBlock.length}):
 ${todoBlock.length ? todoBlock.join('\n') : 'none'}
 
 Unreviewed learnings: ${stats.unreviewed.length}
-Open PRs (${openPRs.length}): ${openPRs.join(', ') || 'none'}
-Open Issues (${openIssues.length}): ${openIssues.join(', ') || 'none'}
+Open PRs (${prs.length}): ${prs.join(', ') || 'none'}
+Open Issues (${issues.length}): ${issues.join(', ') || 'none'}
 ${eventsBlock}
 ${semanticBlock}
 ${skillsBlock}
@@ -820,7 +833,8 @@ ${summaryBlock}`;
 
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
-      ...history.map(h => ({
+      // Phase 4: Aggressive History Summarization (slice history to last 3 exchanges)
+      ...history.slice(-3).map(h => ({
         role: h.role === "user" ? "user" : "assistant",
         content: h.content.length > 600 ? h.content.slice(0, 600) + '…' : h.content,
       })),
