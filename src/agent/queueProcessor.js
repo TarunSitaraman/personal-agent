@@ -1,35 +1,10 @@
-const express = require('express');
-const { handleIncoming } = require('../agent/brain');
-const { sendMessage, sendButtonMessage } = require('./send');
+const memory = require('./memory');
+const { handleIncoming } = require('./brain');
+const { sendMessage } = require('../whatsapp/send');
 const { transcribeAudio } = require('../integrations/whisper');
 const { analyzeImage } = require('../integrations/vision');
 const hub = require('../events/hub');
-const memory = require('../agent/memory');
 
-const router = express.Router();
-
-// In-memory log of last 10 webhook hits for diagnostics
-const webhookLog = [];
-function logHit(entry) {
-  webhookLog.unshift({ t: new Date().toISOString(), ...entry });
-  if (webhookLog.length > 10) webhookLog.pop();
-}
-
-// Dedup cache — WhatsApp retries webhook delivery if it doesn't get 200 fast enough.
-// We respond 200 immediately but process async, so retries can arrive and double-process.
-const seenIds = new Map();
-function isDuplicate(msgId) {
-  const now = Date.now();
-  for (const [id, ts] of seenIds) {
-    if (now - ts > 60_000) seenIds.delete(id);
-  }
-  if (seenIds.has(msgId)) return true;
-  seenIds.set(msgId, now);
-  return false;
-}
-
-// Handle structured button IDs directly without going to the LLM.
-// Returns true if the action was handled, false to fall through to LLM.
 async function handleButtonAction(id, from) {
   try {
     // List picker selection: tap a todo to mark it done
@@ -138,57 +113,104 @@ async function handleButtonAction(id, from) {
   return false;
 }
 
-router.get('/log', (req, res) => {
-  res.json(webhookLog);
-});
-
-router.get('/', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-  res.sendStatus(403);
-});
-
-const { processQueue } = require('../agent/queueProcessor');
-
-router.post('/', async (req, res) => {
-  res.sendStatus(200);
-
+async function processMessage(msgRow) {
+  const { id, from_number, message_raw } = msgRow;
+  const message = message_raw;
+  
   try {
-    const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0];
-    const message = change?.value?.messages?.[0];
-
-    logHit({ hasMessage: !!message, from: message?.from, type: message?.type });
-
-    if (!message) return;
-
-    const from = message.from;
-    if (from !== process.env.MY_WHATSAPP_NUMBER) {
-      logHit({ filtered: true, from, expected: process.env.MY_WHATSAPP_NUMBER });
+    let text = '';
+    
+    if (message.type === 'text') {
+      text = message.text.body;
+    } else if (message.type === 'audio') {
+      const transcription = await transcribeAudio(message.audio.id);
+      if (!transcription) {
+        await sendMessage(from_number, "Couldn't transcribe the voice message. Try again or type it.");
+        await memory.markMessageCompleted(id);
+        return;
+      }
+      text = transcription;
+    } else if (message.type === 'interactive') {
+      const interactive = message.interactive;
+      let buttonId, buttonTitle;
+      if (interactive?.type === 'button_reply') {
+        buttonId = interactive.button_reply?.id;
+        buttonTitle = interactive.button_reply?.title;
+      } else if (interactive?.type === 'list_reply') {
+        buttonId = interactive.list_reply?.id;
+        buttonTitle = interactive.list_reply?.title;
+      } else {
+        buttonId = interactive?.button_reply?.id;
+        buttonTitle = interactive?.button_reply?.title;
+      }
+      if (!buttonId && !buttonTitle) {
+        await memory.markMessageCompleted(id);
+        return;
+      }
+      
+      if (buttonId && await handleButtonAction(buttonId, from_number)) {
+        await memory.markMessageCompleted(id);
+        return;
+      }
+      text = buttonTitle || '';
+    } else if (message.type === 'image') {
+      const caption = message.image?.caption || '';
+      const description = await analyzeImage(message.image.id, caption);
+      if (!description) {
+        await sendMessage(from_number, "Couldn't process the image. Try again.");
+        await memory.markMessageCompleted(id);
+        return;
+      }
+      text = `[Image received] ${description}${caption ? `\nCaption: ${caption}` : ''}`;
+    } else {
+      await memory.markMessageCompleted(id);
       return;
     }
 
-    // 5. Dedup via DB
-    const isDup = await memory.isDuplicateRequest(message.id);
-    if (isDup) {
-      console.warn(`[Webhook] Duplicate message ${message.id} — skipping`);
-      return;
+    // Call LLM
+    const reply = await handleIncoming(text, from_number);
+    if (reply) {
+      if (reply.includes("offline right now") || reply.includes("All my LLMs are down")) {
+        const offlineReply = "I'm offline right now, I've saved your message and will process it when I'm back.";
+        await sendMessage(from_number, offlineReply);
+        throw new Error("All LLMs are offline");
+      }
+      
+      await sendMessage(from_number, reply);
     }
-
-    // 1. Store in queue table
-    await memory.queueIncomingMessage(message.id, from, message);
-
-    // Kick off immediate processing in background (non-blocking)
-    processQueue().catch(err => console.error('[Webhook] Immediate process queue error:', err.message));
-
+    
+    // Check if we can record token usage (we will inject metadata into processed fields if returned, handled during markMessageCompleted)
+    await memory.markMessageCompleted(id);
+    hub.notify();
   } catch (err) {
-    console.error('Webhook receive error:', err.message);
+    console.error(`[QueueProcessor] Error processing message ${id}:`, err.message);
+    await memory.markMessageFailed(id, err.message);
+    
+    // DLQ check
+    const attempts = msgRow.attempts + 1;
+    if (attempts >= 3) {
+      try {
+        const truncatedText = message.text?.body || message.type || 'unknown type';
+        await sendMessage(
+          from_number,
+          `Sorry, I couldn't process your message "${truncatedText}". Please try again.`
+        );
+      } catch (sendErr) {
+        console.error('[QueueProcessor] Failed to send DLQ message:', sendErr.message);
+      }
+    }
   }
-});
+}
 
-module.exports = { router };
+async function processQueue() {
+  const pending = await memory.getNextPendingMessages(5);
+  if (!pending.length) return;
+  
+  console.log(`[QueueProcessor] Processing ${pending.length} pending messages...`);
+  for (const row of pending) {
+    await memory.markMessageProcessing(row.id);
+    await processMessage(row);
+  }
+}
+
+module.exports = { processQueue };

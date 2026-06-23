@@ -36,8 +36,16 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // Every minute — check due todo reminders + events starting in ~15 min
+  // Every minute — check queue, due todo reminders + events starting in ~15 min
   cron.schedule('* * * * *', async () => {
+    // 1. Process message queue
+    try {
+      const { processQueue } = require('../agent/queueProcessor');
+      await processQueue();
+    } catch (err) {
+      console.error('Queue processing error:', err.message);
+    }
+
     try {
       const due = await memory.getDueTodoReminders();
       for (const todo of due) {
@@ -67,6 +75,17 @@ function startScheduler() {
       console.error('Event reminder error:', err.message);
     }
   });
+
+  // Midnight daily — run memory decay check (Item 8)
+  cron.schedule('0 0 * * *', async () => {
+    try {
+      console.log('Running daily memory decay check...');
+      const decayResults = await memory.processMemoryDecay();
+      console.log(`Memory decay complete: flagged ${decayResults.flagged} facts, pruned ${decayResults.pruned} facts.`);
+    } catch (err) {
+      console.error('Memory decay check error:', err.message);
+    }
+  }, { timezone: 'Asia/Kolkata' });
 
   // 9:00 AM IST daily — stale todo alert
   cron.schedule('0 9 * * 1-5', async () => {
