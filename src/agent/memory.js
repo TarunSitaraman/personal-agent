@@ -11,10 +11,10 @@ pool.on('connect', client => {
 
 // --- Todos ---
 
-async function addTodo(content, context, remindAt = null) {
+async function addTodo(content, context, remindAt = null, embedding = null) {
   await pool.query(
-    'INSERT INTO todos (content, context, remind_at) VALUES ($1, $2, $3)',
-    [content, context, remindAt || null]
+    'INSERT INTO todos (content, context, remind_at, embedding) VALUES ($1, $2, $3, $4)',
+    [content, context, remindAt || null, embedding ? `[${embedding.join(',')}]` : null]
   );
 }
 
@@ -103,10 +103,11 @@ async function markLearningReviewed(id) {
 // --- Permanent knowledge store ---
 
 async function saveKnowledge(fact, embedding = null, context = 'personal') {
-  await pool.query(
-    'INSERT INTO knowledge (subject, fact, embedding, context) VALUES ($1, $2, $3, $4)',
+  const { rows } = await pool.query(
+    'INSERT INTO knowledge (subject, fact, embedding, context) VALUES ($1, $2, $3, $4) RETURNING id',
     ['general', fact, embedding ? `[${embedding.join(',')}]` : null, context]
   );
+  return rows[0].id;
 }
 
 async function getAllKnowledge() {
@@ -124,10 +125,10 @@ async function trimConversations(keep = 200) {
 
 // --- Conversation history ---
 
-async function saveMessage(role, content) {
+async function saveMessage(role, content, promptVersion = null, tokensInput = null, tokensOutput = null) {
   await pool.query(
-    'INSERT INTO conversations (role, content) VALUES ($1, $2)',
-    [role, content]
+    'INSERT INTO conversations (role, content, prompt_version, tokens_input, tokens_output) VALUES ($1, $2, $3, $4, $5)',
+    [role, content, promptVersion, tokensInput, tokensOutput]
   );
 }
 
@@ -389,10 +390,9 @@ async function searchMemory(query, embedding = null, currentMode = 'personal') {
   if (embedding) {
     const vectorStr = `[${embedding.join(',')}]`;
     const [todos, notes, learnings, knowledge] = await Promise.all([
-      // Todos don't have embeddings yet, still use ILIKE
       pool.query(
-        `SELECT 'todo' as type, content, context, 1 - (NULL::vector <=> NULL::vector) as score FROM todos WHERE content ILIKE $1 AND done = false LIMIT 3`,
-        [`%${query}%`]
+        `SELECT 'todo' as type, content, context, 1 - (embedding <=> $1) as score FROM todos WHERE done = false ORDER BY embedding <=> $1 LIMIT 3`,
+        [vectorStr]
       ),
       pool.query(
         `SELECT 'note' as type, content, context, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
@@ -403,12 +403,20 @@ async function searchMemory(query, embedding = null, currentMode = 'personal') {
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'knowledge' as type, fact as content, context, 
+        `SELECT 'knowledge' as type, id, fact as content, context, 
          (1 - (embedding <=> $1)) + (CASE WHEN context = $2 THEN 0.2 ELSE 0 END) as score 
          FROM knowledge ORDER BY score DESC LIMIT 5`,
         [vectorStr, currentMode]
       ),
     ]);
+
+    // Update last_referenced_at for returned knowledge facts
+    const returnedKnowledge = knowledge.rows.filter(r => r.score > 0.6);
+    if (returnedKnowledge.length) {
+      const ids = returnedKnowledge.map(r => r.id);
+      updateKnowledgeLastReferenced(ids).catch(err => console.error('Error updating knowledge referenced time:', err));
+    }
+
     return [...todos.rows, ...notes.rows, ...learnings.rows, ...knowledge.rows]
       .filter(r => r.score === null || r.score > 0.6) // Filter out low relevance if score exists
       .sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -608,6 +616,153 @@ async function getEventById(id) {
   return rows[0] || null;
 }
 
+async function updateKnowledgeLastReferenced(ids) {
+  if (!ids || !ids.length) return;
+  await pool.query('UPDATE knowledge SET last_referenced_at = NOW() WHERE id = ANY($1::uuid[])', [ids]);
+}
+
+async function processMemoryDecay() {
+  const { rowCount } = await pool.query(
+    "UPDATE knowledge SET flagged_for_review = true WHERE last_referenced_at < NOW() - INTERVAL '30 days' AND flagged_for_review = false"
+  );
+  const { rowCount: prunedCount } = await pool.query(
+    "DELETE FROM knowledge WHERE flagged_for_review = true AND last_referenced_at < NOW() - INTERVAL '60 days'"
+  );
+  return { flagged: rowCount, pruned: prunedCount };
+}
+
+async function isDuplicateRequest(messageId) {
+  if (!messageId) return false;
+  await pool.query("DELETE FROM dedup_messages WHERE created_at < NOW() - INTERVAL '5 minutes'");
+  try {
+    await pool.query('INSERT INTO dedup_messages (message_id) VALUES ($1)', [messageId]);
+    return false;
+  } catch (err) {
+    if (err.code === '23505') {
+      return true;
+    }
+    throw err;
+  }
+}
+
+async function queueIncomingMessage(messageId, fromNumber, messageRaw) {
+  const { rows } = await pool.query(
+    `INSERT INTO pending_messages (message_id, from_number, message_raw, status)
+     VALUES ($1, $2, $3, 'pending')
+     RETURNING id`,
+    [messageId, fromNumber, JSON.stringify(messageRaw)]
+  );
+  return rows[0].id;
+}
+
+async function getNextPendingMessages(limit = 10) {
+  const { rows } = await pool.query(
+    `SELECT * FROM pending_messages
+     WHERE status = 'pending' OR (status = 'failed' AND attempts < 3)
+     ORDER BY created_at ASC
+     LIMIT $1`,
+     [limit]
+  );
+  return rows;
+}
+
+async function markMessageProcessing(id) {
+  await pool.query(
+    `UPDATE pending_messages
+     SET status = 'processing', attempts = attempts + 1
+     WHERE id = $1`,
+    [id]
+  );
+}
+
+async function markMessageCompleted(id, tokensInput = null, tokensOutput = null) {
+  await pool.query(
+    `UPDATE pending_messages
+     SET status = 'completed', processed_at = NOW(), tokens_input = $2, tokens_output = $3
+     WHERE id = $1`,
+    [id, tokensInput, tokensOutput]
+  );
+}
+
+async function markMessageFailed(id, errorMessage) {
+  await pool.query(
+    `UPDATE pending_messages
+     SET status = 'failed', error_message = $2
+     WHERE id = $1`,
+    [id, errorMessage]
+  );
+}
+
+async function savePromptVersion(version, promptText) {
+  await pool.query(
+    'INSERT INTO prompt_versions (version, prompt_text) VALUES ($1, $2) ON CONFLICT (version) DO UPDATE SET prompt_text = $2',
+    [version, promptText]
+  );
+}
+
+async function getPromptText(version) {
+  const { rows } = await pool.query('SELECT prompt_text FROM prompt_versions WHERE version = $1', [version]);
+  return rows[0]?.prompt_text || null;
+}
+
+async function linkEntityToKnowledge(entityName, entityType, knowledgeId) {
+  await pool.query(
+    `INSERT INTO entity_links (entity_name, entity_type, knowledge_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (entity_name, knowledge_id) DO UPDATE SET entity_type = $2`,
+    [entityName.toLowerCase().trim(), entityType, knowledgeId]
+  );
+}
+
+async function getKnowledgeByEntity(entityName) {
+  const { rows } = await pool.query(
+    `SELECT k.* FROM knowledge k
+     JOIN entity_links el ON k.id = el.knowledge_id
+     WHERE el.entity_name = $1
+     ORDER BY k.created_at DESC`,
+    [entityName.toLowerCase().trim()]
+  );
+  return rows;
+}
+
+async function reviewLearning(id, gotRight = true) {
+  const { rows } = await pool.query('SELECT interval_days, review_count FROM learnings WHERE id = $1', [id]);
+  if (!rows.length) return;
+  const currentInterval = rows[0].interval_days || 1;
+  const currentCount = rows[0].review_count || 0;
+  
+  let nextInterval = 1;
+  if (gotRight) {
+    if (currentInterval === 1) nextInterval = 3;
+    else if (currentInterval === 3) nextInterval = 7;
+    else if (currentInterval === 7) nextInterval = 14;
+    else if (currentInterval === 14) nextInterval = 30;
+    else nextInterval = Math.min(currentInterval * 2, 90);
+  }
+  
+  await pool.query(
+    `UPDATE learnings
+     SET reviewed = true,
+         last_reviewed_at = NOW(),
+         review_count = $2 + 1,
+         interval_days = $3,
+         next_review_at = NOW() + ($3 || ' days')::interval
+     WHERE id = $1`,
+    [id, currentCount, nextInterval]
+  );
+}
+
+async function getDueLearnings(limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT * FROM learnings
+     WHERE next_review_at <= NOW()
+     ORDER BY next_review_at ASC, created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
 module.exports = {
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
   addNote, updateNoteTags, getRecentNotes, deleteNote, getLastCreatedItem,
@@ -628,4 +783,12 @@ module.exports = {
   saveGoal, getPendingGoal, completeGoal,
   updateTodoReminder, setTodoReminderByContent, getEventById,
   savePushToken, getPushTokens, removePushToken,
+  
+  // New functions exported
+  updateKnowledgeLastReferenced, processMemoryDecay,
+  isDuplicateRequest, queueIncomingMessage, getNextPendingMessages,
+  markMessageProcessing, markMessageCompleted, markMessageFailed,
+  savePromptVersion, getPromptText,
+  linkEntityToKnowledge, getKnowledgeByEntity,
+  reviewLearning, getDueLearnings,
 };

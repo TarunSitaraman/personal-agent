@@ -2,9 +2,30 @@ const axios = require('axios');
 
 const BASE_URL = `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
 
+async function callMetaWithRetry(axiosCall, maxRetries = 3) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await axiosCall();
+    } catch (err) {
+      attempt++;
+      const status = err.response?.status;
+      const is5xx = status && status >= 500 && status < 600;
+      
+      if (is5xx && attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 1000;
+        console.warn(`[WhatsApp API] Meta returned 5xx (${status}). Retrying in ${delay}ms (Attempt ${attempt}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 async function sendMessage(to, text) {
   try {
-    await axios.post(
+    await callMetaWithRetry(() => axios.post(
       BASE_URL,
       {
         messaging_product: 'whatsapp',
@@ -18,7 +39,7 @@ async function sendMessage(to, text) {
           'Content-Type': 'application/json',
         },
       }
-    );
+    ));
   } catch (err) {
     console.error('WhatsApp send error:', err.response?.data || err.message);
   }
@@ -26,7 +47,7 @@ async function sendMessage(to, text) {
 
 async function sendButtonMessage(to, body, buttons) {
   try {
-    await axios.post(
+    await callMetaWithRetry(() => axios.post(
       BASE_URL,
       {
         messaging_product: 'whatsapp',
@@ -49,7 +70,7 @@ async function sendButtonMessage(to, body, buttons) {
           'Content-Type': 'application/json',
         },
       }
-    );
+    ));
   } catch (err) {
     // Interactive messages not supported on test numbers — fall back to text
     console.error('Button send failed, using text fallback:', err.response?.data?.error?.message || err.message);
@@ -61,7 +82,7 @@ async function sendButtonMessage(to, body, buttons) {
 // sections: [{ title: string, rows: [{ id, title, description? }] }]
 async function sendListMessage(to, body, buttonLabel, sections) {
   try {
-    await axios.post(
+    await callMetaWithRetry(() => axios.post(
       BASE_URL,
       {
         messaging_product: 'whatsapp',
@@ -89,7 +110,7 @@ async function sendListMessage(to, body, buttonLabel, sections) {
           'Content-Type': 'application/json',
         },
       }
-    );
+    ));
   } catch (err) {
     // Fall back to plain text if list messages aren't supported
     console.error('List send failed, using text fallback:', err.response?.data?.error?.message || err.message);
