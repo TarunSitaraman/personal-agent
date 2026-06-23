@@ -10,7 +10,7 @@ Blu is a WhatsApp-native personal AI agent built for Tarun. It is not a todo app
 WhatsApp (Meta Cloud API)
         │
         ▼
-Node.js + Express server
+Vercel Serverless Functions (api/)
         │
         ├── Intent Prefilter (regex — no LLM cost)
         │         │
@@ -28,13 +28,14 @@ Node.js + Express server
         │     ├── GitHub API — open PRs, issues, recent commits (SmartResQ repo)
         │     └── Serper API — web search with LLM synthesis + knowledge caching
         │
-        └── Scheduler (node-cron, IST)
+        └── Scheduler (cron-job.org → Vercel HTTP endpoints, IST)
               ├── 9:00 AM Mon–Fri  — Hexaware morning brief + stale todo alert
               ├── 6:00 PM daily    — Mode transition brief (Hexaware → SmartResQ)
               ├── 9:00 PM daily    — Proactive nudge (goal check / automation suggestion)
               ├── 10:00 PM daily   — One Big Thing goal follow-up
               ├── Sun 10:00 AM     — Tech Twitter Pulse (web-search-driven)
-              └── Sun 8:00 PM      — Weekly review + conversation trim
+              ├── Sun 8:00 PM      — Weekly review + conversation trim
+              └── Every minute     — Reminder + event 15-min heads-up check
 ```
 
 ---
@@ -191,10 +192,22 @@ A rolling context summary is also refreshed at the same interval: the last 40 me
 
 ```
 personal-agent/
+├── api/                          # Vercel serverless entry points
+│   ├── webhook.js                # WhatsApp webhook (GET verify + POST messages)
+│   ├── health.js                 # Health check
+│   ├── chat.js                   # Mobile app chat endpoint
+│   ├── todos.js                  # Todos REST API
+│   └── cron/
+│       ├── morning.js            # 9am brief + stale alert
+│       ├── evening.js            # 6pm mode transition brief
+│       ├── nudge.js              # 9pm proactive nudge
+│       ├── goal.js               # 10pm goal follow-up
+│       ├── weekly.js             # Sunday weekly review
+│       ├── reminder.js           # Per-minute reminder + event check
+│       └── pulse.js              # Sunday tech pulse
 ├── src/
-│   ├── server.js                 # Express app, routes, keep-alive ping
 │   ├── agent/
-│   │   ├── brain.js              # LLM routing, intent handling, action execution
+│   │   ├── brain.js              # LLM routing, intent handling, action execution (shared by all api/ functions)
 │   │   ├── memory.js             # All Postgres queries
 │   │   ├── context.js            # Mode detection + override
 │   │   └── intents.js            # Action name constants
@@ -219,8 +232,7 @@ personal-agent/
 ├── mobile/                       # Expo companion app assets
 ├── CLAUDE.md                     # Project context for Claude Code
 ├── PLAN.md                       # Original implementation plan
-├── fly.toml                      # Fly.io deployment config
-├── railway.json                  # Railway deployment config
+├── vercel.json                   # Vercel function config (maxDuration: 60s)
 └── package.json
 ```
 
@@ -264,4 +276,5 @@ APP_URL=                 # Public URL of the deployed server (for keep-alive pin
 | Push | Expo Push Notification API |
 | Search | Serper (Google Search API) |
 | GitHub | REST API v3 |
-| Deployment | Render / Fly.io / Railway (Node.js server, always-on) |
+| Deployment | Vercel (serverless, free, no card required) |
+| Scheduling | cron-job.org (free external cron → Vercel HTTP endpoints) |
