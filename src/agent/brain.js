@@ -444,23 +444,23 @@ function filterKnowledge(knowledge, userMessage) {
 // ctx: null = all contexts, 'mode' = current mode
 const PREFILTER_RULES = [
   {
-    match: /\b(todos?|tasks?|pending|what.*(do i have|should i do)|my list|show.*todos?)\b/i,
+    match: /^(what's pending|my todos|show todos|list todos|pending tasks|todos|tasks|what do i have|what should i do|my list)$/i,
     action: 'list_todos', ctx: null,
   },
   {
-    match: /\b(notes?|what.*(did i (save|note)|have i noted)|show.*notes?|my notes?)\b/i,
+    match: /^(my notes|show notes|list notes|notes|what did i save|what did i note|what have i noted)$/i,
     action: 'list_notes', ctx: null,
   },
   {
-    match: /\b(learnings?|what.*(did i learn|have i learned)|show.*learning|my learnings?)\b/i,
+    match: /^(my learnings|show learnings|list learnings|learnings|what have i learned|what did i learn)$/i,
     action: 'list_learnings', ctx: null,
   },
   {
-    match: /\b(events?|calendar|schedule|what.*(do i have.*today|upcoming|on my calendar))\b/i,
+    match: /^(my events|calendar|schedule|what's on my calendar|upcoming events|upcoming|events)$/i,
     action: 'list_events', ctx: null,
   },
   {
-    match: /\b(what.*mode|current mode|which mode|mode.*now)\b/i,
+    match: /^(what mode|current mode|which mode|mode now)$/i,
     action: '_mode', ctx: null,
   },
   // Explicit completion — "done: X", "finished X", "done with X"
