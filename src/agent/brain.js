@@ -8,6 +8,7 @@ const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
+const OLLAMA_URL     = "http://localhost:11434/api/chat";
 
 // ── Model registry ────────────────────────────────────────────────────────────
 // Ordered by preference. Groq is primary — fast, reliable, already keyed.
@@ -279,6 +280,27 @@ async function callGeminiModel(modelId, messages, jsonMode) {
   return text;
 }
 
+async function callOllamaModel(messages, jsonMode) {
+  const body = {
+    model: "llama3:8b",
+    messages,
+    stream: false,
+    options: {
+      temperature: 0.1
+    }
+  };
+  if (jsonMode) {
+    body.format = "json";
+  }
+  const r = await axios.post(OLLAMA_URL, body, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 10000,
+  });
+  const content = r.data?.message?.content;
+  if (!content?.trim()) throw new Error('Empty Ollama response');
+  return content;
+}
+
 async function streamFromUrl(url, headers, body, onToken) {
   const response = await axios.post(url, { ...body, stream: true }, {
     headers,
@@ -428,6 +450,13 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
         }
       }
     }
+  } else if (routeType === 'background') {
+    try {
+      const r = await callOllamaModel(messages, jsonMode);
+      return r;
+    } catch (e) {
+      console.warn('[LLM] Local Ollama failed for background operation, falling back to APIs:', e.message);
+    }
   }
 
   // ── Round 1: Groq primary + secondary in parallel (fast, reliable) ──────
@@ -498,6 +527,14 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
     } catch (e) {
       console.error('[LLM] Final Groq retry failed:', e.message);
     }
+  }
+
+  // ── Ultimate Fallback: Local Ollama model ─────────────────────────────────
+  try {
+    const r = await callOllamaModel(messages, jsonMode);
+    return r;
+  } catch (e) {
+    console.error('[LLM] Ollama ultimate fallback failed:', e.message);
   }
 
   throw new Error('All LLMs unavailable');
@@ -1451,7 +1488,7 @@ Stats: ${stats.hexTodos.length} Hexaware todos, ${stats.srqTodos.length} SmartRe
 
 Return ONLY a JSON array: ["insight 1", "insight 2"]`;
 
-  const raw = await callLLM([{ role: "user", content: prompt }]);
+  const raw = await callLLM([{ role: "user", content: prompt }], false, 'background');
   try {
     const match = raw.match(/\[[\s\S]*\]/);
     const insights = JSON.parse(match[0]);
@@ -1482,7 +1519,7 @@ Data:
 If nothing truly valuable to say, reply SKIP.
 Tone: Guardian-like, efficiency-obsessed, direct. Under 5 lines. No markdown except *bold*.`;
 
-  const result = await callLLM([{ role: "user", content: prompt }]);
+  const result = await callLLM([{ role: "user", content: prompt }], false, 'background');
   return result.trim() === 'SKIP' ? null : result;
 }
 
@@ -1529,14 +1566,14 @@ Data:
 Tone: Transition-aware, motivating, conceptual. Plain text, no markdown except *bold*. Under 8 lines.`;
   }
 
-  return await callLLM([{ role: "user", content: prompt }]);
+  return await callLLM([{ role: "user", content: prompt }], false, 'background');
 }
 
 async function autoTagNote(noteId, content) {
   const raw = await callLLM([{
     role: 'user',
     content: `Extract 3-5 short keyword tags from this note. Return ONLY a JSON array of lowercase strings.\nNote: "${content}"\nExample output: ["tag1", "tag2", "tag3"]`,
-  }]);
+  }], true, 'background');
   try {
     const match = raw.match(/\[[\s\S]*?\]/);
     const tags = JSON.parse(match[0]);
@@ -1594,7 +1631,7 @@ Recent commits: ${recentCommits.slice(0, 3).join(', ') || 'none'}
 
 Keep it honest, practical, under 15 lines. Plain text only.`;
 
-  return await callLLM([{ role: 'user', content: prompt }]);
+  return await callLLM([{ role: 'user', content: prompt }], false, 'background');
 }
 
 async function generateTechPulse() {
@@ -1608,7 +1645,7 @@ ${knowledge.join('\n')}
 
 Return ONLY a comma-separated list of keywords. If nothing found, return "AI Agents, GenAI, Web Dev".`;
   
-  const interests = await callLLM([{ role: 'user', content: interestPrompt }]);
+  const interests = await callLLM([{ role: 'user', content: interestPrompt }], false, 'background');
   
   // 2. Search for latest updates using Serper
   const query = `latest tech trends and top tweets about ${interests} today`;
@@ -1626,7 +1663,7 @@ ${snippets}
 
 Tone: Enthusiastic, high-signal, concise. Use *bold* for topics. Under 10 lines. Plain text only.`;
 
-  return await callLLM([{ role: 'user', content: synthesisPrompt }]);
+  return await callLLM([{ role: 'user', content: synthesisPrompt }], false, 'background');
 }
 
 async function detectContradiction(newFact, embedding) {
@@ -1668,7 +1705,7 @@ Return a JSON array of objects representing the entities, where each object has:
 Return ONLY the raw JSON array (e.g. [{"name": "Rohan", "type": "person"}]), nothing else.`;
 
   try {
-    const raw = await callLLM([{ role: 'user', content: prompt }], true);
+    const raw = await callLLM([{ role: 'user', content: prompt }], true, 'background');
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
     const entities = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
     if (Array.isArray(entities)) {
@@ -1698,7 +1735,7 @@ Note Content: "${note.content}"
 
 Output only the single summarized factual statement, nothing else.`;
         
-        const summaryFact = await callLLM([{ role: 'user', content: prompt }]);
+        const summaryFact = await callLLM([{ role: 'user', content: prompt }], false, 'background');
         const fact = summaryFact.trim();
         if (fact) {
           const embedding = await getEmbedding(fact);
