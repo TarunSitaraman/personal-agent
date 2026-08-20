@@ -15,9 +15,9 @@ module.exports = async (req, res) => {
   const results = [];
 
   try {
-    const standup = await generateStandup('hexaware');
+    const standup = await generateStandup("generic");
     await sendMessage(myNumber, standup);
-    await sendBriefPush('Morning Brief', 'Your Hexaware day starts now. Tap to see context.');
+    await sendBriefPush('Morning Brief', 'Your day starts now. Tap to see context.');
     results.push('morning brief sent');
   } catch (err) {
     console.error('Morning brief error:', err.message);

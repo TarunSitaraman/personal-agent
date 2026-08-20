@@ -20,7 +20,7 @@ export async function getTodos(context = null) {
   if (!r.ok) throw new Error('Failed to fetch todos');
   const d = await r.json();
   if (Array.isArray(d)) return d;
-  return [...(d.hexaware || []), ...(d.smartresq || []), ...(d.personal || [])];
+  return d.pending || [];
 }
 
 export async function completeTodo(content) {
@@ -80,14 +80,8 @@ export async function registerPushToken(token) {
 }
 
 export const CTX_COLOR = {
-  hexaware: '#4f8ef7',
-  smartresq: '#34d399',
-  personal: '#a78bfa',
-};
-
-export const MODE_COLOR = {
-  hexaware: '#4f8ef7',
-  smartresq: '#34d399',
+  default: '#4f8ef7',
+  fallback: '#4f8ef7',
   personal: '#a78bfa',
 };
 

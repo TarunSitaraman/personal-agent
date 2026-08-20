@@ -26,8 +26,8 @@ export default function HomeScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const acc = data ? CTX_COLOR[data.mode] || C.hex : C.hex;
-  const allTodos = data ? [...(data.todos.hexaware || []), ...(data.todos.smartresq || [])] : [];
+  const acc = C.hex;
+  const allTodos = data?.todos?.pending || [];
 
   if (loading) {
     return (
@@ -42,9 +42,7 @@ export default function HomeScreen() {
       {/* Header */}
       <View style={s.header}>
         <Text style={s.logo}>blu<Text style={{ color: acc }}>.</Text></Text>
-        <View style={[s.modePill, { backgroundColor: acc + '20', borderColor: acc + '40' }]}>
-          <Text style={[s.modeText, { color: acc }]}>{data?.modeLabel?.toUpperCase()}</Text>
-        </View>
+        
       </View>
 
       <ScrollView
@@ -58,12 +56,7 @@ export default function HomeScreen() {
           <StatCard value={data?.issues ?? '—'} label="Issues" color={C.srq} />
         </View>
 
-        {/* Mode */}
-        <View style={s.modeCard}>
-          <Text style={s.modeCardLabel}>CURRENT MODE</Text>
-          <Text style={[s.modeCardName, { color: acc }]}>{data?.modeLabel}</Text>
-          <Text style={s.modeCardDesc}>{data?.modeDesc}</Text>
-        </View>
+        
 
         {/* Todos */}
         <SectionHeader title="Open Todos" count={allTodos.length} />
@@ -144,10 +137,8 @@ const s = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.line,
   },
   logo: { fontSize: 24, ...FONT.black, color: C.t1, letterSpacing: -1 },
-  modePill: {
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1,
-  },
-  modeText: { fontSize: 10, ...FONT.bold, letterSpacing: 1 },
+  
+  
   statsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 },
   statCard: {
     flex: 1, backgroundColor: C.s1, borderWidth: 1, borderColor: C.line,
@@ -155,13 +146,10 @@ const s = StyleSheet.create({
   },
   statN: { fontSize: 30, ...FONT.black, letterSpacing: -1, lineHeight: 34 },
   statL: { fontSize: 9, ...FONT.bold, color: C.t2, letterSpacing: 1, marginTop: 5, textTransform: 'uppercase' },
-  modeCard: {
-    marginHorizontal: 20, marginVertical: 12, backgroundColor: C.s1,
-    borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 16,
-  },
-  modeCardLabel: { fontSize: 9, ...FONT.bold, color: C.t3, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 },
-  modeCardName: { fontSize: 20, ...FONT.black, letterSpacing: -0.5, marginBottom: 4 },
-  modeCardDesc: { fontSize: 12, ...FONT.regular, color: C.t2, lineHeight: 18 },
+  
+  
+  
+  
   secHead: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8,

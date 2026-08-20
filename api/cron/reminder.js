@@ -8,8 +8,10 @@ function auth(req) {
   return secret === process.env.CRON_SECRET;
 }
 
-// In-memory set not useful across serverless invocations — use a short TTL in DB instead.
-// For event reminders we check a 2-minute window to avoid double-firing on each invocation.
+// Dedup lives in the DB: getEventsStartingSoon and getDueTodoReminders both claim the rows
+// they return, so this endpoint is safe to call at any interval and needs no in-process state.
+// Call it every 15 min, not every minute — polling faster than Neon's autosuspend window keeps
+// the compute endpoint hot 24/7 and burns the whole monthly compute quota by mid-month.
 
 module.exports = async (req, res) => {
   if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
@@ -32,15 +34,17 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 14–16 min window — cron-job.org calls this every minute so a 2-min window avoids gaps
-    const upcoming = await memory.getEventsStartingSoon(14, 16);
+    // Fire once the event is inside its lead window. Serverless can't hold timers, so
+    // reminders here land within one call interval rather than to the minute.
+    const upcoming = await memory.getEventsStartingSoon(0, memory.EVENT_LEAD_MINUTES);
     for (const ev of upcoming) {
       const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
-      await sendButtonMessage(myNumber, `Starting in 15 min: *${ev.title}* at ${timeStr}`, [
+      const minsAway = Math.max(1, Math.round((new Date(ev.start_at) - Date.now()) / 60000));
+      await sendButtonMessage(myNumber, `Starting in ${minsAway} min: *${ev.title}* at ${timeStr}`, [
         { id: `evnoted_${ev.id}`, title: 'Noted' },
         { id: `evsnooze_${ev.id}`, title: '+15 min' },
       ]);
-      await sendNudgePush(`Starting in 15 min: ${ev.title} at ${timeStr}`);
+      await sendNudgePush(`Starting in ${minsAway} min: ${ev.title} at ${timeStr}`);
       fired.push(`event:${ev.id}`);
     }
   } catch (err) {

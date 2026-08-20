@@ -2,7 +2,6 @@ const express = require('express');
 const axios = require('axios');
 const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
-const { getCurrentMode, getModeDescription } = require('../agent/context');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
 
@@ -59,9 +58,7 @@ router.get('/api/todos', async (req, res) => {
   try {
     const todos = await getPendingTodos();
     res.json({
-      hexaware: todos.filter(t => t.context === 'hexaware'),
-      smartresq: todos.filter(t => t.context === 'smartresq'),
-      personal: todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq'),
+      pending: todos,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -204,20 +201,12 @@ router.get('/stream', (req, res) => {
   req.on('close', () => { clearInterval(ping); hub.removeClient(res); });
 });
 
-const MODE_CONFIG = {
-  hexaware: { label: 'Hexaware', color: '#4f8ef7', emoji: '💼' },
-  smartresq: { label: 'SmartResQ', color: '#34d399', emoji: '🚑' },
-  personal: { label: 'Personal', color: '#a78bfa', emoji: '🌙' },
-};
-
 router.get('/', async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) {
     return res.status(401).send('Unauthorized');
   }
 
   try {
-    const mode = getCurrentMode();
-    const modeConf = MODE_CONFIG[mode] || MODE_CONFIG.personal;
 
     const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
     const monthStart = new Date(nowIST.getFullYear(), nowIST.getMonth(), 1);
@@ -236,9 +225,9 @@ router.get('/', async (req, res) => {
       getRecentHistory(30),
     ]);
 
-    const hexTodos = allTodos.filter(t => t.context === 'hexaware');
-    const srqTodos = allTodos.filter(t => t.context === 'smartresq');
-    const personalTodos = allTodos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
+    const pendingTodos = allTodos;
+    
+    
 
     const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
 
@@ -288,7 +277,7 @@ router.get('/', async (req, res) => {
 
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const CTX_DOT     = { hexaware: '#4f8ef7', smartresq: '#34d399' };
+    const CTX_DOT = {};
 
     // Build event map: day (1-31) → sorted events[]
     const monthEventMap = {};
@@ -387,7 +376,7 @@ router.get('/', async (req, res) => {
   --my: 0;
   --mxp: 0;
   --myp: 0;
-  --hue-base: ${mode === 'hexaware' ? 220 : mode === 'smartresq' ? 152 : 265};
+  --hue-base: 220;
   --spot-hue: calc(var(--hue-base) + var(--mxp) * 60);
 }
 
@@ -420,16 +409,6 @@ header {
 }
 .logo em { color: var(--acc); font-style: normal; }
 .hdr-right { display: flex; align-items: center; gap: 16px; }
-.mode-badge {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--acc);
-  background: color-mix(in srgb, var(--acc) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--acc) 25%, transparent);
-  padding: 4px 12px;
-  border-radius: 4px;
-}
 .hdr-time { font-size: 13px; color: var(--t2); }
 
 /* ── LAYOUT ───────────────────────────────── */
@@ -485,18 +464,7 @@ header {
 }
 .stat-l { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t2); margin-top: 10px; }
 
-/* ── MODE ─────────────────────────────────── */
-.mode-block { }
-.mode-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t3); margin-bottom: 10px; }
-.mode-name {
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: var(--acc);
-  line-height: 1;
-  margin-bottom: 10px;
-}
-.mode-desc { font-size: 14px; color: var(--t2); line-height: 1.6; }
+
 
 /* ── SECTION ──────────────────────────────── */
 .section { }
@@ -736,7 +704,7 @@ header {
 <header>
   <div class="logo">blu<em>.</em></div>
   <div class="hdr-right">
-    <span class="mode-badge">${modeConf.label}</span>
+    
     <span class="hdr-time">${now} IST</span>
   </div>
 </header>
@@ -761,11 +729,6 @@ header {
       </div>
     </div>
 
-    <div class="mode-block">
-      <div class="mode-label">Current mode</div>
-      <div class="mode-name">${modeConf.label}</div>
-      <div class="mode-desc">${getModeDescription(mode)}</div>
-    </div>
 
     <div class="section">
       <div class="sec-head">
@@ -773,9 +736,7 @@ header {
         <span class="sec-count" id="todos-count">${allTodos.length}</span>
       </div>
       <div id="sidebar-todos">
-        ${hexTodos.length ? renderTodoSection(hexTodos, 'Hexaware', '#4f8ef7') : ''}
-        ${srqTodos.length ? renderTodoSection(srqTodos, 'SmartResQ', '#34d399') : ''}
-        ${personalTodos.length ? renderTodoSection(personalTodos, 'Personal', '#a78bfa') : ''}
+        ${allTodos.length ? renderTodoSection(allTodos, 'Pending Tasks', '#4f8ef7') : ''}
         ${!allTodos.length ? '<p class="nil">nothing open — all clear</p>' : ''}
       </div>
     </div>
@@ -867,7 +828,7 @@ header {
   // Monthly calendar popup
   var MAP = window.MAP = JSON.parse(atob('${Buffer.from(monthMapJson).toString('base64')}'));
   var MSHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  var CTX_COLOR = { hexaware: '#4f8ef7', smartresq: '#34d399' };
+  var CTX_COLOR = {};
   var popup = document.getElementById('day-popup');
   var activeCell = null;
 
@@ -936,11 +897,10 @@ header {
 
 // ── Mobile API ─────────────────────────────────────────────────
 
-// GET /dashboard/api/status  — mode, stats, upcoming events (home screen)
+// GET /dashboard/api/status  — stats, upcoming events (home screen)
 router.get('/api/status', async (req, res) => {
   if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const mode = getCurrentMode();
     const [stats, openPRs, openIssues, upcoming] = await Promise.all([
       getSummaryStats(),
       getOpenPRs(),
@@ -948,13 +908,11 @@ router.get('/api/status', async (req, res) => {
       listEvents(null, 5),
     ]);
     res.json({
-      mode,
-      modeLabel: { hexaware: 'Hexaware', smartresq: 'SmartResQ', personal: 'Personal' }[mode],
-      modeDesc: getModeDescription(mode),
+      success: true,
+      stats,
       todos: {
-        total: stats.hexTodos.length + stats.srqTodos.length,
-        hexaware: stats.hexTodos,
-        smartresq: stats.srqTodos,
+        total: stats.pendingTodos.length,
+        pending: stats.pendingTodos
       },
       prs: openPRs.length,
       issues: openIssues.length,
@@ -1089,7 +1047,7 @@ function escHtml(str) {
 }
 
 function ctxColor(ctx) {
-  if (ctx === 'hexaware') return '#4f8ef7';
+  
   if (ctx === 'smartresq') return '#34d399';
   return '#a78bfa';
 }

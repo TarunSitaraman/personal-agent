@@ -182,6 +182,9 @@ async function processMessage(msgRow) {
     // Check if we can record token usage (we will inject metadata into processed fields if returned, handled during markMessageCompleted)
     await memory.markMessageCompleted(id);
     hub.notify();
+
+    // A message may have just set a reminder for sooner than the next sweep — arm it now.
+    require('../scheduler/timers').refresh();
   } catch (err) {
     console.error(`[QueueProcessor] Error processing message ${id}:`, err.message);
     await memory.markMessageFailed(id, err.message);

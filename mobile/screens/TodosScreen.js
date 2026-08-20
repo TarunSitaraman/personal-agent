@@ -9,7 +9,7 @@ import { C, FONT } from '../theme';
 
 const CONTEXTS = [
   { key: 'all', label: 'All' },
-  { key: 'hexaware', label: 'Hexaware' },
+  { key: "all", label: "All Tasks" },
   { key: 'smartresq', label: 'SmartResQ' },
   { key: 'personal', label: 'Personal' },
 ];

@@ -74,7 +74,7 @@
     var countEl   = document.getElementById('todos-count');
     if (!container) return;
 
-    var total = data.hexaware.length + data.smartresq.length + data.personal.length;
+    var total = (data.pending || []).length;
     if (countEl) countEl.textContent = total;
 
     if (!total) {
@@ -83,9 +83,7 @@
     }
 
     var groups = [].concat(
-      renderGroup(data.hexaware, 'Hexaware', '#4f8ef7'),
-      renderGroup(data.smartresq, 'SmartResQ', '#34d399'),
-      renderGroup(data.personal, 'Personal', '#a78bfa')
+      renderGroup(data.pending, 'Pending', '#4f8ef7')
     );
 
     container.innerHTML = '';
@@ -106,7 +104,7 @@
       .catch(function () {});
   };
 
-  var CTX_COLOR = { hexaware: '#4f8ef7', smartresq: '#34d399' };
+  var CTX_COLOR = { default: '#4f8ef7' };
 
   window.refreshCalendar = function () {
     fetch('/dashboard/api/calendar?token=' + token)

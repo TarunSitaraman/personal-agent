@@ -1,28 +1,28 @@
 const cron = require('node-cron');
-const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview } = require('../agent/brain');
+const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview, generateTechPulse } = require('../agent/brain');
 const { sendMessage, sendButtonMessage, sendListMessage } = require('../whatsapp/send');
 const { sendReminderPush, sendBriefPush, sendNudgePush } = require('../push/push');
 const memory = require('../agent/memory');
+const timers = require('./timers');
 
 function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
-  const remindedEventIds = new Set();
 
-  // 9:00 AM IST — Morning brief (Hexaware standup)
+  // 9:00 AM IST — Morning brief (Morning Brief)
   cron.schedule('0 9 * * 1-5', async () => {
     try {
-      const standup = await generateStandup('hexaware');
+      const standup = await generateStandup("generic");
       await sendMessage(myNumber, standup);
-      await sendBriefPush('Morning Brief', 'Your Hexaware day starts now. Tap to see context.');
+      await sendBriefPush('Morning Brief', 'Your day starts now. Tap to see context.');
     } catch (err) {
       console.error('Morning brief error:', err.message);
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // 6:00 PM IST — Mode transition: Hexaware → SmartResQ
+  // 6:00 PM IST — Evening Brief
   cron.schedule('0 18 * * *', async () => {
     try {
-      const standup = await generateStandup('smartresq');
+      const standup = await generateStandup("generic");
       await sendMessage(myNumber, standup);
       // Follow up with a goal-setting nudge after the brief arrives
       setTimeout(async () => {
@@ -32,12 +32,17 @@ function startScheduler() {
         ]);
       }, 1500);
     } catch (err) {
-      console.error('Mode transition brief error:', err.message);
+      console.error('Evening brief error:', err.message);
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // Every minute — check queue, due todo reminders + events starting in ~15 min
-  cron.schedule('* * * * *', async () => {
+  // Every 15 min, 06:00–23:59 IST — queue retry sweep, catch-up on missed reminders, and
+  // re-arm the precise timers that actually deliver on time (see scheduler/timers.js).
+  // Deliberately NOT every minute: sub-autosuspend polling keeps the Neon compute endpoint hot
+  // 24/7 (~730 compute-hours/month against a ~192-hour free-tier budget), which exhausts the
+  // quota mid-month and makes every DB call fail. Inbound messages are already processed
+  // immediately by the webhook, so this sweep never needs to be the fast path.
+  cron.schedule('*/15 6-23 * * *', async () => {
     // 1. Process message queue
     try {
       const { processQueue } = require('../agent/queueProcessor');
@@ -60,21 +65,25 @@ function startScheduler() {
     }
 
     try {
-      const upcoming = await memory.getEventsStartingSoon(14, 16);
+      // Catch-up only: events whose 15-min mark already passed (missed while the process was
+      // down). Anything still in the future is delivered exactly on time by scheduler/timers.
+      const upcoming = await memory.getEventsStartingSoon(0, memory.EVENT_LEAD_MINUTES);
       for (const ev of upcoming) {
-        if (remindedEventIds.has(ev.id)) continue;
-        remindedEventIds.add(ev.id);
         const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
-        await sendButtonMessage(myNumber, `Starting in 15 min: *${ev.title}* at ${timeStr}`, [
+        const minsAway = Math.max(1, Math.round((new Date(ev.start_at) - Date.now()) / 60000));
+        await sendButtonMessage(myNumber, `Starting in ${minsAway} min: *${ev.title}* at ${timeStr}`, [
           { id: `evnoted_${ev.id}`, title: 'Noted' },
           { id: `evsnooze_${ev.id}`, title: '+15 min' },
         ]);
-        await sendNudgePush(`Starting in 15 min: ${ev.title} at ${timeStr}`);
+        await sendNudgePush(`Starting in ${minsAway} min: ${ev.title} at ${timeStr}`);
       }
     } catch (err) {
       console.error('Event reminder error:', err.message);
     }
-  });
+
+    // Arm exact-time delivery for everything due before the next sweep.
+    await timers.refresh();
+  }, { timezone: 'Asia/Kolkata' });
 
   // Midnight daily — run memory decay check + auto-summarise old notes (Item 8 & 13)
   cron.schedule('0 0 * * *', async () => {
@@ -157,7 +166,11 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  console.log('Scheduler started — morning (10am), evening (7pm), Tech Pulse (Sun 10am), Weekly Review (Sun 8pm), and Goal Nudge (10pm)');
+  // Arm timers for anything already due within the horizon, so a restart doesn't wait
+  // for the first sweep.
+  timers.refresh();
+
+  console.log('Scheduler started — morning brief (9am Mon-Fri), evening brief (6pm), reminder sweep (every 15min, 6am-midnight), Tech Pulse (Sun 10am), Weekly Review (Sun 8pm), Goal Nudge (10pm)');
 }
 
 module.exports = { startScheduler };

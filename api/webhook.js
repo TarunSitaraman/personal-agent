@@ -154,7 +154,9 @@ module.exports = async (req, res) => {
     res.status(200).end();
   } catch (err) {
     console.error('Webhook error:', err.message);
-    try { await sendMessage(process.env.MY_WHATSAPP_NUMBER, `Error: ${err.message}`); } catch {}
+    // Never echo raw exception text to WhatsApp — upstream failures (DB quota, provider
+    // outages) leak infrastructure detail and spam the chat on every retry.
+    try { await sendMessage(process.env.MY_WHATSAPP_NUMBER, 'Something went wrong on my end. It\'s logged — try again in a bit.'); } catch {}
     res.status(200).end(); // always 200 to WhatsApp
   }
 };

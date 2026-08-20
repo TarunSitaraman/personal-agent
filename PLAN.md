@@ -1,7 +1,7 @@
 # Personal Agent — Full Implementation Plan
 
 ## Overview
-Build a WhatsApp bot that acts as a personal AI agent for Tarun. It knows his three life contexts (Hexaware intern, SmartResQ founder, GenAI learner), captures notes/todos/learnings on demand, and proactively briefs him at mode transitions.
+Build a WhatsApp bot that acts as a personal AI agent for Tarun. It knows his three life contexts (Work intern, SmartResQ founder, GenAI learner), captures notes/todos/learnings on demand, and proactively briefs him at context transitions.
 
 **This document is self-contained. Implement everything described here exactly.**
 
@@ -70,7 +70,7 @@ Run this SQL in the Neon SQL editor to create all tables:
 create table todos (
   id uuid primary key default gen_random_uuid(),
   content text not null,
-  context text check (context in ('hexaware', 'smartresq', 'learning', 'personal')),
+  context text check (context in ('work', 'smartresq', 'learning', 'personal')),
   done boolean default false,
   created_at timestamptz default now(),
   completed_at timestamptz
@@ -80,7 +80,7 @@ create table todos (
 create table notes (
   id uuid primary key default gen_random_uuid(),
   content text not null,
-  context text check (context in ('hexaware', 'smartresq', 'learning', 'personal')),
+  context text check (context in ('work', 'smartresq', 'learning', 'personal')),
   tags text[] default '{}',
   created_at timestamptz default now()
 );
@@ -99,7 +99,7 @@ create table learnings (
 -- Conversation history (short-term memory, last 20 messages used)
 create table conversations (
   id uuid primary key default gen_random_uuid(),
-  role text not null check (role in ('user', 'model')),
+  role text not null check (role in ('user', 'contextl')),
   content text not null,
   created_at timestamptz default now()
 );
@@ -177,11 +177,11 @@ const router = express.Router();
 
 // Webhook verification (Meta handshake)
 router.get('/', (req, res) => {
-  const mode = req.query['hub.mode'];
+  const context = req.query['hub.context'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+  if (context === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
   res.sendStatus(403);
@@ -228,25 +228,25 @@ module.exports = { router };
 ### src/agent/context.js
 
 ```javascript
-function getCurrentMode() {
+function getCurrentcontext() {
   // All times are IST (TZ=Asia/Kolkata set in env)
   const hour = new Date().getHours();
 
-  if (hour >= 10 && hour < 18) return 'hexaware';
+  if (hour >= 10 && hour < 18) return 'work';
   if (hour >= 18 && hour < 23) return 'smartresq';
   return 'personal';
 }
 
-function getModeDescription(mode) {
+function getcontextDescription(context) {
   const descriptions = {
-    hexaware: 'Tarun is in Hexaware intern mode (10am–6pm). Focus: intern work tasks and GenAI learning capture.',
-    smartresq: 'Tarun is in SmartResQ mode (6pm–11pm). Focus: startup work, intern PR reviews, product decisions.',
-    personal: 'Tarun is in personal/rest mode (late night or early morning).',
+    work: 'Tarun is in Work intern context (10am–6pm). Focus: intern work tasks and GenAI learning capture.',
+    smartresq: 'Tarun is in SmartResQ context (6pm–11pm). Focus: startup work, intern PR reviews, product decisions.',
+    personal: 'Tarun is in personal/rest context (late night or early morning).',
   };
-  return descriptions[mode];
+  return descriptions[context];
 }
 
-module.exports = { getCurrentMode, getModeDescription };
+module.exports = { getCurrentcontext, getcontextDescription };
 ```
 
 ---
@@ -328,7 +328,7 @@ async function getRecentHistory(limit = 20) {
 
 async function getSummaryStats() {
   const [hexTodos, srqTodos, unreviewed] = await Promise.all([
-    getPendingTodos('hexaware'),
+    getPendingTodos('work'),
     getPendingTodos('smartresq'),
     getUnreviewedLearnings(),
   ]);
@@ -371,7 +371,7 @@ module.exports = { ACTIONS };
 
 ```javascript
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { getCurrentMode, getModeDescription } = require('./context');
+const { getCurrentcontext, getcontextDescription } = require('./context');
 const memory = require('./memory');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -379,7 +379,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const SYSTEM_PROMPT = `You are Jarvis, Tarun's personal AI agent accessible via WhatsApp.
 
 About Tarun:
-- Intern at Hexaware (10am–6pm weekdays)
+- Intern at Work (10am–6pm weekdays)
 - Founder/tech lead of SmartResQ — a healthcare emergency response startup (works evenings)
 - Learning GenAI and agentic AI actively
 - Wants low-friction capture and proactive intelligence
@@ -387,7 +387,7 @@ About Tarun:
 Your job:
 1. Respond naturally and concisely (WhatsApp messages, not essays)
 2. Detect intent from the message and take the right action
-3. Always be context-aware — know which mode Tarun is in
+3. Always be context-aware — know which context Tarun is in
 
 Intent detection rules:
 - If Tarun says "remember to X", "todo: X", "add task X", "remind me to X" → ADD_TODO
@@ -406,37 +406,37 @@ CRITICAL: Always respond with valid JSON in this exact format:
     "content": "extracted content if action requires it",
     "topic": "topic if learning",
     "source": "source if mentioned",
-    "context": "hexaware | smartresq | learning | personal"
+    "context": "work | smartresq | learning | personal"
   }
 }
 
 Keep replies short. Use line breaks. No markdown formatting (WhatsApp doesn't render it well). Use plain text only.`;
 
 async function handleIncoming(userMessage) {
-  const mode = getCurrentMode();
-  const modeDesc = getModeDescription(mode);
+  const context = getCurrentcontext();
+  const contextDesc = getcontextDescription(context);
   const history = await memory.getRecentHistory(20);
   const stats = await memory.getSummaryStats();
 
   const contextBlock = `
-Current mode: ${mode}
-${modeDesc}
+Current context: ${context}
+${contextDesc}
 
-Pending todos — Hexaware: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
+Pending todos — Work: ${stats.hexTodos.length}, SmartResQ: ${stats.srqTodos.length}
 Unreviewed learnings: ${stats.unreviewed.length}
 `;
 
   const historyParts = history.map(h => ({
-    role: h.role === 'user' ? 'user' : 'model',
+    role: h.role === 'user' ? 'user' : 'contextl',
     parts: [{ text: h.content }],
   }));
 
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash-exp',
+  const contextl = genAI.getGenerativecontextl({
+    contextl: 'gemini-2.0-flash-exp',
     systemInstruction: SYSTEM_PROMPT,
   });
 
-  const chat = model.startChat({ history: historyParts });
+  const chat = contextl.startChat({ history: historyParts });
 
   const fullMessage = `${contextBlock}\n\nUser message: ${userMessage}`;
   const result = await chat.sendMessage(fullMessage);
@@ -450,22 +450,22 @@ Unreviewed learnings: ${stats.unreviewed.length}
   } catch {
     // Fallback if JSON parsing fails
     await memory.saveMessage('user', userMessage);
-    await memory.saveMessage('model', raw);
+    await memory.saveMessage('contextl', raw);
     return raw;
   }
 
   // Execute the action
-  await executeAction(parsed.action, parsed.data, mode);
+  await executeAction(parsed.action, parsed.data, context);
 
   // Save to conversation history
   await memory.saveMessage('user', userMessage);
-  await memory.saveMessage('model', parsed.reply);
+  await memory.saveMessage('contextl', parsed.reply);
 
   return parsed.reply;
 }
 
-async function executeAction(action, data, currentMode) {
-  const context = data?.context || currentMode;
+async function executeAction(action, data, currentcontext) {
+  const context = data?.context || currentcontext;
 
   try {
     switch (action) {
@@ -491,25 +491,25 @@ async function executeAction(action, data, currentMode) {
 // Used by scheduler for proactive briefs (no history context, just stats)
 async function generateBrief(type) {
   const stats = await memory.getSummaryStats();
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+  const contextl = genAI.getGenerativecontextl({ contextl: 'gemini-2.0-flash-exp' });
 
   let prompt;
   if (type === 'morning') {
     prompt = `Generate a concise morning brief for Tarun in plain text (no markdown).
-He is starting his Hexaware intern day.
-Pending Hexaware todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
+He is starting his Work intern day.
+Pending Work todos: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
 Pending SmartResQ todos from last night: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
 Unreviewed learnings: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and practical.`;
   } else if (type === 'evening') {
-    prompt = `Generate a concise evening mode-switch message for Tarun in plain text (no markdown).
-He is switching from Hexaware to SmartResQ work.
+    prompt = `Generate a concise evening context-switch message for Tarun in plain text (no markdown).
+He is switching from Work to SmartResQ work.
 Pending SmartResQ todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
 Unreviewed learnings captured today: ${stats.unreviewed.length}
 Keep it under 5 lines. Be direct and motivating.`;
   }
 
-  const result = await model.generateContent(prompt);
+  const result = await contextl.generateContent(prompt);
   return result.response.text();
 }
 
@@ -528,7 +528,7 @@ const { sendMessage } = require('../whatsapp/send');
 function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
 
-  // 10:00 AM IST — morning brief (Hexaware mode start)
+  // 10:00 AM IST — morning brief (Work context start)
   cron.schedule('0 10 * * 1-5', async () => {
     try {
       const brief = await generateBrief('morning');
@@ -538,7 +538,7 @@ function startScheduler() {
     }
   }, { timezone: 'Asia/Kolkata' });
 
-  // 7:00 PM IST — evening switch (SmartResQ mode)
+  // 7:00 PM IST — evening switch (SmartResQ context)
   cron.schedule('0 19 * * *', async () => {
     try {
       const brief = await generateBrief('evening');
@@ -643,5 +643,5 @@ Send a message to your WhatsApp test number and verify the bot responds.
 - Tarun messages: "todo: follow up on BIZ-4 tonight" → saved to SmartResQ todos
 - Tarun messages: "learned about tool calling in Gemini today" → saved to learnings
 - Tarun messages: "what's pending for smartresq?" → bot lists open todos
-- 10am every weekday → bot sends morning brief with Hexaware todos + SmartResQ backlog
-- 7pm every day → bot sends evening brief switching to SmartResQ mode
+- 10am every weekday → bot sends morning brief with Work todos + SmartResQ backlog
+- 7pm every day → bot sends evening brief switching to SmartResQ context

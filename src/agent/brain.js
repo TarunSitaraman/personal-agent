@@ -1,5 +1,4 @@
 const axios = require("axios");
-const { getCurrentMode, getModeDescription, setModeOverride } = require("./context");
 const memory = require("./memory");
 const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { findConnections } = require("../integrations/connections");
@@ -13,14 +12,16 @@ const OLLAMA_URL     = "http://localhost:11434/api/chat";
 // ── Model registry ────────────────────────────────────────────────────────────
 // Ordered by preference. Groq is primary — fast, reliable, already keyed.
 // OpenRouter free tier has shed most of its free models as of mid-2025.
+// Verified against the live provider catalogues on 2026-08-21. The previous entries
+// (deepseek-r1-distill-llama-70b, llama-3.3-70b-versatile, llama-3.1-8b-instant,
+// openrouter/owl-alpha, llama-3.3-70b-instruct:free) had all been decommissioned or moved off
+// the free tier, leaving Gemini as the only working provider. Re-check if 4xx errors reappear.
 const GROQ_MODELS = [
-  { id: "deepseek-r1-distill-llama-70b", quality: "reasoning" }, // chain-of-thought, best contextual understanding
-  { id: "llama-3.3-70b-versatile",       quality: "high" },
-  { id: "llama-3.1-8b-instant",          quality: "fast" },
+  { id: "openai/gpt-oss-120b", quality: "high" }, // ~0.6s, reliable JSON mode
+  { id: "openai/gpt-oss-20b",  quality: "fast" }, // ~0.7s
 ];
 const OR_MODELS = [
-  "openrouter/owl-alpha",
-  "meta-llama/llama-3.3-70b-instruct:free", // fallback
+  "nvidia/nemotron-3-super-120b-a12b:free", // ~5s, slower but valid JSON
 ];
 const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
@@ -49,18 +50,33 @@ async function getEmbedding(text) {
   }
 }
 
-const PROMPT_VERSION = "v1.2";
+// v2.0 — removed hard-coded life modes and fixed identity; tags are internal-only
+const PROMPT_VERSION = "v2.0";
 
-const SYSTEM_PROMPT = `You are Blu, Tarun's Hermes Agent on WhatsApp — a context-bridge and second brain across his three life modes.
+const SYSTEM_PROMPT = `You are Blu, Tarun's Hermes Agent on WhatsApp — a context-bridge and second brain.
 
 ## Identity
 You are not a task manager or chatbot. You are Tarun's guardian of context: you notice patterns, surface what matters, and proactively connect information across his world. Be sharp and direct, not polite and verbose.
 
-## About Tarun
-- Intern at Hexaware (10am–6pm weekdays)
-- Founder/tech lead of SmartResQ — healthcare emergency response startup (evenings)
-- Learning GenAI and agentic AI actively
-- Wants low-friction capture and proactive intelligence
+## What you know about Tarun
+Do not assume a fixed schedule, employer, or set of life areas. Everything you know about Tarun
+comes from the context block below — stored knowledge, past conversations, and his current
+todos, notes and events. Build your understanding from that, and update it as he tells you more.
+When he refers to a person, project, or thing you have seen before, recognise it and respond as
+someone who already knows what he means.
+
+## TAGS — internal only, never surfaced
+Every captured item gets zero or more short lowercase tags so related things can be grouped and
+retrieved later. Tags are a retrieval aid for you, NOT a filing system Tarun has to think about.
+
+- Reuse tags that already appear in the context block rather than inventing near-duplicates.
+- Invent a new tag only when nothing existing fits.
+- Keep them broad. Do not create a tag for every niche topic — a stray one-off belongs under an
+  existing broad tag.
+- Zero tags is a perfectly good answer when nothing obvious applies.
+- NEVER mention tags, categories, contexts, or "modes" in your reply to Tarun. Do not say
+  "added to personal" or "saved under smartresq". Just confirm the thing itself:
+  "Added to your todos." / "Noted." / "Saved."
 
 ## INTENT CLASSIFICATION
 
@@ -86,7 +102,6 @@ CRITICAL: Past tense = already done. Never add these as new todos.
 - "summarise our last week of conversations" / "weekly conversation summary" → SUMMARISE_CONVERSATION
 
 **System**:
-- "switch to X mode" → SWITCH_MODE
 - "undo", "undo that" → UNDO_LAST
 - "learn a new skill: [name] - [desc]" → CREATE_SKILL
 - Tarun wants to use a learned skill from "Available Skills" → RUN_SKILL
@@ -102,7 +117,7 @@ If Tarun says "no" / "no I meant" / "no I completed it" after a wrong action, lo
 
 ## PROACTIVE BEHAVIOUR — the Hermes layer
 After taking an action, scan the context block and surface 1-2 related things Tarun should know:
-- After completing a todo → mention other related pending tasks in that context if any
+- After completing a todo → mention other related pending tasks if any
 - If unreviewed learnings > 6 → append "You have X learnings queued for review."
 - If an upcoming event is within 2h → include a brief heads-up at the start of your reply
 - If Tarun mentions a topic and you see relevant past memory in the context → surface the most useful connection in 1 line
@@ -128,13 +143,13 @@ For a single action:
 For compound requests (multiple things to do in one message), use the "actions" array instead:
 {"reply": "your natural WhatsApp reply", "actions": [{"action": "add_event", "data": {...}}, {"action": "set_reminder", "data": {...}}], "confidence": <float between 0.0 and 1.0>}
 
-Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | switch_mode | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | review_learning | summarise_conversation | none
+Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | review_learning | summarise_conversation | none
 
 Data fields:
 - content: extracted content or search query
 - topic: topic if learning
 - source: source if mentioned
-- context: hexaware | smartresq | personal | null
+- tags: array of 0-2 short lowercase tags, e.g. ["smartresq"]. Omit or use [] when nothing fits. Never shown to Tarun.
 - title: event title
 - datetime: ISO datetime in IST (e.g. 2026-06-05T21:00:00+05:30) — use for add_event AND set_reminder when time is specific
 - minutes: minutes from now — use for set_reminder only when no specific clock time given
@@ -151,7 +166,7 @@ Data fields:
 
 ## FEW-SHOT EXAMPLES
 User: remember to buy groceries tonight
-{"reply": "Got it, I'll add groceries to your personal todo list.", "action": "add_todo", "data": {"content": "buy groceries", "context": "personal"}, "confidence": 1.0}
+{"reply": "Got it, groceries are on your list for tonight.", "action": "add_todo", "data": {"content": "buy groceries", "tags": []}, "confidence": 1.0}
 
 User: renew my parking pass
 {"reply": "Did you just renew your parking pass, or should I add it as a task?", "action": "ask_context", "data": {"content": "renew parking pass"}, "confidence": 0.5}
@@ -165,8 +180,11 @@ User: learned that Vite uses esbuild for dev bundler
 User: delete the client meeting tomorrow
 {"reply": "Are you sure you want to delete the event 'client meeting'?", "action": "delete_event", "data": {"title": "client meeting"}, "confidence": 0.7}
 
-User: what's pending on Hexaware?
-{"reply": "Here are your open Hexaware todos.", "action": "list_todos", "data": {"context": "hexaware"}, "confidence": 1.0}
+User: what's pending on SmartResQ?
+{"reply": "Here's what's still open on SmartResQ.", "action": "list_todos", "data": {"tags": ["smartresq"]}, "confidence": 1.0}
+
+User: push the onboarding fix before the demo
+{"reply": "Added — onboarding fix before the demo.", "action": "add_todo", "data": {"content": "push the onboarding fix before the demo", "tags": ["smartresq"]}, "confidence": 0.9}
 
 User: reviewed learning 4a3e-2b1c yes
 {"reply": "Awesome, I've scheduled your next review for this topic.", "action": "review_learning", "data": {"id": "4a3e-2b1c", "gotRight": true}, "confidence": 1.0}
@@ -179,10 +197,8 @@ memory.savePromptVersion(PROMPT_VERSION, SYSTEM_PROMPT).catch(err => console.err
 
 const CLASSIFIER_PROMPT = `You are Tarun's personal agent classifier. Your ONLY job is to classify the user's message intent and extract raw data.
 
-About Tarun:
-- Hexaware intern (10am-6pm weekdays)
-- SmartResQ founder (evenings)
-- GenAI learner
+Do not assume any fixed schedule, employer, or life categories. Classify purely from what the
+message says, plus any context you are given.
 
 Allowed Action Names:
 - add_todo: user wants to capture a task to do later (e.g., "remember to X", "todo: X")
@@ -200,7 +216,6 @@ Allowed Action Names:
 - list_events: user asks for calendar list
 - delete_event: user wants to delete an event
 - update_event: user wants to update an event
-- switch_mode: user requests mode change
 - undo_last: user wants to undo
 - review_learning: user is reviewing learnings
 - summarise_conversation: user requests a weekly conversation summary
@@ -213,7 +228,7 @@ CRITICAL: Return ONLY a valid JSON object in this exact schema, with no addition
     "content": "extracted content or search query",
     "topic": "topic if learning",
     "source": "source if learning",
-    "context": "hexaware | smartresq | personal | null",
+    "tags": ["0-2 short lowercase tags for grouping, [] if nothing fits — never shown to the user"],
     "title": "event title",
     "datetime": "ISO datetime in IST (e.g. 2026-06-05T21:00:00+05:30) if time mentioned",
     "minutes": "integer minutes from now for reminder if relative",
@@ -231,6 +246,9 @@ CRITICAL: Return ONLY a valid JSON object in this exact schema, with no addition
 async function callGroqModel(modelId, messages, jsonMode) {
   const isReasoning = modelId.includes('deepseek-r1');
   const body = { model: modelId, messages, max_tokens: 2048 };
+  // gpt-oss models emit chain-of-thought into the completion. Against a prompt this large they
+  // will spend the entire token budget reasoning and get truncated mid-JSON, so cap the effort.
+  if (modelId.includes('gpt-oss')) body.reasoning_effort = 'low';
   // R1 doesn't support json_object mode — strip <think> blocks instead
   if (jsonMode && !isReasoning) body.response_format = { type: 'json_object' };
   const r = await axios.post(GROQ_URL, body, {
@@ -244,8 +262,12 @@ async function callGroqModel(modelId, messages, jsonMode) {
   return content;
 }
 
-async function callOpenRouterModel(modelId, messages) {
-  const r = await axios.post(OPENROUTER_URL, { model: modelId, messages, max_tokens: 1024 }, {
+async function callOpenRouterModel(modelId, messages, jsonMode) {
+  // NOTE: deliberately NOT setting response_format here. The free nemotron model returns
+  // thousands of blank lines when json_object mode is requested; the downstream JSON extractor
+  // handles prose responses fine, so leave it off.
+  const body = { model: modelId, messages, max_tokens: 1024 };
+  const r = await axios.post(OPENROUTER_URL, body, {
     headers: {
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       'HTTP-Referer': process.env.RENDER_EXTERNAL_URL || 'https://personal-agent',
@@ -424,19 +446,14 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
   let groqOrder = [...GROQ_MODELS];
   let geminiOrder = [...GEMINI_MODELS];
   
+  // Derive route preferences from GROQ_MODELS rather than restating model ids — the old
+  // duplicated lists silently kept pointing at decommissioned models.
   if (routeType === 'classifier') {
-    groqOrder = [
-      { id: "llama-3.1-8b-instant", quality: "fast" },
-      { id: "llama-3.3-70b-versatile", quality: "high" },
-      { id: "deepseek-r1-distill-llama-70b", quality: "reasoning" }
-    ];
-    geminiOrder = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    // Classification is easy; prefer the fastest model first.
+    groqOrder = [...GROQ_MODELS].sort((a, b) => (a.quality === 'fast' ? -1 : b.quality === 'fast' ? 1 : 0));
   } else if (routeType === 'reasoner') {
-    groqOrder = [
-      { id: "deepseek-r1-distill-llama-70b", quality: "reasoning" },
-      { id: "llama-3.3-70b-versatile", quality: "high" },
-      { id: "llama-3.1-8b-instant", quality: "fast" }
-    ];
+    // Reasoning benefits from the strongest model first.
+    groqOrder = [...GROQ_MODELS].sort((a, b) => (a.quality === 'high' ? -1 : b.quality === 'high' ? 1 : 0));
   } else if (routeType === 'synthesizer') {
     if (hasGemini) {
       for (const modelId of geminiOrder) {
@@ -488,7 +505,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
       try {
         const text = await raceAll(available.map(id => async () => {
           try {
-            const r = await callOpenRouterModel(id, messages);
+            const r = await callOpenRouterModel(id, messages, jsonMode);
             markModelOk(id);
             return r;
           } catch (e) {
@@ -560,63 +577,39 @@ function filterKnowledge(knowledge, userMessage) {
 
 // ctx: null = all contexts, 'mode' = current mode
 const PREFILTER_RULES = [
-  {
-    match: /^(what's pending|my todos|show todos|list todos|pending tasks|todos|tasks|what do i have|what should i do|my list)$/i,
-    action: 'list_todos', ctx: null,
-  },
-  {
-    match: /^(my notes|show notes|list notes|notes|what did i save|what did i note|what have i noted)$/i,
-    action: 'list_notes', ctx: null,
-  },
-  {
-    match: /^(my learnings|show learnings|list learnings|learnings|what have i learned|what did i learn)$/i,
-    action: 'list_learnings', ctx: null,
-  },
-  {
-    match: /^(my events|calendar|schedule|what's on my calendar|upcoming events|upcoming|events)$/i,
-    action: 'list_events', ctx: null,
-  },
-  {
-    match: /^(what mode|current mode|which mode|mode now)$/i,
-    action: '_mode', ctx: null,
-  },
   // Explicit completion — "done: X", "finished X", "done with X"
   {
     match: /^(done|finished|completed|done with|just (did|finished|completed)|marked.*done)[:\s]+(.+)/i,
-    action: 'complete_todo', ctx: null,
+    action: 'complete_todo', tags: [],
     dataFn: (m) => ({ content: m[3].trim() }),
     reply: (data) => `Marked "${data.content}" as done.`,
   },
   // Quick note: prefix
   {
     match: /^(note|save|jot)[:\s]+(.+)/i,
-    action: 'add_note', ctx: 'mode',
+    action: 'add_note', tags: [],
     dataFn: (m) => ({ content: m[2].trim() }),
     reply: (data) => `Saved as a note.`,
   },
   // Quick todo: prefix
   {
     match: /^(todo|task|remind me to|add|remember to)[:\s]+(.+)/i,
-    action: 'add_todo', ctx: 'mode',
+    action: 'add_todo', tags: [],
     dataFn: (m) => ({ content: m[2].trim() }),
     reply: (data) => `Added to your todos.`,
   },
 ];
 
-async function tryPrefilter(userMessage, mode, replyTo) {
+async function tryPrefilter(userMessage, replyTo) {
   const msg = userMessage.trim();
   for (const rule of PREFILTER_RULES) {
     const m = msg.match(rule.match);
     if (!m) continue;
 
-    if (rule.action === '_mode') {
-      return `Current mode: *${mode}*\n${getModeDescription(mode)}`;
-    }
-
     const data = rule.dataFn ? rule.dataFn(m) : {};
-    const ctx = rule.ctx === 'mode' ? mode : rule.ctx; // null or specific
+    const tags = rule.tags || [];
     const defaultReply = rule.reply ? rule.reply(data) : null;
-    const result = await executeAction(rule.action, { context: ctx, ...data }, mode, defaultReply, replyTo);
+    const result = await executeAction(rule.action, { tags, ...data }, defaultReply, replyTo);
     // null = interactive message already sent (e.g. list picker on WhatsApp) — still short-circuit
     return result ?? null;
   }
@@ -639,9 +632,6 @@ function validateJsonSchema(parsed) {
 }
 
 async function handleIncoming(userMessage, replyTo = null) {
-  const mode = getCurrentMode();
-  const modeDesc = getModeDescription(mode);
-
   // Check for active multi-turn clarifications (Items 12, 16, 17)
   if (replyTo) {
     const clarification = await memory.getState(`pending_clarification:${replyTo}`);
@@ -679,7 +669,7 @@ async function handleIncoming(userMessage, replyTo = null) {
         if (isYes) {
           const { action, data, currentMode, defaultReply } = clarification.data;
           await memory.deleteState(`pending_clarification:${replyTo}`);
-          const reply = await executeAction(action, data, currentMode, defaultReply, replyTo);
+          const reply = await executeAction(action, data, defaultReply, replyTo);
           const finalReply = reply || defaultReply;
           await memory.saveMessage('user', userMessage, PROMPT_VERSION, Math.ceil(userMessage.length / 4), 0);
           await memory.saveMessage('model', finalReply, PROMPT_VERSION, 0, Math.ceil(finalReply.length / 4));
@@ -696,7 +686,7 @@ async function handleIncoming(userMessage, replyTo = null) {
   }
 
   // Fast path: handle unambiguous commands without LLM
-  const prefiltered = await tryPrefilter(userMessage, mode, replyTo);
+  const prefiltered = await tryPrefilter(userMessage, replyTo);
   if (prefiltered !== undefined) {
     const promptLen = Math.ceil(userMessage.length / 4);
     const replyLen = prefiltered ? Math.ceil(prefiltered.length / 4) : 0;
@@ -715,7 +705,7 @@ async function handleIncoming(userMessage, replyTo = null) {
       role: h.role === "user" ? "user" : "assistant",
       content: h.content.length > 300 ? h.content.slice(0, 300) + '…' : h.content,
     })),
-    { role: "user", content: `Current Mode: ${mode}\nUser message: ${userMessage}` }
+    { role: "user", content: `User message: ${userMessage}` }
   ];
 
   const classifierInputCharCount = classifierMessages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
@@ -771,29 +761,18 @@ async function handleIncoming(userMessage, replyTo = null) {
     ]);
 
     const semanticMatches = msgEmbedding
-      ? await memory.searchMemory(userMessage, msgEmbedding, mode)
+      ? await memory.searchMemory(userMessage, msgEmbedding)
       : [];
     // Phase 4: Prune embedding queries to top 2 instead of 5
     const semanticBlock = semanticMatches.length
       ? `Relevant past memory:\n${semanticMatches.slice(0, 2).map(r => `[${r.type}][${r.context}] ${r.content}`).join('\n')}`
       : '';
 
-    // Phase 4: Context Slicing by Life Mode (only feed relevant todos)
-    let todoBlock = [];
-    if (mode === 'hexaware') {
-      todoBlock = stats.hexTodos.map(t => `[hexaware] ${t.content}`);
-    } else if (mode === 'smartresq') {
-      todoBlock = stats.srqTodos.map(t => `[smartresq] ${t.content}`);
-    } else {
-      todoBlock = [
-        ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
-        ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
-      ];
-    }
+    // Phase 4: Context Slicing (only feed relevant todos)
 
-    // Phase 4: Context Slicing for GitHub open PRs/issues (only relevant in smartresq mode)
-    const prs = mode === 'smartresq' ? openPRs : [];
-    const issues = mode === 'smartresq' ? openIssues : [];
+    const todoBlock = stats.pendingTodos ? stats.pendingTodos.map(t => `[${(t.tags || []).join(',')}] ${t.content}`) : [];
+    const prs = openPRs;
+    const issues = openIssues;
 
     const knowledgeBlock = knowledge.length
       ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
@@ -815,8 +794,6 @@ async function handleIncoming(userMessage, replyTo = null) {
     const summaryBlock = contextSummary ? `Earlier conversation summary:\n${contextSummary}` : '';
 
     const contextBlock = `Current time: ${now} IST
-Current mode: ${mode}
-${modeDesc}
 
 Pending todos (${todoBlock.length}):
 ${todoBlock.length ? todoBlock.join('\n') : 'none'}
@@ -878,7 +855,7 @@ ${summaryBlock}`;
     if (replyTo && synthConfidence < 0.8 && ['complete_todo', 'delete_event'].includes(synthAction)) {
       await memory.saveState(`pending_clarification:${replyTo}`, {
         type: 'destructive_action',
-        data: { action: synthAction, data: synthData, currentMode: mode, defaultReply: parsed.reply }
+        data: { action: synthAction, data: synthData,  defaultReply: parsed.reply }
       });
 
       let confirmationQuestion = `Are you sure you want to complete the task "${synthData?.content || ''}"?`;
@@ -894,11 +871,11 @@ ${summaryBlock}`;
     let reply;
     if (Array.isArray(parsed.actions) && parsed.actions.length) {
       for (const item of parsed.actions) {
-        await executeAction(item.action, item.data, mode, parsed.reply, replyTo);
+        await executeAction(item.action, item.data, parsed.reply, replyTo);
       }
       reply = parsed.reply;
     } else {
-      reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply, replyTo);
+      reply = await executeAction(parsed.action, parsed.data, parsed.reply, replyTo);
     }
 
     await memory.saveMessage("user", userMessage, PROMPT_VERSION, tokensInput, 0);
@@ -935,7 +912,7 @@ ${summaryBlock}`;
     if (replyTo && confidence < 0.8 && ['complete_todo', 'delete_event'].includes(primaryAction)) {
       await memory.saveState(`pending_clarification:${replyTo}`, {
         type: 'destructive_action',
-        data: { action: primaryAction, data: primaryData, currentMode: mode, defaultReply: `Marked "${primaryData?.content || primaryData?.title || ''}" as completed.` }
+        data: { action: primaryAction, data: primaryData,  defaultReply: `Marked "${primaryData?.content || primaryData?.title || ''}" as completed.` }
       });
 
       let confirmationQuestion = `Are you sure you want to complete the task "${primaryData?.content || ''}"?`;
@@ -950,7 +927,7 @@ ${summaryBlock}`;
 
     let executionStatus;
     try {
-      executionStatus = await executeAction(primaryAction, primaryData, mode, null, replyTo);
+      executionStatus = await executeAction(primaryAction, primaryData, null, replyTo);
     } catch (err) {
       console.error('[Brain] Capture/mutation execution error:', err.message);
       executionStatus = `Failed to perform action ${primaryAction}.`;
@@ -1038,9 +1015,6 @@ async function refreshContextSummary() {
 
 // Streaming version — streams reply tokens, executes action after full response
 async function handleIncomingStream(userMessage, onToken) {
-  const mode = getCurrentMode();
-  const modeDesc = getModeDescription(mode);
-
   const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, learnedSkills] = await Promise.all([
     memory.getRecentHistory(10),
     memory.getSummaryStats(),
@@ -1054,8 +1028,7 @@ async function handleIncomingStream(userMessage, onToken) {
   ]);
 
   const todoBlock = [
-    ...stats.hexTodos.map(t => `[hexaware] ${t.content}`),
-    ...stats.srqTodos.map(t => `[smartresq] ${t.content}`),
+    ...(stats.pendingTodos || []).map(t => `[${(t.tags || []).join(',')}] ${t.content}`),
   ];
 
   const skillsBlock = learnedSkills.length
@@ -1072,8 +1045,6 @@ async function handleIncomingStream(userMessage, onToken) {
     ? `Upcoming events (next 24h):\n${upcomingEvents.map(e => `- ${e.title} at ${new Date(e.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`).join('\n')}` : '';
 
   const contextBlock = `Current time: ${now} IST
-Current mode: ${mode}
-${modeDesc}
 
 Pending todos (${todoBlock.length}):
 ${todoBlock.join('\n') || 'none'}
@@ -1116,7 +1087,7 @@ ${insightsBlock}`;
 
   if (typeof parsed.reply !== 'string' || !parsed.reply.trim()) parsed.reply = 'Done.';
 
-  const reply = await executeAction(parsed.action, parsed.data, mode, parsed.reply);
+  const reply = await executeAction(parsed.action, parsed.data, parsed.reply);
   const finalModelMessage = reply || parsed.reply || "(action executed)";
   await memory.saveMessage("user", userMessage);
   await memory.saveMessage("model", finalModelMessage);
@@ -1128,14 +1099,14 @@ ${insightsBlock}`;
   return reply;
 }
 
-async function executeAction(action, data, currentMode, defaultReply, replyTo = null) {
-  const context = data?.context || currentMode;
+async function executeAction(action, data, defaultReply, replyTo = null) {
+  const tags = data?.tags || [];
   try {
     switch (action) {
       case "set_goal":
         if (data?.content) {
-          await memory.saveGoal(data.content, context);
-          return `Goal set: "${data.content}" for ${context}.`;
+          await memory.saveGoal(data.content, tags);
+          return `Goal set: "${data.content}".`;
         }
         return "No goal content provided.";
 
@@ -1148,18 +1119,15 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
         return "You don't have an active 'One Big Thing' set for today.";
       }
 
+      // Disambiguation ("did you complete X, or should I add it?") — the model's own
+      // clarifying question is the reply; nothing to execute.
       case "ask_context":
-        await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, defaultReply, [
-          { id: 'ctx_hex', title: 'Hexaware' },
-          { id: 'ctx_srq', title: 'SmartResQ' },
-          { id: 'ctx_per', title: 'Personal' },
-        ]);
-        return null;
-
+        return defaultReply || "Did you just complete that, or should I add it as a task?";
+      
       case "add_note":
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
-          const matches = embedding ? await memory.searchMemory(data.content, embedding, context) : [];
+          const matches = embedding ? await memory.searchMemory(data.content, embedding) : [];
           const similarNote = matches.find(m => m.type === 'note' && m.score > 0.85);
 
           if (similarNote && replyTo) {
@@ -1169,24 +1137,24 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
                 newContent: data.content,
                 existingId: similarNote.id,
                 existingContent: similarNote.content,
-                context
+                tags
               }
             });
             return `I found a similar note: "${similarNote.content}". Would you like to merge this new note with the existing one? (Reply "yes" to merge, "no" to save as separate)`;
           }
 
-          const noteId = await memory.addNote(data.content, context, [], embedding);
+          const noteId = await memory.addNote(data.content, tags, embedding);
           autoTagNote(noteId, data.content).catch(() => {});
           findConnections(callLLM, data.content, 'note').catch(() => {});
-          return `Note saved to ${context}: "${data.content}"`;
+          return `Note saved: "${data.content}"`;
         }
         return "No note content provided.";
 
       case "add_todo":
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
-          await memory.addTodo(data.content, context, null, embedding);
-          return `Todo added to ${context}: "${data.content}"`;
+          await memory.addTodo(data.content, tags, null, embedding);
+          return `Todo added: "${data.content}"`;
         }
         return "No todo content provided.";
 
@@ -1203,11 +1171,11 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
         if (data?.content) {
           const embedding = await getEmbedding(data.content);
           const contradiction = await detectContradiction(data.content, embedding);
-          const knowledgeId = await memory.saveKnowledge(data.content, embedding, context);
+          const knowledgeId = await memory.saveKnowledge(data.content, embedding, tags);
           
           extractAndLinkEntities(data.content, knowledgeId).catch(err => console.error('[Entity Graph] Error:', err.message));
 
-          let confirmation = `Learned fact for ${context}: "${data.content}"`;
+          let confirmation = `Got it: "${data.content}"`;
           if (contradiction) {
             return `${confirmation}\n\n*Note:* This contradicts what I already know:\n${contradiction.replace('CONTRADICTION:', '').trim()}`;
           }
@@ -1228,7 +1196,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           ? new Date(data.datetime)
           : new Date(Date.now() + (parseInt(data?.minutes) || 60) * 60 * 1000);
         const embedding = await getEmbedding(data.content);
-        await memory.addTodo(data.content, context, remindAt, embedding);
+        await memory.addTodo(data.content, tags, remindAt, embedding);
         const timeStr = remindAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
         return `Reminder set for ${timeStr}: "${data.content}"`;
       }
@@ -1240,7 +1208,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
           const endAt = new Date(startAt.getTime() + duration * 60 * 1000);
           const recurrence = ['none', 'daily', 'weekdays', 'weekly'].includes(data?.recurrence)
             ? data.recurrence : 'none';
-          await memory.addEvent(data.title, startAt, endAt, context, recurrence);
+          await memory.addEvent(data.title, startAt, endAt, tags, recurrence);
           const timeStr = startAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
           return `Event added to calendar on ${timeStr}: "${data.title}"`;
         }
@@ -1248,7 +1216,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       }
 
       case "list_events": {
-        const events = await memory.listEvents(data?.context || null, 10);
+        const events = await memory.listEvents(tags[0] || null, 10);
         if (!events.length) return 'Nothing on your calendar yet.';
         const fmtEvent = ev => {
           const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
@@ -1293,59 +1261,22 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
       }
 
       case "list_todos": {
-        const VALID_CONTEXTS = ['hexaware', 'smartresq', 'personal'];
-        const filterCtx = VALID_CONTEXTS.includes(data?.context) ? data.context : null;
-        const todos = await memory.getPendingTodos(filterCtx);
-        if (!todos.length) return filterCtx
-          ? `No pending todos for ${filterCtx}.`
-          : 'No pending todos. All clear!';
-
-        const hex = todos.filter(t => t.context === 'hexaware');
-        const srq = todos.filter(t => t.context === 'smartresq');
-        const other = todos.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
-
-        // On WhatsApp, send a tappable list so items can be completed in one tap
-        if (replyTo) {
-          const sections = [];
-          if (hex.length) sections.push({
-            title: 'Hexaware',
-            rows: hex.map(t => ({ id: `ltdone_${t.id}`, title: t.content.slice(0, 24), description: 'Tap to mark done' })),
-          });
-          if (srq.length) sections.push({
-            title: 'SmartResQ',
-            rows: srq.map(t => ({ id: `ltdone_${t.id}`, title: t.content.slice(0, 24), description: 'Tap to mark done' })),
-          });
-          if (other.length) sections.push({
-            title: 'Personal',
-            rows: other.map(t => ({ id: `ltdone_${t.id}`, title: t.content.slice(0, 24), description: 'Tap to mark done' })),
-          });
-          await sendListMessage(replyTo, `You have ${todos.length} open todo${todos.length === 1 ? '' : 's'}.`, 'See todos', sections);
-          return null; // interactive message sent directly, no text reply needed
+        const tagsToFilter = data?.tags || [];
+        const todos = await memory.getPendingTodos();
+        let filtered = todos;
+        if (tagsToFilter.length > 0) {
+          filtered = todos.filter(t => tagsToFilter.some(tag => (t.tags || []).includes(tag)));
         }
-
-        const fmt = t => {
-          const reminder = t.remind_at
-            ? ` _(reminder: ${new Date(t.remind_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' })})_`
-            : '';
-          return `${t.content}${reminder}`;
-        };
-
-        let out = '';
-        if (!filterCtx || filterCtx === 'hexaware') {
-          if (hex.length) out += `*Hexaware* (${hex.length})\n${hex.map((t, i) => `${i + 1}. ${fmt(t)}`).join('\n')}\n\n`;
-        }
-        if (!filterCtx || filterCtx === 'smartresq') {
-          if (srq.length) out += `*SmartResQ* (${srq.length})\n${srq.map((t, i) => `${i + 1}. ${fmt(t)}`).join('\n')}\n\n`;
-        }
-        if (other.length) out += `*Personal* (${other.length})\n${other.map((t, i) => `${i + 1}. ${fmt(t)}`).join('\n')}`;
-        return out.trim();
+        if (filtered.length === 0) return "No pending todos.";
+        let out = filtered.map((t, i) => `${i + 1}. ${t.content}${t.remind_at ? ' (⏰ ' + new Date(t.remind_at).toLocaleString() + ')' : ''}`).join('\n');
+        return out;
       }
 
       case "list_notes": {
-        const notes = await memory.getRecentNotes(data?.context || null, 8);
+        const notes = await memory.getRecentNotes(tags[0] || null, 8);
         if (!notes.length) return 'No notes saved yet.';
         return `*Recent Notes* (${notes.length})\n\n` +
-          notes.map((n, i) => `${i + 1}. [${n.context}] ${n.content}`).join('\n');
+          notes.map((n, i) => `${i + 1}. ${n.content}`).join('\n');
       }
 
       case "list_learnings": {
@@ -1390,7 +1321,7 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
         const results = await memory.searchMemory(query, embedding);
         if (!results.length) return `Nothing found for "${query}".`;
         return `*Search: "${query}"* (${results.length} results)\n\n` +
-          results.map((r, i) => `${i + 1}. [${r.type}][${r.context}] ${r.content}`).join('\n');
+          results.map((r, i) => `${i + 1}. [${r.type}] ${r.content}`).join('\n');
       }
 
       case "search_web": {
@@ -1436,24 +1367,8 @@ async function executeAction(action, data, currentMode, defaultReply, replyTo = 
         return "Undo completed.";
       }
 
-      case "generate_brief": {
-        const briefType = data?.type;
-        if (briefType === 'both') {
-          const [hex, srq] = await Promise.all([generateStandup('hexaware'), generateStandup('smartresq')]);
-          return hex + '\n\n---\n\n' + srq;
-        }
-        const type = briefType === 'smartresq' ? 'smartresq' : 'hexaware';
-        return await generateStandup(type);
-      }
-
-      case "switch_mode": {
-        const newMode = data?.mode;
-        if (newMode && ['hexaware', 'smartresq', 'personal'].includes(newMode)) {
-          await setModeOverride(newMode);
-          return `Switched active mode to ${newMode}.`;
-        }
-        return "Please specify a valid mode: hexaware, smartresq, or personal.";
-      }
+      case "generate_brief":
+        return await generateStandup(data?.type || 'generic');
 
       case "create_skill": {
         const { skill_name, skill_desc, skill_instr } = data;
@@ -1498,7 +1413,7 @@ async function analyzePatterns() {
 Extract 2-3 short behavioural insights about his patterns and habits.
 
 History: ${historyText}
-Stats: ${stats.hexTodos.length} Hexaware todos, ${stats.srqTodos.length} SmartResQ todos, ${stats.unreviewed.length} unreviewed learnings
+Stats: ${(stats.pendingTodos || []).length} pending todos, ${(stats.unreviewed || []).length} unreviewed learnings
 
 Return ONLY a JSON array: ["insight 1", "insight 2"]`;
 
@@ -1528,7 +1443,7 @@ Data:
 - Pending "One Big Thing": ${pendingGoal ? pendingGoal.content : 'none'}
 - Recent Insights: ${insights.join(', ') || 'none'}
 - Open PRs: ${openPRs.join(', ') || 'none'}
-- Stats: ${stats.hexTodos.length} Hexaware, ${stats.srqTodos.length} SmartResQ tasks pending.
+- Stats: ${(stats.pendingTodos || []).length} tasks pending.
 
 If nothing truly valuable to say, reply SKIP.
 Tone: Guardian-like, efficiency-obsessed, direct. Under 5 lines. No markdown except *bold*.`;
@@ -1544,41 +1459,17 @@ async function generateStandup(type) {
     getRecentCommits(),
   ]);
 
-  let prompt;
-  if (type === 'hexaware') {
-    const yesterday = await memory.getYesterdayActivity('hexaware');
-    prompt = `You are Blu, Tarun's Hermes Agent. Generate a concise morning "Bridge Brief" for his Hexaware day.
-
-Structure:
-1. *Morning Pivot*: Summarize yesterday's key Hexaware wins and notes.
-2. *On the Horizon*: List today's pending Hexaware tasks.
-3. *Mental Space*: Mention any blockers or recurring themes from notes.
-
-Data:
-- Completed yesterday: ${yesterday.completed.map(t => t.content).join(', ') || 'none'}
-- Notes from yesterday: ${yesterday.notes.map(n => n.content).join(', ') || 'none'}
-- Today's tasks: ${stats.hexTodos.map(t => t.content).join(', ') || 'none'}
-
-Tone: Direct, professional, guardian-like. Plain text, no markdown except *bold*. Under 8 lines.`;
-  } else {
-    const yesterdayHex = await memory.getYesterdayActivity('hexaware');
-    const yesterdaySrq = await memory.getYesterdayActivity('smartresq');
-    
-    prompt = `You are Blu, Tarun's Hermes Agent. It's transition time: Hexaware is done, SmartResQ begins.
-
-Structure:
-1. *Hexaware Wrap*: A 1-sentence summary of his wins at Hexaware today.
-2. *SmartResQ Pulse*: Key open todos and PRs needing attention.
-3. *The Hermes Question*: Ask Tarun: "What's the *One Big Thing* you want to move forward for SmartResQ tonight?"
-
-Data:
-- Today's Hexaware Wins: ${yesterdayHex.completed.map(t => t.content).join(', ') || 'none'}
-- SmartResQ Todos: ${stats.srqTodos.map(t => t.content).join(', ') || 'none'}
-- Open PRs: ${openPRs.join(', ') || 'none'}
-- Recent Commits: ${recentCommits.slice(0, 3).join(', ') || 'none'}
-
-Tone: Transition-aware, motivating, conceptual. Plain text, no markdown except *bold*. Under 8 lines.`;
-  }
+  const yesterday = await memory.getYesterdayActivity();
+  
+  let prompt = `You are Blu, Tarun's Hermes Agent. Generate a concise brief.\n\n`;
+  prompt += `Structure:\n`;
+  prompt += `1. *Recent Wins*: Summarize yesterday's key wins.\n`;
+  prompt += `2. *On the Horizon*: Key open todos and PRs needing attention.\n\n`;
+  prompt += `Data:\n`;
+  prompt += `- Completed yesterday: ${(yesterday.completed || []).map(t => t.content).join(', ') || 'none'}\n`;
+  prompt += `- Pending Todos: ${(stats.pendingTodos || []).map(t => t.content).join(', ') || 'none'}\n`;
+  prompt += `- Open PRs: ${openPRs.join(', ') || 'none'}\n\n`;
+  prompt += `Tone: Direct, professional, guardian-like. Plain text, no markdown except *bold*. Under 8 lines.`;
 
   return await callLLM([{ role: "user", content: prompt }], false, 'background');
 }
@@ -1599,14 +1490,8 @@ async function generateStaleAlert() {
   const stale = await memory.getStaleTodos(5);
   if (!stale.length) return null;
 
-  const hex = stale.filter(t => t.context === 'hexaware');
-  const srq = stale.filter(t => t.context === 'smartresq');
-  const other = stale.filter(t => t.context !== 'hexaware' && t.context !== 'smartresq');
-
   let msg = `Heads up — ${stale.length} todo${stale.length > 1 ? 's have' : ' has'} been sitting for 5+ days:\n\n`;
-  if (hex.length) msg += `*Hexaware*\n${hex.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
-  if (srq.length) msg += `*SmartResQ*\n${srq.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
-  if (other.length) msg += `*Other*\n${other.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}\n\n`;
+  msg += stale.map((t, i) => `${i + 1}. ${t.content}`).join('\n') + '\n\n';
   msg += 'Still relevant? Mark done or drop them.';
   return msg;
 }

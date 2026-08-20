@@ -11,13 +11,15 @@ pool.on('connect', client => {
 
 // --- Todos ---
 
-async function addTodo(content, context, remindAt = null, embedding = null) {
+async function addTodo(content, tags = [], remindAt = null, embedding = null) {
   await pool.query(
-    'INSERT INTO todos (content, context, remind_at, embedding) VALUES ($1, $2, $3, $4)',
-    [content, context, remindAt || null, embedding ? `[${embedding.join(',')}]` : null]
+    'INSERT INTO todos (content, tags, remind_at, embedding) VALUES ($1, $2, $3, $4)',
+    [content, tags, remindAt || null, embedding ? `[${embedding.join(',')}]` : null]
   );
 }
 
+// Claims and returns reminders that are already overdue — the catch-up path for anything
+// missed while the process was down. Future reminders are handled by scheduler/timers.
 async function getDueTodoReminders() {
   const { rows } = await pool.query(
     `UPDATE todos SET reminded = true
@@ -27,11 +29,61 @@ async function getDueTodoReminders() {
   return rows;
 }
 
-async function getPendingTodos(context = null) {
-  const query = context
-    ? 'SELECT * FROM todos WHERE done = false AND context = $1 ORDER BY created_at DESC LIMIT 10'
+// Lookahead for the precise-timer scheduler. Deliberately does NOT claim: delivery claims
+// via claimTodoReminder/claimEventReminder, so a crash between lookahead and fire loses nothing.
+// Events fire EVENT_LEAD_MINUTES before start; todos fire at remind_at.
+const EVENT_LEAD_MINUTES = 15;
+
+async function getUpcomingReminders(minutes = 20) {
+  const [todos, events] = await Promise.all([
+    pool.query(
+      `SELECT id, content, remind_at AS fire_at FROM todos
+       WHERE done = false AND reminded = false AND remind_at IS NOT NULL
+         AND remind_at > NOW() AND remind_at <= NOW() + ($1 || ' minutes')::interval
+       ORDER BY remind_at LIMIT 50`,
+      [minutes]
+    ),
+    pool.query(
+      `SELECT id, title, start_at, context,
+              start_at - ($2 || ' minutes')::interval AS fire_at
+       FROM events
+       WHERE recurrence = 'none' AND reminded = false
+         AND start_at - ($2 || ' minutes')::interval > NOW()
+         AND start_at - ($2 || ' minutes')::interval <= NOW() + ($1 || ' minutes')::interval
+       ORDER BY start_at LIMIT 50`,
+      [minutes, EVENT_LEAD_MINUTES]
+    ),
+  ]);
+  return { todos: todos.rows, events: events.rows };
+}
+
+// Atomic single-row claims — the guard against double delivery when a timer and a
+// catch-up sweep race for the same row. Returns null if someone else already sent it.
+async function claimTodoReminder(id) {
+  const { rows } = await pool.query(
+    `UPDATE todos SET reminded = true
+     WHERE id = $1 AND reminded = false AND done = false
+     RETURNING id, content`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function claimEventReminder(id) {
+  const { rows } = await pool.query(
+    `UPDATE events SET reminded = true
+     WHERE id = $1 AND reminded = false
+     RETURNING id, title, start_at, context`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function getPendingTodos(tag = null) {
+  const query = tag
+    ? 'SELECT * FROM todos WHERE done = false AND $1 = ANY(tags) ORDER BY created_at DESC LIMIT 10'
     : 'SELECT * FROM todos WHERE done = false ORDER BY created_at DESC LIMIT 10';
-  const params = context ? [context] : [];
+  const params = tag ? [tag] : [];
   const { rows } = await pool.query(query, params);
   return rows;
 }
@@ -55,10 +107,10 @@ async function completeTodoByContent(keyword) {
 
 // --- Notes ---
 
-async function addNote(content, context, tags = [], embedding = null) {
+async function addNote(content, tags = [], embedding = null) {
   const { rows } = await pool.query(
-    'INSERT INTO notes (content, context, tags, embedding) VALUES ($1, $2, $3, $4) RETURNING id',
-    [content, context, tags, embedding ? `[${embedding.join(',')}]` : null]
+    'INSERT INTO notes (content, tags, embedding) VALUES ($1, $2, $3) RETURNING id',
+    [content, tags, embedding ? `[${embedding.join(',')}]` : null]
   );
   return rows[0].id;
 }
@@ -67,11 +119,11 @@ async function updateNoteTags(id, tags) {
   await pool.query('UPDATE notes SET tags = $1 WHERE id = $2', [tags, id]);
 }
 
-async function getRecentNotes(context = null, limit = 5) {
-  const query = context
-    ? 'SELECT * FROM notes WHERE context = $1 ORDER BY created_at DESC LIMIT $2'
+async function getRecentNotes(tag = null, limit = 5) {
+  const query = tag
+    ? 'SELECT * FROM notes WHERE $1 = ANY(tags) ORDER BY created_at DESC LIMIT $2'
     : 'SELECT * FROM notes ORDER BY created_at DESC LIMIT $1';
-  const params = context ? [context, limit] : [limit];
+  const params = tag ? [tag, limit] : [limit];
   const { rows } = await pool.query(query, params);
   return rows;
 }
@@ -102,10 +154,10 @@ async function markLearningReviewed(id) {
 
 // --- Permanent knowledge store ---
 
-async function saveKnowledge(fact, embedding = null, context = 'personal') {
+async function saveKnowledge(fact, embedding = null, tags = []) {
   const { rows } = await pool.query(
-    'INSERT INTO knowledge (subject, fact, embedding, context) VALUES ($1, $2, $3, $4) RETURNING id',
-    ['general', fact, embedding ? `[${embedding.join(',')}]` : null, context]
+    'INSERT INTO knowledge (subject, fact, embedding, tags) VALUES ($1, $2, $3, $4) RETURNING id',
+    ['general', fact, embedding ? `[${embedding.join(',')}]` : null, tags]
   );
   return rows[0].id;
 }
@@ -158,10 +210,10 @@ async function getAnalytics() {
       FROM todos
     `),
     pool.query(`
-      SELECT context,
+      SELECT unnest(tags) as tag,
         COUNT(*) FILTER (WHERE done = false) AS open,
         COUNT(*) FILTER (WHERE done = true) AS done
-      FROM todos GROUP BY context
+      FROM todos GROUP BY tag
     `),
     pool.query(`
       SELECT
@@ -184,15 +236,15 @@ async function getAnalytics() {
     `),
     pool.query(`
       SELECT * FROM (
-        SELECT 'todo' AS type, content, context, created_at FROM todos ORDER BY created_at DESC LIMIT 5
+        SELECT 'todo' AS type, content, tags, created_at FROM todos ORDER BY created_at DESC LIMIT 5
       ) t
       UNION ALL
       SELECT * FROM (
-        SELECT 'note' AS type, content, context, created_at FROM notes ORDER BY created_at DESC LIMIT 5
+        SELECT 'note' AS type, content, tags, created_at FROM notes ORDER BY created_at DESC LIMIT 5
       ) n
       UNION ALL
       SELECT * FROM (
-        SELECT 'learning' AS type, topic AS content, null AS context, created_at FROM learnings ORDER BY created_at DESC LIMIT 5
+        SELECT 'learning' AS type, topic AS content, null AS tags, created_at FROM learnings ORDER BY created_at DESC LIMIT 5
       ) l
       ORDER BY created_at DESC LIMIT 15
     `),
@@ -202,7 +254,7 @@ async function getAnalytics() {
 
   return {
     todoStats: todoStats.rows[0],
-    contextBreakdown: contextBreakdown.rows,
+    tagBreakdown: contextBreakdown.rows,
     weeklyTodos: weeklyTodos.rows,
     weeklyLearnings: weeklyLearnings.rows,
     recentActivity: recentActivity.rows,
@@ -223,16 +275,16 @@ async function getRecentContent(limit = 30) {
 
 // --- Events / Calendar ---
 
-async function addEvent(title, startAt, endAt, context, recurrence = 'none') {
+async function addEvent(title, startAt, endAt, tags = [], recurrence = 'none') {
   await pool.query(
-    'INSERT INTO events (title, start_at, end_at, context, recurrence) VALUES ($1, $2, $3, $4, $5)',
-    [title, startAt, endAt || null, context, recurrence]
+    'INSERT INTO events (title, start_at, end_at, tags, recurrence) VALUES ($1, $2, $3, $4, $5)',
+    [title, startAt, endAt || null, tags, recurrence]
   );
 }
 
 async function getWeekEvents(weekStart, weekEnd) {
   const { rows } = await pool.query(
-    `SELECT id, title, start_at, end_at, context, recurrence, source
+    `SELECT id, title, start_at, end_at, tags, recurrence, source
      FROM events
      WHERE (recurrence = 'none' AND start_at >= $1 AND start_at < $2)
         OR recurrence IN ('daily', 'weekdays', 'weekly')
@@ -245,13 +297,13 @@ async function getWeekEvents(weekStart, weekEnd) {
 async function getUpcomingEvents(hours = 24) {
   const [events, todos] = await Promise.all([
     pool.query(
-      `SELECT title, start_at, context, 'event' as type FROM events
+      `SELECT title, start_at, tags, 'event' as type FROM events
        WHERE recurrence = 'none' AND start_at >= NOW() AND start_at <= NOW() + ($1 || ' hours')::interval
        ORDER BY start_at LIMIT 5`,
       [hours]
     ),
     pool.query(
-      `SELECT content as title, remind_at as start_at, context, 'todo' as type FROM todos
+      `SELECT content as title, remind_at as start_at, tags, 'todo' as type FROM todos
        WHERE done = false AND remind_at IS NOT NULL AND remind_at >= NOW() AND remind_at <= NOW() + ($1 || ' hours')::interval
        ORDER BY remind_at LIMIT 5`,
       [hours]
@@ -265,8 +317,8 @@ async function getUpcomingEvents(hours = 24) {
 
 async function listEvents(context = null, limit = 10) {
   const eventQuery = context
-    ? `SELECT id, title, start_at, end_at, context, recurrence, 'event' as type FROM events WHERE context = $1 ORDER BY start_at LIMIT $2`
-    : `SELECT id, title, start_at, end_at, context, recurrence, 'event' as type FROM events ORDER BY start_at LIMIT $1`;
+    ? `SELECT id, title, start_at, end_at, tags, recurrence, 'event' as type FROM events WHERE context = $1 ORDER BY start_at LIMIT $2`
+    : `SELECT id, title, start_at, end_at, tags, recurrence, 'event' as type FROM events ORDER BY start_at LIMIT $1`;
   
   const todoQuery = context
     ? `SELECT id, content as title, remind_at as start_at, NULL as end_at, context, 'none' as recurrence, 'todo' as type FROM todos WHERE done = false AND remind_at IS NOT NULL AND context = $1 ORDER BY remind_at LIMIT $2`
@@ -286,7 +338,7 @@ async function listEvents(context = null, limit = 10) {
 
 async function findEventByTitle(keyword) {
   const { rows } = await pool.query(
-    `SELECT id, title, start_at, end_at, context, recurrence FROM events WHERE title ILIKE $1 ORDER BY start_at LIMIT 3`,
+    `SELECT id, title, start_at, end_at, tags, recurrence FROM events WHERE title ILIKE $1 ORDER BY start_at LIMIT 3`,
     [`%${keyword}%`]
   );
   return rows;
@@ -301,7 +353,8 @@ async function updateEvent(id, updates) {
   const values = [];
   let idx = 1;
   if (updates.title !== undefined) { fields.push(`title = $${idx++}`); values.push(updates.title); }
-  if (updates.start_at !== undefined) { fields.push(`start_at = $${idx++}`); values.push(updates.start_at); }
+  // Moving an event re-arms its reminder — otherwise a rescheduled event stays claimed.
+  if (updates.start_at !== undefined) { fields.push(`start_at = $${idx++}`, 'reminded = false'); values.push(updates.start_at); }
   if (updates.end_at !== undefined) { fields.push(`end_at = $${idx++}`); values.push(updates.end_at); }
   if (updates.recurrence !== undefined) { fields.push(`recurrence = $${idx++}`); values.push(updates.recurrence); }
   if (!fields.length) return;
@@ -309,13 +362,19 @@ async function updateEvent(id, updates) {
   await pool.query(`UPDATE events SET ${fields.join(', ')} WHERE id = $${idx}`, values);
 }
 
-async function getEventsStartingSoon(minutesFrom = 14, minutesTo = 16) {
+// Claims the rows it returns by flipping `reminded`, so a wider window can't double-fire
+// and callers don't need their own dedup state. Window defaults cover a 15-min sweep.
+async function getEventsStartingSoon(minutesFrom = 5, minutesTo = 20) {
   const { rows } = await pool.query(
-    `SELECT id, title, start_at, context FROM events
-     WHERE recurrence = 'none'
-       AND start_at >= NOW() + ($1 || ' minutes')::interval
-       AND start_at < NOW() + ($2 || ' minutes')::interval
-     ORDER BY start_at`,
+    `UPDATE events SET reminded = true
+     WHERE id IN (
+       SELECT id FROM events
+       WHERE recurrence = 'none'
+         AND reminded = false
+         AND start_at >= NOW() + ($1 || ' minutes')::interval
+         AND start_at < NOW() + ($2 || ' minutes')::interval
+     )
+     RETURNING id, title, start_at, context`,
     [minutesFrom, minutesTo]
   );
   return rows;
@@ -352,16 +411,16 @@ async function getStaleTodos(days = 5) {
 async function getWeeklyActivity() {
   const [completedTodos, addedTodos, newLearnings, newNotes] = await Promise.all([
     pool.query(
-      `SELECT content, context FROM todos WHERE done = true AND completed_at >= NOW() - INTERVAL '7 days' ORDER BY completed_at DESC`
+      `SELECT content, tags FROM todos WHERE done = true AND completed_at >= NOW() - INTERVAL '7 days' ORDER BY completed_at DESC`
     ),
     pool.query(
-      `SELECT content, context FROM todos WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
+      `SELECT content, tags FROM todos WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
     ),
     pool.query(
       `SELECT topic, content FROM learnings WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
     ),
     pool.query(
-      `SELECT content, context FROM notes WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
+      `SELECT content, tags FROM notes WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC`
     ),
   ]);
   return {
@@ -386,27 +445,25 @@ async function saveSkill(name, description, instructions) {
   );
 }
 
-async function searchMemory(query, embedding = null, currentMode = 'personal') {
+async function searchMemory(query, embedding = null) {
   if (embedding) {
     const vectorStr = `[${embedding.join(',')}]`;
     const [todos, notes, learnings, knowledge] = await Promise.all([
       pool.query(
-        `SELECT 'todo' as type, id, content, context, 1 - (embedding <=> $1) as score FROM todos WHERE done = false ORDER BY embedding <=> $1 LIMIT 3`,
+        `SELECT 'todo' as type, id, content, tags, 1 - (embedding <=> $1) as score FROM todos WHERE done = false ORDER BY embedding <=> $1 LIMIT 3`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'note' as type, id, content, context, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
+        `SELECT 'note' as type, id, content, tags, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'learning' as type, id, topic as content, context, 1 - (embedding <=> $1) as score FROM learnings ORDER BY embedding <=> $1 LIMIT 5`,
+        `SELECT 'learning' as type, id, topic as content, tags, 1 - (embedding <=> $1) as score FROM learnings ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'knowledge' as type, id, fact as content, context, 
-         (1 - (embedding <=> $1)) + (CASE WHEN context = $2 THEN 0.2 ELSE 0 END) as score 
-         FROM knowledge ORDER BY score DESC LIMIT 5`,
-        [vectorStr, currentMode]
+        `SELECT 'knowledge' as type, id, fact as content, tags, 1 - (embedding <=> $1) as score FROM knowledge ORDER BY score DESC LIMIT 5`,
+        [vectorStr]
       ),
     ]);
 
@@ -425,15 +482,15 @@ async function searchMemory(query, embedding = null, currentMode = 'personal') {
   // Fallback to basic ILIKE
   const [todos, notes, learnings] = await Promise.all([
     pool.query(
-      `SELECT 'todo' as type, content, context FROM todos WHERE content ILIKE $1 AND done = false LIMIT 5`,
+      `SELECT 'todo' as type, content, tags FROM todos WHERE content ILIKE $1 AND done = false LIMIT 5`,
       [`%${query}%`]
     ),
     pool.query(
-      `SELECT 'note' as type, content, context FROM notes WHERE content ILIKE $1 LIMIT 5`,
+      `SELECT 'note' as type, content, tags FROM notes WHERE content ILIKE $1 LIMIT 5`,
       [`%${query}%`]
     ),
     pool.query(
-      `SELECT 'learning' as type, topic as content, context FROM learnings WHERE topic ILIKE $1 OR content ILIKE $1 LIMIT 5`,
+      `SELECT 'learning' as type, topic as content, tags FROM learnings WHERE topic ILIKE $1 OR content ILIKE $1 LIMIT 5`,
       [`%${query}%`]
     ),
   ]);
@@ -442,15 +499,13 @@ async function searchMemory(query, embedding = null, currentMode = 'personal') {
 
 // --- Standup data ---
 
-async function getYesterdayActivity(context) {
+async function getYesterdayActivity() {
   const [completed, notes] = await Promise.all([
     pool.query(
-      `SELECT content FROM todos WHERE context = $1 AND done = true AND completed_at >= NOW() - INTERVAL '24 hours' ORDER BY completed_at DESC LIMIT 10`,
-      [context]
+      `SELECT content FROM todos WHERE done = true AND completed_at >= NOW() - INTERVAL '24 hours' ORDER BY completed_at DESC LIMIT 10`
     ),
     pool.query(
-      `SELECT content FROM notes WHERE context = $1 AND created_at >= NOW() - INTERVAL '24 hours' ORDER BY created_at DESC LIMIT 5`,
-      [context]
+      `SELECT content FROM notes WHERE created_at >= NOW() - INTERVAL '24 hours' ORDER BY created_at DESC LIMIT 5`
     ),
   ]);
   return { completed: completed.rows, notes: notes.rows };
@@ -505,28 +560,6 @@ async function removePushToken(token) {
   );
 }
 
-// --- Mode override (persisted so it survives restarts) ---
-
-async function saveModeOverride(mode, expiry) {
-  await pool.query(
-    `INSERT INTO state (key, value, expires_at)
-     VALUES ('mode_override', $1, $2)
-     ON CONFLICT (key) DO UPDATE SET value = $1, expires_at = $2`,
-    [mode, expiry]
-  );
-}
-
-async function loadModeOverride() {
-  const { rows } = await pool.query(
-    `SELECT value, expires_at FROM state
-     WHERE key = 'mode_override' AND expires_at > NOW()`
-  );
-  return rows[0] || null;
-}
-
-async function clearModeOverride() {
-  await pool.query(`DELETE FROM state WHERE key = 'mode_override'`);
-}
 
 // --- Reminders ---
 
@@ -569,9 +602,9 @@ async function getMessageCount() {
 
 // --- Goals (One Big Thing) ---
 
-async function saveGoal(content, context) {
+async function saveGoal(content, tags = []) {
   await pool.query(
-    'INSERT INTO goals (content, context) VALUES ($1, $2)',
+    'INSERT INTO goals (content, tags) VALUES ($1, $2)',
     [content, context]
   );
 }
@@ -588,12 +621,11 @@ async function completeGoal(id) {
 }
 
 async function getSummaryStats() {
-  const [hexTodos, srqTodos, unreviewed] = await Promise.all([
-    getPendingTodos('hexaware'),
-    getPendingTodos('smartresq'),
+  const [pendingTodos, unreviewed] = await Promise.all([
+    getPendingTodos(),
     getUnreviewedLearnings(),
   ]);
-  return { hexTodos, srqTodos, unreviewed };
+  return { pendingTodos, unreviewed };
 }
 
 async function updateTodoReminder(id, remindAt) {
@@ -817,7 +849,7 @@ module.exports = {
   saveInsight, getRecentInsights, getMessageCount,
   saveKnowledge, getAllKnowledge, trimConversations,
   saveContextSummary, getContextSummary,
-  saveModeOverride, loadModeOverride, clearModeOverride,
+  
   addEvent, getWeekEvents, getUpcomingEvents,
   listEvents, findEventByTitle, deleteEvent, updateEvent, getEventsStartingSoon,
   searchMemory, getYesterdayActivity,
@@ -827,6 +859,7 @@ module.exports = {
   getAllSkills, saveSkill,
   saveGoal, getPendingGoal, completeGoal,
   updateTodoReminder, setTodoReminderByContent, getEventById,
+  getUpcomingReminders, claimTodoReminder, claimEventReminder, EVENT_LEAD_MINUTES,
   savePushToken, getPushTokens, removePushToken,
   
   // New functions exported

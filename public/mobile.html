@@ -79,17 +79,7 @@ body {
 }
 .logo { font-size: 22px; font-weight: 900; letter-spacing: -0.04em; }
 .logo span { color: var(--acc); }
-.mode-pill {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--acc) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--acc) 30%, transparent);
-  color: var(--acc);
-  text-transform: uppercase;
-}
+
 
 /* ── Bottom nav ─────────────────────────────── */
 .bottom-nav {
@@ -162,17 +152,7 @@ body {
 }
 .stat-l { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--t2); margin-top: 6px; }
 
-/* ── Mode card ──────────────────────────────── */
-.mode-card {
-  margin: 0 20px 16px;
-  background: var(--s1);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 16px;
-}
-.mode-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--t3); margin-bottom: 6px; }
-.mode-name { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; color: var(--acc); margin-bottom: 4px; }
-.mode-desc { font-size: 12px; color: var(--t2); line-height: 1.5; }
+
 
 /* ── List rows ──────────────────────────────── */
 .list-section { padding: 0 20px; margin-bottom: 20px; }
@@ -430,7 +410,7 @@ body {
   <!-- HEADER -->
   <div class="mobile-header">
     <div class="logo">blu<span>.</span></div>
-    <div class="mode-pill" id="mode-pill">—</div>
+    
   </div>
 
   <!-- ── HOME ──────────────────────────────────────────── -->
@@ -452,12 +432,7 @@ body {
         </div>
       </div>
 
-      <!-- Mode -->
-      <div class="mode-card">
-        <div class="mode-label">Current mode</div>
-        <div class="mode-name" id="home-mode-name">—</div>
-        <div class="mode-desc" id="home-mode-desc">Loading…</div>
-      </div>
+      
 
       <!-- Todos -->
       <div class="list-section">
@@ -503,7 +478,7 @@ body {
       </div>
       <div class="ctx-tabs">
         <div class="ctx-tab active" data-ctx="all">All</div>
-        <div class="ctx-tab" data-ctx="hexaware">Hexaware</div>
+        <div class="ctx-tab" data-ctx="all">All</div>
         <div class="ctx-tab" data-ctx="smartresq">SmartResQ</div>
         <div class="ctx-tab" data-ctx="personal">Personal</div>
       </div>
@@ -591,8 +566,8 @@ body {
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const API   = (path) => `${path}?token=${TOKEN}`;
 
-const CTX_COLOR = { hexaware:'var(--hex)', smartresq:'var(--srq)', personal:'var(--per)' };
-const MODE_NAMES = { hexaware:'Hexaware', smartresq:'SmartResQ', personal:'Personal' };
+const CTX_COLOR = {};
+
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -613,11 +588,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => switchScreen(item.dataset.screen));
 });
 
-// ── Accent color by mode ───────────────────────────────────────
-function setAccent(mode) {
-  const c = { hexaware:'#4f8ef7', smartresq:'#34d399', personal:'#a78bfa' }[mode] || '#4f8ef7';
-  document.documentElement.style.setProperty('--acc', c);
-}
+function setAccent() {}
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(iso) {
@@ -639,15 +610,15 @@ async function loadHome() {
     const r = await fetch(API('/dashboard/api/status'));
     const d = await r.json();
 
-    setAccent(d.mode);
-    document.getElementById('mode-pill').textContent = d.modeLabel;
+    
+    
     document.getElementById('stat-todos').textContent = d.todos.total;
     document.getElementById('stat-prs').textContent   = d.prs;
     document.getElementById('stat-issues').textContent = d.issues;
-    document.getElementById('home-mode-name').textContent = d.modeLabel;
-    document.getElementById('home-mode-desc').textContent = d.modeDesc;
+    
+    
 
-    const allTodos = [...d.todos.hexaware, ...d.todos.smartresq];
+    const allTodos = d.todos.pending || [];
     document.getElementById('home-todo-count').textContent = allTodos.length;
     state.todos = allTodos;
 
@@ -690,7 +661,7 @@ async function loadTodos(ctx) {
     const r = await fetch(url);
     const d = await r.json();
     const todos = ctx === 'all'
-      ? [...(d.hexaware||[]), ...(d.smartresq||[]), ...(d.personal||[])]
+      ? d.pending || []
       : (d[ctx] || (Array.isArray(d) ? d : []));
     state.todos = todos;
     renderTodos(todos);
@@ -791,7 +762,7 @@ async function loadCalendar() {
       const evs = evMap[d]||[];
       const isToday = d===today;
       const dots = evs.slice(0,3).map(ev=>{
-        const c = ev.context==='hexaware'?'#4f8ef7':ev.context==='smartresq'?'#34d399':'#a78bfa';
+        const c = '#4f8ef7';
         return `<div class="cal-dot" style="background:${c}"></div>`;
       }).join('');
       cells += `<div class="cal-day${isToday?' today':''}" data-day="${d}" onclick="openDaySheet(${d})">

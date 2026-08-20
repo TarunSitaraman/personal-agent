@@ -141,7 +141,7 @@ let lastTodoCount = null;
 async function pollAndNudge() {
   try {
     const data = await apiGet('/api/todos');
-    const all = [...(data.hexaware || []), ...(data.smartresq || []), ...(data.personal || [])];
+    const all = data.pending || [];
     const count = all.length;
 
     if (lastTodoCount !== null && count > lastTodoCount) {
@@ -176,7 +176,7 @@ ipcMain.handle('api-chat', async (_, message) => {
 
 ipcMain.handle('api-todos', async () => {
   const d = await apiGet('/api/todos');
-  return [...(d?.hexaware || []), ...(d?.smartresq || []), ...(d?.personal || [])];
+  return d?.pending || [];
 });
 
 ipcMain.handle('api-events', async () => {
@@ -190,7 +190,7 @@ ipcMain.on('show-context-menu', (event) => {
     { label: 'Chat with Hex',  click: toggleChat },
     { label: 'See my todos',   click: async () => {
         const todos = await apiGet('/api/todos');
-        const all = [...(todos?.hexaware||[]), ...(todos?.smartresq||[]), ...(todos?.personal||[])];
+        const all = todos?.pending || [];
         const msg = all.length ? all.slice(0,5).map(t => `• ${t.content}`).join('\n') : 'No open todos!';
         petWin?.webContents.send('nudge', msg);
       }

@@ -5,9 +5,14 @@ node_modules/
 *.pem
 *.key
 
+# DB export for the Supabase migration — contains real notes, todos and
+# conversation history. Never commit.
+migration-export/
+
 # Mobile app
 mobile/node_modules/
 mobile/.expo/
 
 # Desktop pet
 desktop/node_modules/
+.env.backup-*

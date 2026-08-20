@@ -11,12 +11,8 @@ module.exports = async (req, res) => {
 
   if (req.method === 'GET') {
     try {
-      const [hex, srq, personal] = await Promise.all([
-        memory.getPendingTodos('hexaware'),
-        memory.getPendingTodos('smartresq'),
-        memory.getPendingTodos('personal'),
-      ]);
-      return res.json({ hexaware: hex, smartresq: srq, personal });
+      const [pending] = await Promise.all([memory.getPendingTodos()]);
+      return res.json({ pending });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }

@@ -100,12 +100,8 @@ router.delete('/push/register', async (req, res) => {
 // Get all pending todos grouped by context
 router.get('/todos', async (req, res) => {
   try {
-    const [hex, srq, personal] = await Promise.all([
-      memory.getPendingTodos('hexaware'),
-      memory.getPendingTodos('smartresq'),
-      memory.getPendingTodos('personal'),
-    ]);
-    res.json({ hexaware: hex, smartresq: srq, personal });
+    const [pending] = await Promise.all([memory.getPendingTodos()]);
+    res.json({ pending });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

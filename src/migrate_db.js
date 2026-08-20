@@ -90,6 +90,27 @@ async function main() {
     `);
     console.log('✔ prompt_versions table created/verified');
 
+    // 9. Reminder-fired flag on events — lets the reminder sweep claim rows atomically
+    // instead of relying on a narrow time window plus an in-process dedup Set.
+    await pool.query(`
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS reminded BOOLEAN DEFAULT false;
+    `);
+    console.log('✔ events.reminded column added/verified');
+
+    // 10. Tag columns on todos/events. The semantic-tagging refactor moved the code from a
+    // single `context` string to `tags` arrays (notes already had them) but the schema was
+    // never migrated, so every todo/event query referencing tags failed. Additive: `context`
+    // is left in place for the queries still reading it, and existing rows are backfilled.
+    await pool.query(`
+      ALTER TABLE todos  ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      UPDATE todos  SET tags = ARRAY[context]
+        WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
+      UPDATE events SET tags = ARRAY[context]
+        WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
+    `);
+    console.log('✔ todos/events tags columns added and backfilled from context');
+
     console.log('Migrations completed successfully!');
   } catch (err) {
     console.error('Migration error:', err);
