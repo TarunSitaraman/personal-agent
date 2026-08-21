@@ -1,6 +1,5 @@
 require('dotenv').config();
 const { handleIncoming } = require('../src/agent/brain');
-const { initContext } = require('../src/agent/context');
 
 function auth(req) {
   const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
@@ -15,7 +14,6 @@ module.exports = async (req, res) => {
   if (!message?.trim()) return res.status(400).json({ error: 'message required' });
 
   try {
-    await initContext();
     const reply = await handleIncoming(message.trim());
     res.json({ reply });
   } catch (err) {

@@ -47,7 +47,7 @@ async function handleButtonAction(id, from) {
       const eventId = id.slice(9);
       const ev = await memory.getEventById(eventId);
       const remindAt = new Date(Date.now() + 15 * 60 * 1000);
-      if (ev) await memory.addTodo(`Upcoming: ${ev.title}`, ev.context || 'personal', remindAt);
+      if (ev) await memory.addTodo(`Upcoming: ${ev.title}`, ev.tags || [], remindAt);
       await sendMessage(from, "I'll remind you again in 15 minutes.");
       return true;
     }
