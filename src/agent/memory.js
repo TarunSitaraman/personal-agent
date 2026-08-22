@@ -823,6 +823,13 @@ async function deleteState(key) {
   await pool.query('DELETE FROM state WHERE key = $1', [key]);
 }
 
+// Escape hatch for one-off maintenance scripts. Not for application code — use a named
+// function so the query lives next to the schema it depends on.
+async function rawQuery(text, params = []) {
+  const { rows } = await pool.query(text, params);
+  return rows;
+}
+
 async function getOldNotes(days = 30) {
   const { rows } = await pool.query(
     `SELECT * FROM notes WHERE created_at < NOW() - ($1 || ' days')::interval`,
@@ -871,4 +878,5 @@ module.exports = {
   reviewLearning, getDueLearnings,
   updateNoteContent, saveState, getState, deleteState,
   getOldNotes, getConversationsLastWeek,
+  rawQuery,
 };

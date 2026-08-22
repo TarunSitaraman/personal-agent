@@ -39,13 +39,46 @@ function markModelOk(id)     { modelFailCache.delete(id); }
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// text-embedding-004 has been retired. gemini-embedding-001 is natively 3072-dimensional,
+// which exceeds pgvector's 2000-dimension HNSW index limit, so we ask for a 768-dimensional
+// Matryoshka truncation to match the existing vector(768) columns and keep the HNSW indexes.
+// Changing EMBEDDING_DIMS requires a schema migration and a full re-embed.
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "gemini-embedding-001";
+const EMBEDDING_DIMS = 768;
+
+// Truncated Matryoshka vectors are not unit length; Google recommends renormalising them.
+function normalize(values) {
+  const norm = Math.sqrt(values.reduce((sum, v) => sum + v * v, 0));
+  return norm > 0 ? values.map(v => v / norm) : values;
+}
+
+// Returning null on failure keeps capture working without embeddings, but it also hid a
+// months-long outage: every row was written with a NULL embedding and semantic search
+// silently matched nothing. Warn loudly and only once per process so the cause is obvious.
+let embeddingFailureLogged = false;
+
 async function getEmbedding(text) {
+  if (!process.env.GEMINI_API_KEY) {
+    if (!embeddingFailureLogged) {
+      embeddingFailureLogged = true;
+      console.error('[Embedding] DISABLED — GEMINI_API_KEY is not set. Semantic search and ' +
+        'duplicate detection will return nothing until it is configured.');
+    }
+    return null;
+  }
   try {
-    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-    const result = await model.embedContent(text);
-    return result.embedding.values;
+    const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
+    const result = await model.embedContent({
+      content: { parts: [{ text }] },
+      outputDimensionality: EMBEDDING_DIMS,
+    });
+    return normalize(result.embedding.values);
   } catch (err) {
-    console.error('[Embedding Error]:', err.message);
+    if (!embeddingFailureLogged) {
+      embeddingFailureLogged = true;
+      console.error(`[Embedding] FAILING (${EMBEDDING_MODEL}): ${err.message} — rows are being ` +
+        'saved without embeddings, so semantic recall is degraded.');
+    }
     return null;
   }
 }
@@ -1681,5 +1714,6 @@ module.exports = {
   generateStaleAlert, 
   generateWeeklyReview, 
   generateTechPulse,
-  autoSummarizeOldNotes
+  autoSummarizeOldNotes,
+  getEmbedding
 };
