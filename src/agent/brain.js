@@ -1183,12 +1183,33 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
         }
         return "No content to learn.";
 
-      case "complete_todo":
-        if (data?.content) {
-          await memory.completeTodoByContent(data.content);
-          return `Marked todo as completed: "${data.content}"`;
+      // Never claim success without checking what actually changed. The old version ignored
+      // the returned rows, so a keyword that matched nothing still reported "marked as
+      // completed" while the todo stayed pending and resurfaced later.
+      case "complete_todo": {
+        if (!data?.content) return "No todo content specified to complete.";
+
+        const completed = await memory.completeTodoByContent(data.content);
+        if (completed.length === 1) return `Marked as done: "${completed[0].content}"`;
+        if (completed.length > 1) {
+          return `Marked ${completed.length} as done: ${completed.map(t => `"${t.content}"`).join(', ')}`;
         }
-        return "No todo content specified to complete.";
+
+        // Nothing matched — say so, and offer the closest pending items by word overlap.
+        const pending = await memory.getPendingTodos();
+        if (!pending.length) return `Nothing matched "${data.content}" — you have no pending todos.`;
+
+        const words = data.content.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+        const near = pending
+          .map(t => ({ t, score: words.reduce((n, w) => n + (t.content.toLowerCase().includes(w) ? 1 : 0), 0) }))
+          .filter(x => x.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3);
+
+        if (!near.length) return `I couldn't find a pending todo matching "${data.content}". Nothing was changed.`;
+        return `I couldn't find an exact match for "${data.content}". Did you mean:\n` +
+          near.map((x, i) => `${i + 1}. ${x.t.content}`).join('\n');
+      }
 
       case "set_reminder": {
         if (!data?.content) return "No reminder content provided.";

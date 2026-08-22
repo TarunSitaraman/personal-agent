@@ -236,7 +236,7 @@ async function getAnalytics() {
     `),
     pool.query(`
       SELECT * FROM (
-        SELECT 'todo' AS type, content, tags, created_at FROM todos ORDER BY created_at DESC LIMIT 5
+        SELECT 'todo' AS type, content, tags, created_at FROM todos WHERE done = false ORDER BY created_at DESC LIMIT 5
       ) t
       UNION ALL
       SELECT * FROM (
