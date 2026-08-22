@@ -5,8 +5,19 @@
 //
 // Only fills rows whose embedding IS NULL, so it is idempotent and cannot overwrite data.
 require('dotenv').config();
+const crypto = require('crypto');
 const memory = require('../src/agent/memory');
 const { getEmbedding } = require('../src/agent/brain');
+
+// Header only — a token in the query string is recorded in request logs, and this one also
+// guards /api/todos. Constant-time compare so the check cannot be timed.
+function authorised(req) {
+  const supplied = req.headers.authorization?.replace('Bearer ', '') || '';
+  const expected = process.env.DASHBOARD_TOKEN || '';
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  return a.length === b.length && expected.length > 0 && crypto.timingSafeEqual(a, b);
+}
 
 const TABLES = [
   { name: 'todos', text: 'content' },
@@ -16,8 +27,7 @@ const TABLES = [
 ];
 
 module.exports = async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  if (token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!authorised(req)) return res.status(401).json({ error: 'Unauthorized' });
 
   const report = {};
   let total = 0;
