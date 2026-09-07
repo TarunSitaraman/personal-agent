@@ -60,10 +60,12 @@ personal-agent/
 │   ├── migrate_db.js      # Idempotent migrations — run after pulling
 │   ├── scheduler/
 │   │   ├── briefs.js      # Cron jobs + reminder sweep
+│   │   ├── delivery.js    # Reminder message format + send — shared by all 3 delivery paths
 │   │   └── timers.js      # Exact-time reminder delivery
 │   └── whatsapp/
 │       ├── webhook.js     # Incoming handler
 │       └── send.js        # Outgoing sender
+├── test/                  # node --test, no framework dependency (`npm test`)
 ├── PLAN.md                # Full implementation plan (for Gemini)
 ├── CLAUDE.md              # This file
 ├── .env.example
@@ -101,13 +103,22 @@ TZ=Asia/Kolkata
 - [x] Webhook URL registered in Meta app
 - [x] End-to-end test: message bot → response
 
-## Known issues / in flight (2026-08-19)
-- The semantic-tagging refactor is **uncommitted** and was partially applied by codegen scripts
-  (`refactor_*.js` at repo root). It left `src/agent/brain.js`, `src/routes/dashboard.js`, and
-  `src/server.js` unrunnable; all three are now repaired. Review the diff before committing.
+## Conventions
+- **No AI attribution in commits.** No `Co-Authored-By`, no session trailers, no tool mentions
+  in commit messages or PR descriptions. Conventional-commit format only.
+- Run `npm test` before committing. Tests use the built-in `node --test` runner — deliberately
+  no test framework dependency.
+
+## Known issues / in flight (2026-09-07)
 - `todos.tags` / `events.tags` have been added and backfilled from `context`. Both columns
   coexist — code still reads `context` in places. Finish the migration or keep both in sync.
-- Reminder delivery is timer-driven on `src/`, sweep-driven on `api/`. Keep both in step.
+- Inbound WhatsApp button handling is duplicated across `src/whatsapp/webhook.js`,
+  `src/agent/queueProcessor.js` and `api/webhook.js` — the inbound mirror of the outbound
+  duplication that `scheduler/delivery.js` resolved. Same treatment needed.
+- The `refactor_*.js` / `rewrite_docs.js` scripts at repo root are spent one-off codegen from the
+  semantic-tagging refactor (applied in `4f158be`). Untracked; delete when confirmed unneeded.
+- Reminder delivery: `src/` arms exact timers, `api/` sweeps on a 15-min cron. Both now share the
+  same message/send implementation (`src/scheduler/delivery.js`) — only the *trigger* differs.
 
 ## Key contacts / references
 - SmartResQ-dev lives at: `C:\Users\Tarun\Documents\SmartResQ-dev`

@@ -1715,5 +1715,11 @@ module.exports = {
   generateWeeklyReview, 
   generateTechPulse,
   autoSummarizeOldNotes,
-  getEmbedding
+  getEmbedding,
+  // Pure helpers — exported for tests. Not part of the agent's runtime surface.
+  extractFirstJSON,
+  extractPartialReply,
+  validateJsonSchema,
+  filterKnowledge,
+  PREFILTER_RULES,
 };

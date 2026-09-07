@@ -12,8 +12,7 @@
 // Serverless (api/cron/*) can't hold timers and keeps using the sweep alone.
 
 const memory = require('../agent/memory');
-const { sendButtonMessage } = require('../whatsapp/send');
-const { sendReminderPush, sendNudgePush } = require('../push/push');
+const { deliverTodoReminder, deliverEventReminder } = require('./delivery');
 
 // Must be >= the sweep interval that calls refresh(), or items can fall between passes.
 const HORIZON_MINUTES = 20;
@@ -39,26 +38,13 @@ function armTimer(key, fireAt, deliver) {
 async function deliverTodo(id) {
   const todo = await memory.claimTodoReminder(id);
   if (!todo) return; // already delivered, completed, or cancelled
-
-  await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, `Reminder: ${todo.content}`, [
-    { id: `rdone_${todo.id}`, title: 'Done' },
-    { id: `rsnooze_60_${todo.id}`, title: 'Snooze 1hr' },
-  ]);
-  await sendReminderPush(todo.id, todo.content);
+  await deliverTodoReminder(todo);
 }
 
 async function deliverEvent(id) {
   const ev = await memory.claimEventReminder(id);
   if (!ev) return; // already delivered or the event was removed
-
-  const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
-  const minsAway = Math.max(1, Math.round((new Date(ev.start_at) - Date.now()) / 60000));
-
-  await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, `Starting in ${minsAway} min: *${ev.title}* at ${timeStr}`, [
-    { id: `evnoted_${ev.id}`, title: 'Noted' },
-    { id: `evsnooze_${ev.id}`, title: '+15 min' },
-  ]);
-  await sendNudgePush(`Starting in ${minsAway} min: ${ev.title} at ${timeStr}`);
+  await deliverEventReminder(ev);
 }
 
 // Arms timers for everything due within the horizon. Safe to call often — already-armed

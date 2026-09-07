@@ -1,9 +1,10 @@
 const cron = require('node-cron');
 const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview, generateTechPulse } = require('../agent/brain');
 const { sendMessage, sendButtonMessage, sendListMessage } = require('../whatsapp/send');
-const { sendReminderPush, sendBriefPush, sendNudgePush } = require('../push/push');
+const { sendBriefPush, sendNudgePush } = require('../push/push');
 const memory = require('../agent/memory');
 const timers = require('./timers');
+const { sweepDueReminders } = require('./delivery');
 
 function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
@@ -51,35 +52,9 @@ function startScheduler() {
       console.error('Queue processing error:', err.message);
     }
 
-    try {
-      const due = await memory.getDueTodoReminders();
-      for (const todo of due) {
-        await sendButtonMessage(myNumber, `Reminder: ${todo.content}`, [
-          { id: `rdone_${todo.id}`, title: 'Done' },
-          { id: `rsnooze_60_${todo.id}`, title: 'Snooze 1hr' },
-        ]);
-        await sendReminderPush(todo.id, todo.content);
-      }
-    } catch (err) {
-      console.error('Reminder check error:', err.message);
-    }
-
-    try {
-      // Catch-up only: events whose 15-min mark already passed (missed while the process was
-      // down). Anything still in the future is delivered exactly on time by scheduler/timers.
-      const upcoming = await memory.getEventsStartingSoon(0, memory.EVENT_LEAD_MINUTES);
-      for (const ev of upcoming) {
-        const timeStr = new Date(ev.start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' });
-        const minsAway = Math.max(1, Math.round((new Date(ev.start_at) - Date.now()) / 60000));
-        await sendButtonMessage(myNumber, `Starting in ${minsAway} min: *${ev.title}* at ${timeStr}`, [
-          { id: `evnoted_${ev.id}`, title: 'Noted' },
-          { id: `evsnooze_${ev.id}`, title: '+15 min' },
-        ]);
-        await sendNudgePush(`Starting in ${minsAway} min: ${ev.title} at ${timeStr}`);
-      }
-    } catch (err) {
-      console.error('Event reminder error:', err.message);
-    }
+    // Catch-up only: anything already overdue (missed while the process was down). Anything
+    // still in the future is delivered exactly on time by scheduler/timers.
+    await sweepDueReminders();
 
     // Arm exact-time delivery for everything due before the next sweep.
     await timers.refresh();
