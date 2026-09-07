@@ -605,7 +605,7 @@ async function getMessageCount() {
 async function saveGoal(content, tags = []) {
   await pool.query(
     'INSERT INTO goals (content, tags) VALUES ($1, $2)',
-    [content, context]
+    [content, tags]
   );
 }
 
