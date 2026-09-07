@@ -1,9 +1,9 @@
 require('dotenv').config();
 const { handleIncoming } = require('../src/agent/brain');
-const { sendMessage, sendButtonMessage } = require('../src/whatsapp/send');
+const { sendMessage } = require('../src/whatsapp/send');
 const { transcribeAudio } = require('../src/integrations/whisper');
 const { analyzeImage } = require('../src/integrations/vision');
-const memory = require('../src/agent/memory');
+const { handleButtonAction, parseInteractive } = require('../src/whatsapp/buttons');
 
 // Dedup cache — WhatsApp retries if it doesn't get 200 quickly enough
 const seenIds = new Map();
@@ -14,68 +14,6 @@ function isDuplicate(msgId) {
   }
   if (seenIds.has(msgId)) return true;
   seenIds.set(msgId, now);
-  return false;
-}
-
-async function handleButtonAction(id, from) {
-  try {
-    if (id.startsWith('ltdone_')) {
-      await memory.completeTodo(id.slice(7));
-      await sendMessage(from, 'Done. Removed from your list.');
-      return true;
-    }
-    if (id.startsWith('rdone_')) {
-      await memory.completeTodo(id.slice(6));
-      await sendMessage(from, 'Done. Removed from your list.');
-      return true;
-    }
-    if (id.startsWith('rsnooze_')) {
-      const parts = id.split('_');
-      const mins = parseInt(parts[1]) || 60;
-      const todoId = parts.slice(2).join('_');
-      await memory.updateTodoReminder(todoId, new Date(Date.now() + mins * 60 * 1000));
-      await sendMessage(from, `Snoozed ${mins} min.`);
-      return true;
-    }
-    if (id.startsWith('evnoted_')) {
-      await sendMessage(from, 'Good luck!');
-      return true;
-    }
-    if (id.startsWith('evsnooze_')) {
-      const ev = await memory.getEventById(id.slice(9));
-      if (ev) await memory.addTodo(`Upcoming: ${ev.title}`, ev.tags || [], new Date(Date.now() + 15 * 60 * 1000));
-      await sendMessage(from, "I'll remind you again in 15 minutes.");
-      return true;
-    }
-    if (id.startsWith('rem_tonight_')) {
-      const keyword = id.slice('rem_tonight_'.length).replace(/_/g, ' ');
-      const now = new Date();
-      const remindAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0);
-      if (remindAt <= now) remindAt.setDate(remindAt.getDate() + 1);
-      await memory.setTodoReminderByContent(keyword, remindAt);
-      await sendMessage(from, 'Reminder set for 9pm.');
-      return true;
-    }
-    if (id.startsWith('rem_tmrw_')) {
-      const keyword = id.slice('rem_tmrw_'.length).replace(/_/g, ' ');
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      await memory.setTodoReminderByContent(keyword, new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate(), 8, 0, 0));
-      await sendMessage(from, 'Reminder set for tomorrow 8am.');
-      return true;
-    }
-    if (id === 'rem_no')       { await sendMessage(from, 'Ok, no reminder.'); return true; }
-    if (id === 'stale_dismiss') { await sendMessage(from, 'Got it.'); return true; }
-    if (id === 'stale_snooze')  { await sendMessage(from, "I'll check back in a couple of days."); return true; }
-    if (id === 'obt_skip')      { await sendMessage(from, 'No problem. Have a focused session.'); return true; }
-    if (id === 'obt_set') {
-      const reply = await handleIncoming('I want to set my One Big Thing for tonight', from);
-      if (reply) await sendMessage(from, reply);
-      return true;
-    }
-  } catch (err) {
-    console.error('[Button] Handler error:', id, err.message);
-  }
   return false;
 }
 
@@ -119,18 +57,7 @@ module.exports = async (req, res) => {
       }
       text = transcription;
     } else if (message.type === 'interactive') {
-      const interactive = message.interactive;
-      let buttonId, buttonTitle;
-      if (interactive?.type === 'button_reply') {
-        buttonId = interactive.button_reply?.id;
-        buttonTitle = interactive.button_reply?.title;
-      } else if (interactive?.type === 'list_reply') {
-        buttonId = interactive.list_reply?.id;
-        buttonTitle = interactive.list_reply?.title;
-      } else {
-        buttonId = interactive?.button_reply?.id;
-        buttonTitle = interactive?.button_reply?.title;
-      }
+      const { buttonId, buttonTitle } = parseInteractive(message.interactive);
       if (!buttonId && !buttonTitle) return res.status(200).end();
       if (buttonId && await handleButtonAction(buttonId, from)) return res.status(200).end();
       text = buttonTitle || '';

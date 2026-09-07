@@ -63,6 +63,7 @@ personal-agent/
 │   │   ├── delivery.js    # Reminder message format + send — shared by all 3 delivery paths
 │   │   └── timers.js      # Exact-time reminder delivery
 │   └── whatsapp/
+│       ├── buttons.js     # Inbound button/list handling — shared by both webhook entry points
 │       ├── webhook.js     # Incoming handler
 │       └── send.js        # Outgoing sender
 ├── test/                  # node --test, no framework dependency (`npm test`)
@@ -112,9 +113,11 @@ TZ=Asia/Kolkata
 ## Known issues / in flight (2026-09-07)
 - `todos.tags` / `events.tags` have been added and backfilled from `context`. Both columns
   coexist — code still reads `context` in places. Finish the migration or keep both in sync.
-- Inbound WhatsApp button handling is duplicated across `src/whatsapp/webhook.js`,
-  `src/agent/queueProcessor.js` and `api/webhook.js` — the inbound mirror of the outbound
-  duplication that `scheduler/delivery.js` resolved. Same treatment needed.
+- `src/whatsapp/webhook.js` still imports `transcribeAudio` / `analyzeImage` and defines an
+  unused `isDuplicate`/`seenIds` pair — all dead since media handling moved to the queue
+  processor. Left in place as pre-existing; safe to remove.
+- Brief composition duplicates the stale-todo button block between `src/scheduler/briefs.js`
+  and `api/cron/morning.js`. Smaller than the handler duplication was, but the same shape.
 - The `refactor_*.js` / `rewrite_docs.js` scripts at repo root are spent one-off codegen from the
   semantic-tagging refactor (applied in `4f158be`). Untracked; delete when confirmed unneeded.
 - Reminder delivery: `src/` arms exact timers, `api/` sweeps on a 15-min cron. Both now share the
