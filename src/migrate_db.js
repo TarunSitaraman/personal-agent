@@ -97,19 +97,33 @@ async function main() {
     `);
     console.log('✔ events.reminded column added/verified');
 
-    // 10. Tag columns on todos/events. The semantic-tagging refactor moved the code from a
-    // single `context` string to `tags` arrays (notes already had them) but the schema was
-    // never migrated, so every todo/event query referencing tags failed. Additive: `context`
-    // is left in place for the queries still reading it, and existing rows are backfilled.
+    // 10. Tag columns. The semantic-tagging refactor moved the code from a single `context`
+    // string to `tags` arrays (notes already had them) but the schema was never migrated, so
+    // every query referencing tags failed. Additive: `context` is left in place for the queries
+    // still reading it, and existing rows are backfilled.
+    //
+    // knowledge and goals were missed the first time round, and the code writes `tags` to both.
+    // Every learn_context and set_goal therefore failed with `column "tags" does not exist` —
+    // silently, because executeAction used to answer with the optimistic confirmation on error.
+    // The live effect was that Blu could not learn a single fact about Tarun and no One Big Thing
+    // was ever stored (goals held zero rows). See test/schema.tags.test.js, which fails if the
+    // code writes tags to a table this migration does not cover.
     await pool.query(`
-      ALTER TABLE todos  ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
-      ALTER TABLE events ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
-      UPDATE todos  SET tags = ARRAY[context]
+      ALTER TABLE todos     ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      ALTER TABLE events    ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      ALTER TABLE notes     ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      ALTER TABLE goals     ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      UPDATE todos     SET tags = ARRAY[context]
         WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
-      UPDATE events SET tags = ARRAY[context]
+      UPDATE events    SET tags = ARRAY[context]
+        WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
+      UPDATE knowledge SET tags = ARRAY[context]
+        WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
+      UPDATE goals     SET tags = ARRAY[context]
         WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
     `);
-    console.log('✔ todos/events tags columns added and backfilled from context');
+    console.log('✔ tags columns added and backfilled on todos/events/notes/knowledge/goals');
 
     console.log('Migrations completed successfully!');
   } catch (err) {
