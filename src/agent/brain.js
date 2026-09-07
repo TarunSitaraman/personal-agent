@@ -1453,7 +1453,12 @@ Follow the instructions exactly and return a clear, helpful response.`;
     }
   } catch (err) {
     console.error("Action execution error:", action, err.message);
-    return defaultReply;
+    // Never fall back to defaultReply here. It is the optimistic confirmation written before the
+    // work was attempted — the model's "Todo added: buy milk", or the prefilter's "Added to your
+    // todos." — so returning it reports success for something that just failed. When the database
+    // was unreachable this silently swallowed every capture while still telling Tarun it saved.
+    // Same principle as complete_todo above: never claim success without checking what changed.
+    return "Something went wrong on my end and that didn't go through — it's logged. Try again in a moment.";
   }
 }
 
@@ -1716,7 +1721,8 @@ module.exports = {
   generateTechPulse,
   autoSummarizeOldNotes,
   getEmbedding,
-  // Pure helpers — exported for tests. Not part of the agent's runtime surface.
+  // Exported for tests. Not part of the agent's runtime surface.
+  executeAction,
   extractFirstJSON,
   extractPartialReply,
   validateJsonSchema,
