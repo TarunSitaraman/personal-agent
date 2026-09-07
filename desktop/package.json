@@ -1,0 +1,12 @@
+{
+  "name": "hex-pet",
+  "version": "1.0.0",
+  "description": "Hex — floating desktop pet",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^31.0.0"
+  }
+}

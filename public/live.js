@@ -1,0 +1,149 @@
+(function () {
+  var token = new URLSearchParams(window.location.search).get('token') || '';
+
+  function esc(s) {
+    return String(s || '').split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');
+  }
+
+  function completeTodo(content, rowEl) {
+    rowEl.style.transition = 'opacity 0.3s, transform 0.3s';
+    rowEl.style.opacity = '0';
+    rowEl.style.transform = 'translateX(-100%)';
+    setTimeout(function () {
+      rowEl.remove();
+      var container = document.getElementById('sidebar-todos');
+      var countEl = document.getElementById('todos-count');
+      if (container && !container.querySelector('.row')) {
+        container.innerHTML = '<p class="nil">nothing open — all clear</p>';
+      }
+      if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent || '0') - 1);
+    }, 300);
+
+    fetch('/dashboard/api/complete-todo?token=' + token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content })
+    }).catch(function () {});
+  }
+
+  function addSwipeHandlers(rowEl, content) {
+    var startX = 0, startY = 0, isDragging = false;
+
+    rowEl.addEventListener('touchstart', function (e) {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      isDragging = false;
+    }, { passive: true });
+
+    rowEl.addEventListener('touchmove', function (e) {
+      var dx = e.touches[0].clientX - startX;
+      var dy = e.touches[0].clientY - startY;
+      if (!isDragging && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) isDragging = true;
+      if (!isDragging) return;
+      if (dx < 0) rowEl.style.transform = 'translateX(' + dx + 'px)';
+    }, { passive: true });
+
+    rowEl.addEventListener('touchend', function (e) {
+      var dx = e.changedTouches[0].clientX - startX;
+      if (isDragging && dx < -80) {
+        completeTodo(content, rowEl);
+      } else {
+        rowEl.style.transform = '';
+      }
+    });
+
+    // Desktop: double-click to complete
+    rowEl.addEventListener('dblclick', function () {
+      completeTodo(content, rowEl);
+    });
+  }
+
+  function renderGroup(todos, label, color) {
+    return todos.map(function (t, i) {
+      return {
+        content: t.content,
+        html: '<span class="row-num">' + (i + 1) + '</span>' +
+              '<span class="row-tag" style="color:' + color + '">' + label.toLowerCase() + '</span>' +
+              '<span class="row-body">' + esc(t.content) + '</span>'
+      };
+    });
+  }
+
+  function applyTodos(data) {
+    var container = document.getElementById('sidebar-todos');
+    var countEl   = document.getElementById('todos-count');
+    if (!container) return;
+
+    var total = (data.pending || []).length;
+    if (countEl) countEl.textContent = total;
+
+    if (!total) {
+      container.innerHTML = '<p class="nil">nothing open — all clear</p>';
+      return;
+    }
+
+    var groups = [].concat(
+      renderGroup(data.pending, 'Pending', '#4f8ef7')
+    );
+
+    container.innerHTML = '';
+    groups.forEach(function (item) {
+      var row = document.createElement('div');
+      row.className = 'row';
+      row.style.cssText = 'touch-action: pan-y; cursor: default; user-select: none;';
+      row.innerHTML = item.html;
+      addSwipeHandlers(row, item.content);
+      container.appendChild(row);
+    });
+  }
+
+  window.refreshTodos = function () {
+    fetch('/dashboard/api/todos?token=' + token)
+      .then(function (r) { return r.json(); })
+      .then(applyTodos)
+      .catch(function () {});
+  };
+
+  var CTX_COLOR = { default: '#4f8ef7' };
+
+  window.refreshCalendar = function () {
+    fetch('/dashboard/api/calendar?token=' + token)
+      .then(function (r) { return r.json(); })
+      .then(function (newMap) {
+        // Update the shared MAP so day popups show fresh data
+        window.MAP = newMap;
+
+        // Re-render dots on every calendar day cell
+        document.querySelectorAll('.mcal-day[data-day]').forEach(function (cell) {
+          var day = cell.dataset.day;
+          var evs = newMap[day] || [];
+          var existing = cell.querySelector('.mcal-dots');
+          if (existing) existing.remove();
+          if (evs.length) {
+            var wrap = document.createElement('div');
+            wrap.className = 'mcal-dots';
+            evs.slice(0, 3).forEach(function (ev) {
+              var dot = document.createElement('div');
+              dot.className = 'mcal-dot';
+              dot.style.background = CTX_COLOR[ev.context] || '#a78bfa';
+              wrap.appendChild(dot);
+            });
+            cell.appendChild(wrap);
+          }
+        });
+      })
+      .catch(function () {});
+  };
+
+  // Run immediately so initial server-rendered todos get swipe/dblclick handlers
+  window.refreshTodos();
+  setInterval(window.refreshTodos, 60000);
+  setInterval(window.refreshCalendar, 60000);
+
+  var es = new EventSource('/dashboard/stream?token=' + token);
+  es.addEventListener('refresh', function () {
+    window.refreshTodos();
+    window.refreshCalendar();
+  });
+  es.onerror = function () { es.close(); setTimeout(function () { window.location.reload(); }, 30000); };
+})();

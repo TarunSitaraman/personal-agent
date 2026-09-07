@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/webhook.js":        { "maxDuration": 60 },
+    "api/chat.js":           { "maxDuration": 60 },
+    "api/cron/morning.js":   { "maxDuration": 60 },
+    "api/cron/evening.js":   { "maxDuration": 60 },
+    "api/cron/nudge.js":     { "maxDuration": 60 },
+    "api/cron/goal.js":      { "maxDuration": 60 },
+    "api/cron/weekly.js":    { "maxDuration": 60 },
+    "api/cron/reminder.js":  { "maxDuration": 60 },
+    "api/cron/pulse.js":     { "maxDuration": 60 }
+  }
+}
