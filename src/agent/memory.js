@@ -1,12 +1,17 @@
 const { Pool } = require('pg');
 
+// Timezone is set as a connection startup parameter rather than by a query on the `connect`
+// event. The old version fired `client.query("SET timezone=...")` from the handler without
+// awaiting it, so it overlapped the first application query on that client and emitted
+// "Calling client.query() when the client is already executing a query" on every new connection.
+// pg queues those FIFO today, so the timezone was in fact applied correctly — but the pattern is
+// removed in pg@9, the un-caught promise was an unhandled rejection waiting to happen, and on
+// serverless (a new connection per cold start) it produced hundreds of warnings that buried real
+// errors in the runtime log. A startup parameter needs no query at all.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-});
-
-pool.on('connect', client => {
-  client.query("SET timezone='Asia/Kolkata'");
+  options: '-c timezone=Asia/Kolkata',
 });
 
 // --- Todos ---
