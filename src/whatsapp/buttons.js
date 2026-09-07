@@ -11,8 +11,10 @@
 // hub.notify() pushes an SSE refresh to any connected dashboard. On serverless the client set is
 // always empty, so the call is a harmless no-op there and both platforms can share this code.
 
+// Called through the module objects rather than destructured, so tests can substitute them with
+// node:test's mock.method — a destructured reference is captured at load and cannot be replaced.
 const memory = require('../agent/memory');
-const { sendMessage } = require('./send');
+const send = require('./send');
 const hub = require('../events/hub');
 
 // Parsed here rather than inline so the id format lives in one place.
@@ -40,7 +42,7 @@ async function handleButtonAction(id, from) {
     // List picker selection: tap a todo to mark it done
     if (id.startsWith('ltdone_')) {
       await memory.completeTodo(id.slice('ltdone_'.length));
-      await sendMessage(from, 'Done. Removed from your list.');
+      await send.sendMessage(from, 'Done. Removed from your list.');
       hub.notify();
       return true;
     }
@@ -48,7 +50,7 @@ async function handleButtonAction(id, from) {
     // Todo reminder: Done — mark the specific todo complete by ID
     if (id.startsWith('rdone_')) {
       await memory.completeTodo(id.slice('rdone_'.length));
-      await sendMessage(from, 'Done. Removed from your list.');
+      await send.sendMessage(from, 'Done. Removed from your list.');
       hub.notify();
       return true;
     }
@@ -57,13 +59,13 @@ async function handleButtonAction(id, from) {
     if (id.startsWith('rsnooze_')) {
       const { mins, todoId } = parseSnooze(id);
       await memory.updateTodoReminder(todoId, new Date(Date.now() + mins * 60 * 1000));
-      await sendMessage(from, `Snoozed ${mins} min.`);
+      await send.sendMessage(from, `Snoozed ${mins} min.`);
       return true;
     }
 
     // Event reminder: Noted — just acknowledge
     if (id.startsWith('evnoted_')) {
-      await sendMessage(from, 'Good luck!');
+      await send.sendMessage(from, 'Good luck!');
       return true;
     }
 
@@ -73,7 +75,7 @@ async function handleButtonAction(id, from) {
       if (ev) {
         await memory.addTodo(`Upcoming: ${ev.title}`, ev.tags || [], new Date(Date.now() + 15 * 60 * 1000));
       }
-      await sendMessage(from, "I'll remind you again in 15 minutes.");
+      await send.sendMessage(from, "I'll remind you again in 15 minutes.");
       return true;
     }
 
@@ -83,7 +85,7 @@ async function handleButtonAction(id, from) {
       const remindAt = at(now, 21);
       if (remindAt <= now) remindAt.setDate(remindAt.getDate() + 1);
       await memory.setTodoReminderByContent(decodeKeyword(id, 'rem_tonight_'), remindAt);
-      await sendMessage(from, 'Reminder set for 9pm.');
+      await send.sendMessage(from, 'Reminder set for 9pm.');
       hub.notify();
       return true;
     }
@@ -93,32 +95,32 @@ async function handleButtonAction(id, from) {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       await memory.setTodoReminderByContent(decodeKeyword(id, 'rem_tmrw_'), at(tomorrow, 8));
-      await sendMessage(from, 'Reminder set for tomorrow 8am.');
+      await send.sendMessage(from, 'Reminder set for tomorrow 8am.');
       hub.notify();
       return true;
     }
 
     // Reminder follow-up: skip / no reminder
     if (id === 'rem_no') {
-      await sendMessage(from, 'Ok, no reminder.');
+      await send.sendMessage(from, 'Ok, no reminder.');
       return true;
     }
 
     // Stale todos: dismiss the alert
     if (id === 'stale_dismiss') {
-      await sendMessage(from, 'Got it.');
+      await send.sendMessage(from, 'Got it.');
       return true;
     }
 
     // Stale todos: snooze (legacy button without an encoded id — just acknowledge)
     if (id === 'stale_snooze') {
-      await sendMessage(from, "Noted — I'll check back in a couple of days.");
+      await send.sendMessage(from, "Noted — I'll check back in a couple of days.");
       return true;
     }
 
     // One Big Thing — skip
     if (id === 'obt_skip') {
-      await sendMessage(from, 'No problem. Have a focused session.');
+      await send.sendMessage(from, 'No problem. Have a focused session.');
       return true;
     }
 
@@ -128,7 +130,7 @@ async function handleButtonAction(id, from) {
       // would close a cycle through whatsapp/send.
       const { handleIncoming } = require('../agent/brain');
       const reply = await handleIncoming('I want to set my One Big Thing for tonight', from);
-      if (reply) await sendMessage(from, reply);
+      if (reply) await send.sendMessage(from, reply);
       hub.notify();
       return true;
     }
