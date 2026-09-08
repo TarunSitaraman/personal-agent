@@ -37,6 +37,24 @@ const CASES = [
   { msg: 'add milk and also remind me to call the bank', expect: 'two actions' },
 ];
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Groq's free tier rate-limits well within a run of this size, and a 429 looks exactly like a
+// model failure in the results table. Back off and retry so the comparison measures the model
+// rather than the quota.
+async function withRetry(fn, attempts = 4) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const status = e.response?.status;
+      if (status !== 429 || i === attempts - 1) throw e;
+      const wait = Number(e.response?.headers?.['retry-after']) * 1000 || 4000 * (i + 1);
+      await sleep(wait);
+    }
+  }
+}
+
 async function classify(model, userMessage) {
   const { CLASSIFIER_PROMPT } = require('./agent/brain');
   const messages = [
@@ -46,7 +64,7 @@ async function classify(model, userMessage) {
 
   const started = Date.now();
   const isGroq = model.provider === 'groq';
-  const { data } = await axios.post(
+  const { data } = await withRetry(() => axios.post(
     isGroq ? GROQ_URL : OPENROUTER_URL,
     {
       model: model.id,
@@ -65,7 +83,7 @@ async function classify(model, userMessage) {
       },
       timeout: 45000,
     }
-  );
+  ));
 
   const content = data.choices?.[0]?.message?.content || '';
   // Reasoning models wrap the answer; strip before parsing.
@@ -96,6 +114,7 @@ async function main() {
     console.log(`   expected: ${c.expect}`);
     for (const model of models) {
       try {
+        await sleep(1200);
         const r = await classify(model, c.msg);
         const t = totals.get(model.id);
         t.ms += r.ms;

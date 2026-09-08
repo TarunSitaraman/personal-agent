@@ -238,9 +238,34 @@ const CLASSIFIER_PROMPT = `You are Tarun's personal agent classifier. Your ONLY 
 Do not assume any fixed schedule, employer, or life categories. Classify purely from what the
 message says, plus any context you are given.
 
+WORK THROUGH THESE IN ORDER. The first that fits wins.
+
+1. IS IT A QUESTION? Anything asking about what exists — "did I finish X?", "have I done X?",
+   "what's left?", "am I done with X?", "is X still open?" — is a LOOKUP. It is never a capture
+   and never a completion, no matter what tense it uses. Asking about tasks is list_todos.
+   Asking about stored information is search. Asking about the outside world is search_web.
+   A question mark, or a message starting with did/have/do/is/are/what/when/where/which/who/how,
+   is a strong signal. "did I finish X?" is a question. "finished X" is a report.
+
+2. IS IT A REMARK RATHER THAN A REQUEST? "I keep forgetting to check my todos", "I'm bad at
+   mornings", "mondays are rough" describe how he is. They ask for nothing. If it is a durable
+   fact worth remembering use learn_context, otherwise none. NEVER answer a remark by creating a
+   todo, reminder or event — he did not ask for one, and the item will sit there unresolved.
+
+3. IS HE REPORTING SOMETHING ALREADY DONE? Past tense about a task he owned — "finished X",
+   "shipped X", "renewed X", "sorted X" — is complete_todo, not add_note and not add_todo. Only
+   use add_note if there is genuinely no task involved, just information to keep.
+
+4. OTHERWISE it is a request: capture it, schedule it, or list something.
+
+IF THE MESSAGE ASKS FOR MORE THAN ONE THING — "add milk and remind me to call the bank" — return
+an "actions" array with one entry per thing, each with its own action and data. Do not collapse
+them into one and do not silently drop the second.
+
 Allowed Action Names:
 - add_todo: user wants to capture a task to do later (e.g., "remember to X", "todo: X")
-- complete_todo: user completed a task (past tense, e.g., "renewed X", "did X")
+- complete_todo: user reports finishing a task (past tense statement, e.g., "renewed X",
+  "finished X", "shipped X"). A question such as "did I finish X?" is NOT this — see rule 1.
 - add_note: user wants to jot down information (e.g., "note: X", "save this: X")
 - add_learning: user captured a new concept/lesson (e.g., "learned X", "learning: X")
 - learn_context: user tells you a fact about their world/people/projects (e.g., "Rohan is X")
@@ -277,7 +302,22 @@ CRITICAL: Return ONLY a valid JSON object in this exact schema, with no addition
     "gotRight": "boolean for review_learning"
   },
   "confidence": <float between 0.0 and 1.0 indicating intent classification certainty>
-}`;
+}
+
+For a message asking for two or more things, use this shape instead — same data fields per entry:
+{
+  "actions": [
+    { "action": "add_todo", "data": { "content": "milk", "tags": [] } },
+    { "action": "set_reminder", "data": { "content": "call the bank", "minutes": 60 } }
+  ],
+  "confidence": <float>
+}
+
+Worked examples:
+"finished the dispatch refactor"        -> complete_todo, content "dispatch refactor"
+"did I finish the dispatch refactor?"   -> list_todos (rule 1: a question, not a completion)
+"I keep forgetting to check my todos"   -> none (rule 2: a remark, create nothing)
+"add milk and remind me to call the bank" -> actions array with add_todo and set_reminder`;
 
 // ── Individual model callers ──────────────────────────────────────────────────
 
@@ -674,8 +714,16 @@ const PREFILTER_RULES = [
   },
 ];
 
+// A request for two things has to reach the classifier. The prefilter can only ever perform one
+// action, so "add milk and remind me to call the bank" was captured as a single todo whose content
+// was the entire sentence — the reminder silently dropped, and a todo left that no phrasing would
+// ever complete. Requires a command word after the conjunction, so "add milk and eggs" still takes
+// the cheap path.
+const COMPOUND_REQUEST = /\b(and|then|also)\b[^.!?]*\b(remind|remember|add|note|schedule|book|todo|task|event)\b/i;
+
 async function tryPrefilter(userMessage, replyTo) {
   const msg = userMessage.trim();
+  if (COMPOUND_REQUEST.test(msg)) return undefined; // fall through to the LLM
   for (const rule of PREFILTER_RULES) {
     const m = msg.match(rule.match);
     if (!m) continue;
@@ -809,8 +857,17 @@ async function handleIncoming(userMessage, replyTo = null) {
     parsedClassifier = { action: 'none', confidence: 0 };
   }
 
-  const primaryAction = parsedClassifier.action || 'none';
-  const primaryData = parsedClassifier.data || {};
+  // One message can legitimately ask for two things — "add milk and remind me to call the bank".
+  // The classifier may answer with an `actions` array; everything downstream (the low-confidence
+  // confirmation, the follow-up reminder button) is written around a single primary action, so
+  // the first entry stays primary and the rest are executed alongside it.
+  const extraActions = Array.isArray(parsedClassifier.actions)
+    ? parsedClassifier.actions.filter(a => a && typeof a.action === 'string')
+    : [];
+  const primaryAction = parsedClassifier.action || extraActions[0]?.action || 'none';
+  const primaryData = parsedClassifier.data || extraActions[0]?.data || {};
+  // Anything the primary did not already cover.
+  const secondaryActions = parsedClassifier.action ? extraActions : extraActions.slice(1);
   const confidence = parsedClassifier.confidence !== undefined ? parsedClassifier.confidence : 1.0;
 
   const RETRIEVAL_ACTIONS = ['list_todos', 'list_notes', 'list_learnings', 'list_events', 'search', 'search_web', 'summarise_conversation', 'run_skill'];
@@ -1010,6 +1067,18 @@ ${summaryBlock}`;
     } catch (err) {
       console.error('[Brain] Capture/mutation execution error:', err.message);
       executionStatus = `Failed to perform action ${primaryAction}.`;
+    }
+
+    // Do the rest of a compound request. Each is guarded on its own so a failure in the second
+    // thing cannot discard the first, and the outcomes are joined so the synthesised reply can
+    // report on everything that actually happened rather than only the first item.
+    for (const extra of secondaryActions) {
+      try {
+        const status = await executeAction(extra.action, extra.data || {}, null, replyTo);
+        if (status) executionStatus = executionStatus ? `${executionStatus}\n${status}` : status;
+      } catch (err) {
+        console.error('[Brain] Secondary action execution error:', extra.action, err.message);
+      }
     }
 
     // If executionStatus is null (e.g. interactive message already sent), we don't synthesize anything
@@ -1916,4 +1985,5 @@ module.exports = {
   // The live classifier prompt, so src/compare_models.js measures the real thing.
   CLASSIFIER_PROMPT,
   PREFILTER_RULES,
+  COMPOUND_REQUEST,
 };
