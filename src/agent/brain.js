@@ -776,7 +776,10 @@ async function handleIncoming(userMessage, replyTo = null) {
         } else if (isNo) {
           const pending = clarification.data;
           const embedding = await getEmbedding(pending.newContent);
-          const noteId = await memory.addNote(pending.newContent, pending.context, [], embedding);
+          // addNote(content, tags, embedding) — this passed four arguments against three, so the
+          // empty array landed in the embedding slot and became the literal "[]", which is not a
+          // valid vector and threw. The saved clarification carries `tags`, never `context`.
+          const noteId = await memory.addNote(pending.newContent, pending.tags || [], embedding);
           await memory.deleteState(`pending_clarification:${replyTo}`);
           
           const replyText = `Saved as a separate note.`;

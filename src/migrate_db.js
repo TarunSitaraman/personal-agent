@@ -28,6 +28,15 @@ async function main() {
     `);
     console.log('✔ pending_messages table created/verified');
 
+    // 1b. When a worker claims a message. Without this, a process that died mid-message left the
+    // row in 'processing' forever: the retry filter only looked at 'pending' and 'failed', so the
+    // message was never answered and nothing reported it. claimed_at lets a stale claim be
+    // reclaimed. Serverless caps a function at 60s, so anything held for minutes is dead.
+    await pool.query(`
+      ALTER TABLE pending_messages ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+    `);
+    console.log('✔ pending_messages.claimed_at column added/verified');
+
     // 2. Request Dedup Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS dedup_messages (
@@ -37,9 +46,13 @@ async function main() {
     `);
     console.log('✔ dedup_messages table created/verified');
 
-    // 3. Vector embedding for todos (pgvector extension should already be enabled)
+    // 3. Vector embedding for todos (pgvector extension should already be enabled).
+    // 768 dimensions, matching EMBEDDING_DIMS in brain.js and every other embedding column in
+    // migration-export/01_schema.sql. This said vector(1536), which was inert on the existing
+    // database because IF NOT EXISTS made it a no-op — but on a fresh one it created a column of
+    // the wrong width and every todo embedding insert failed on a dimension mismatch.
     await pool.query(`
-      ALTER TABLE todos ADD COLUMN IF NOT EXISTS embedding vector(1536);
+      ALTER TABLE todos ADD COLUMN IF NOT EXISTS embedding vector(768);
     `);
     console.log('✔ todos embedding column added/verified');
 
