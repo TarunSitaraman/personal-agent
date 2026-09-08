@@ -604,6 +604,25 @@ function filterKnowledge(knowledge, userMessage) {
   return [...relevant, ...fallback];
 }
 
+// Chooses which facts reach the prompt.
+//
+// filterKnowledge ranks by word overlap, which is how "when am I most productive" ended up
+// matching "When a task is completed, remove associated reminders" — on the word "when" — while
+// "Tarun does focused work in the evenings" never reached the model at all. The agent was being
+// handed the wrong context and then blamed for reasoning badly from it. A stronger model does not
+// fix that; it just reasons more fluently over the same noise.
+//
+// The embedding is already computed for the semantic-memory block, so ranking by it costs one
+// extra indexed query. Word overlap stays as the fallback: embeddings have been unavailable on
+// this project for months at a stretch, and a degraded ranking beats none.
+async function selectKnowledge(knowledge, userMessage, embedding) {
+  if (embedding) {
+    const ranked = await memory.getRelevantKnowledge(embedding);
+    if (ranked && ranked.length) return ranked;
+  }
+  return filterKnowledge(knowledge, userMessage);
+}
+
 // ── Intent pre-filter ─────────────────────────────────────────────────────────
 // Handles unambiguous common commands without touching any LLM.
 // Returns a reply string, or null to fall through to LLM.
@@ -796,9 +815,14 @@ async function handleIncoming(userMessage, replyTo = null) {
     const semanticMatches = msgEmbedding
       ? await memory.searchMemory(userMessage, msgEmbedding)
       : [];
-    // Phase 4: Prune embedding queries to top 2 instead of 5
+    // Phase 4: Prune embedding queries to top 2 instead of 5.
+    // searchMemory returns `tags`, not `context` — the old template rendered a literal
+    // "[undefined]" into every one of these lines and fed it to the model as if it meant something.
     const semanticBlock = semanticMatches.length
-      ? `Relevant past memory:\n${semanticMatches.slice(0, 2).map(r => `[${r.type}][${r.context}] ${r.content}`).join('\n')}`
+      ? `Relevant past memory:\n${semanticMatches.slice(0, 2).map(r => {
+          const tags = (r.tags || []).length ? `[${r.tags.join(',')}]` : '';
+          return `[${r.type}]${tags} ${r.content}`;
+        }).join('\n')}`
       : '';
 
     // Phase 4: Context Slicing (only feed relevant todos)
@@ -808,7 +832,7 @@ async function handleIncoming(userMessage, replyTo = null) {
     const issues = openIssues;
 
     const knowledgeBlock = knowledge.length
-      ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}`
+      ? `What I know about Tarun's world:\n${(await selectKnowledge(knowledge, userMessage, msgEmbedding)).join('\n')}`
       : '';
 
     const skillsBlock = learnedSkills.length
@@ -1053,7 +1077,9 @@ async function refreshContextSummary() {
 
 // Streaming version — streams reply tokens, executes action after full response
 async function handleIncomingStream(userMessage, onToken) {
-  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, learnedSkills] = await Promise.all([
+  // The embedding rides along in the same batch, so ranking knowledge properly costs no extra
+  // wall-clock time before the first streamed token.
+  const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, learnedSkills, msgEmbedding] = await Promise.all([
     memory.getRecentHistory(10),
     memory.getSummaryStats(),
     getOpenPRs(),
@@ -1063,6 +1089,7 @@ async function handleIncomingStream(userMessage, onToken) {
     memory.getUpcomingEvents(24),
     memory.getMessageCount(),
     memory.getAllSkills(),
+    getEmbedding(userMessage),
   ]);
 
   const todoBlock = [
@@ -1074,7 +1101,7 @@ async function handleIncomingStream(userMessage, onToken) {
     : '';
 
   const knowledgeBlock = knowledge.length
-    ? `What I know about Tarun's world:\n${filterKnowledge(knowledge, userMessage).join('\n')}` : '';
+    ? `What I know about Tarun's world:\n${(await selectKnowledge(knowledge, userMessage, msgEmbedding)).join('\n')}` : '';
   
   const insightsBlock = insights.length ? `Behavioural insights:\n${insights.join('\n')}` : '';
   
@@ -1863,5 +1890,6 @@ module.exports = {
   extractPartialReply,
   validateJsonSchema,
   filterKnowledge,
+  selectKnowledge,
   PREFILTER_RULES,
 };
