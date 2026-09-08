@@ -7,11 +7,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { PREFILTER_RULES } = require('../src/agent/brain');
+const { PREFILTER_RULES, COMPOUND_REQUEST } = require('../src/agent/brain');
 
 // Mirrors how tryPrefilter selects a rule: first match in declaration order wins.
 function classify(message) {
   const msg = message.trim();
+  // Mirrors tryPrefilter, including its compound-request bail-out.
+  if (COMPOUND_REQUEST.test(msg)) return null;
   for (const rule of PREFILTER_RULES) {
     const m = msg.match(rule.match);
     if (m) return { action: rule.action, ...(rule.dataFn ? rule.dataFn(m) : {}) };
@@ -57,4 +59,19 @@ test('completion is matched ahead of capture for overlapping phrasing', () => {
   // "done with X" must complete a todo, never create one.
   assert.strictEqual(classify('done with the migration').action, 'complete_todo');
   assert.strictEqual(classify('just finished the deploy').action, 'complete_todo');
+});
+
+test('a compound request falls through instead of becoming one todo', () => {
+  // The prefilter can only perform one action. "add milk and remind me to call the bank" used to
+  // be captured whole as a single todo — the reminder dropped, and the todo left with a content
+  // string no completion phrasing would ever match.
+  assert.strictEqual(classify('add milk and remind me to call the bank'), null);
+  assert.strictEqual(classify('todo: ship the api and also schedule the review'), null);
+  assert.strictEqual(classify('remind me to call mom and add milk to the list'), null);
+});
+
+test('a plain list is still handled cheaply', () => {
+  // Only a command word after the conjunction means compound; "and eggs" is just more content.
+  assert.deepStrictEqual(classify('add milk and eggs and bread'), { action: 'add_todo', content: 'milk and eggs and bread' });
+  assert.strictEqual(classify('remind me to call mom').action, 'add_todo');
 });
