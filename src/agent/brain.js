@@ -25,6 +25,11 @@ const OR_MODELS = [
 ];
 const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
+// Optional paid OpenRouter model for intent classification only. Unset by default: the whole
+// ladder above is free tier, and nothing here should start billing because a file was deployed.
+// Compare candidates with `node src/compare_models.js` before turning one on.
+const CLASSIFIER_MODEL = process.env.CLASSIFIER_MODEL || null;
+
 // Track failures: modelId → timestamp of last failure
 const modelFailCache = new Map();
 const MODEL_COOLDOWN_MS = 5 * 60 * 1000;
@@ -484,6 +489,23 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
   if (routeType === 'classifier') {
     // Classification is easy; prefer the fastest model first.
     groqOrder = [...GROQ_MODELS].sort((a, b) => (a.quality === 'fast' ? -1 : b.quality === 'fast' ? 1 : 0));
+
+    // Optional paid model ahead of the free ladder, for the one route where a wrong answer
+    // cascades: the classifier picks the action, and acting on the wrong intent is worse than
+    // answering slowly. Every other model here is free tier, so this must never engage by
+    // accident — it is used only when CLASSIFIER_MODEL is set, and any failure falls straight
+    // through to the free ladder, so a billing or availability problem degrades rather than
+    // breaks. Set it to e.g. nousresearch/hermes-4-70b to try one.
+    if (CLASSIFIER_MODEL && hasOR && !isModelCoolingDown(CLASSIFIER_MODEL)) {
+      try {
+        const r = await callOpenRouterModel(CLASSIFIER_MODEL, messages, jsonMode);
+        markModelOk(CLASSIFIER_MODEL);
+        return r;
+      } catch (e) {
+        markModelFailed(CLASSIFIER_MODEL);
+        console.warn(`[LLM] CLASSIFIER_MODEL ${CLASSIFIER_MODEL} failed, using the free ladder:`, e.message);
+      }
+    }
   } else if (routeType === 'reasoner') {
     // Reasoning benefits from the strongest model first.
     groqOrder = [...GROQ_MODELS].sort((a, b) => (a.quality === 'high' ? -1 : b.quality === 'high' ? 1 : 0));
@@ -1891,5 +1913,7 @@ module.exports = {
   validateJsonSchema,
   filterKnowledge,
   selectKnowledge,
+  // The live classifier prompt, so src/compare_models.js measures the real thing.
+  CLASSIFIER_PROMPT,
   PREFILTER_RULES,
 };

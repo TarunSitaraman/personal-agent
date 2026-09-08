@@ -61,3 +61,31 @@ test('filterKnowledge still returns something when nothing overlaps', () => {
   const picked = filterKnowledge(FACTS, 'zzz qqq');
   assert.ok(picked.length > 0, 'a no-match query still gets a few facts to work with');
 });
+
+// ── Guard against accidental billing ────────────────────────────────────────
+// Everything in the model ladder is free tier. A paid model may only enter through
+// CLASSIFIER_MODEL, which is unset by default, so deploying a file can never start charging.
+
+test('no paid model is hardcoded into the model ladder', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/agent/brain.js'), 'utf8');
+
+  // The ladder arrays, not the comments explaining how to opt in.
+  const ladders = src.match(/const (GROQ_MODELS|OR_MODELS|GEMINI_MODELS) = \[[\s\S]*?\];/g) || [];
+  assert.ok(ladders.length === 3, 'expected all three ladder definitions');
+
+  for (const ladder of ladders) {
+    assert.doesNotMatch(ladder, /nousresearch|anthropic\/|openai\/gpt-4|\bgpt-5\b/,
+      'a paid model in the default ladder would bill on every message');
+  }
+});
+
+test('the paid classifier override is opt-in, never a default', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/agent/brain.js'), 'utf8');
+
+  assert.match(src, /const CLASSIFIER_MODEL = process\.env\.CLASSIFIER_MODEL \|\| null/,
+    'CLASSIFIER_MODEL must default to null so nothing bills unless it is deliberately set');
+});
