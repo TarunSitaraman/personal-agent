@@ -167,6 +167,28 @@ async function saveKnowledge(fact, embedding = null, tags = []) {
   return rows[0].id;
 }
 
+// Ranks knowledge by vector distance for prompt assembly, letting the HNSW index do the work
+// rather than fetching every fact and scoring it in JS.
+//
+// Deliberately separate from searchMemory, because the two want opposite tuning. Search answers a
+// question and should stay quiet when nothing really matches. Prompt context is better served by
+// the best few facts even at moderate similarity — the alternative is the model reasoning with
+// nothing, or worse, with whatever a word match happened to surface.
+//
+// Returns null when there is no embedding to rank by, so the caller can fall back.
+async function getRelevantKnowledge(embedding, limit = 8, minScore = 0.3) {
+  if (!embedding) return null;
+  const { rows } = await pool.query(
+    `SELECT fact, 1 - (embedding <=> $1) AS score
+     FROM knowledge
+     WHERE embedding IS NOT NULL
+     ORDER BY embedding <=> $1
+     LIMIT $2`,
+    [`[${embedding.join(',')}]`, limit]
+  );
+  return rows.filter(r => r.score >= minScore).map(r => r.fact);
+}
+
 async function getAllKnowledge() {
   const { rows } = await pool.query('SELECT fact FROM knowledge ORDER BY created_at ASC');
   return rows.map(r => r.fact);
@@ -859,7 +881,7 @@ module.exports = {
   saveMessage, getRecentHistory,
   addReminder, getDueReminders, getDueTodoReminders,
   saveInsight, getRecentInsights, getMessageCount,
-  saveKnowledge, getAllKnowledge, trimConversations,
+  saveKnowledge, getAllKnowledge, getRelevantKnowledge, trimConversations,
   saveContextSummary, getContextSummary,
   
   addEvent, getWeekEvents, getUpcomingEvents,
