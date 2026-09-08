@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # The suite has no test framework — it runs on the built-in node:test runner — so this only
+      # needs the seven runtime dependencies. `npm ci` requires the lockfile to match package.json.
+      - run: npm ci
+
+      # No DATABASE_URL, no API keys, and no network: every test substitutes memory/send/hub with
+      # node:test mocks, and getEmbedding short-circuits to null when GEMINI_API_KEY is unset.
+      # If a test ever needs a secret, that is the signal it has stopped being a unit test.
+      - run: npm test
