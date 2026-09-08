@@ -100,12 +100,20 @@ async function completeTodo(id) {
   );
 }
 
+// `%` and `_` are wildcards inside ILIKE, so a keyword containing either matched far more than the
+// user meant — and this statement marks todos done. "50%" would match every pending todo.
+// Escaped with a backslash, declared via ESCAPE so the behaviour does not depend on
+// standard_conforming_strings.
+function escapeLike(value) {
+  return String(value).replace(/[\\%_]/g, c => `\\${c}`);
+}
+
 async function completeTodoByContent(keyword) {
   const { rows } = await pool.query(
     `UPDATE todos SET done = true, completed_at = NOW()
-     WHERE done = false AND content ILIKE $1
+     WHERE done = false AND content ILIKE $1 ESCAPE '\\'
      RETURNING content`,
-    [`%${keyword}%`]
+    [`%${escapeLike(keyword)}%`]
   );
   return rows;
 }
@@ -392,15 +400,20 @@ async function updateEvent(id, updates) {
 // Claims the rows it returns by flipping `reminded`, so a wider window can't double-fire
 // and callers don't need their own dedup state. Window defaults cover a 15-min sweep.
 async function getEventsStartingSoon(minutesFrom = 5, minutesTo = 20) {
+  // The `reminded = false` on the outer UPDATE is what makes this a claim rather than a read.
+  // Without it the subquery and the update are evaluated separately under READ COMMITTED, so two
+  // sweeps running at once — the Express cron and the serverless cron both fire every 15 minutes —
+  // can each match the row and each send the reminder. Mirrors claimTodoReminder/claimEventReminder.
   const { rows } = await pool.query(
     `UPDATE events SET reminded = true
-     WHERE id IN (
-       SELECT id FROM events
-       WHERE recurrence = 'none'
-         AND reminded = false
-         AND start_at >= NOW() + ($1 || ' minutes')::interval
-         AND start_at < NOW() + ($2 || ' minutes')::interval
-     )
+     WHERE reminded = false
+       AND id IN (
+         SELECT id FROM events
+         WHERE recurrence = 'none'
+           AND reminded = false
+           AND start_at >= NOW() + ($1 || ' minutes')::interval
+           AND start_at < NOW() + ($2 || ' minutes')::interval
+       )
      RETURNING id, title, start_at, context`,
     [minutesFrom, minutesTo]
   );
@@ -427,8 +440,13 @@ async function getLastCreatedItem() {
 // --- Stale todos ---
 
 async function getStaleTodos(days = 5) {
+  // Parameterised. This was the one interpolated interval in the file — `INTERVAL '${days} days'`
+  // put a caller-supplied value straight into the statement text.
   const { rows } = await pool.query(
-    `SELECT * FROM todos WHERE done = false AND created_at < NOW() - INTERVAL '${days} days' ORDER BY created_at ASC`
+    `SELECT * FROM todos
+     WHERE done = false AND created_at < NOW() - ($1 || ' days')::interval
+     ORDER BY created_at ASC`,
+    [days]
   );
   return rows;
 }
@@ -475,21 +493,33 @@ async function saveSkill(name, description, instructions) {
 async function searchMemory(query, embedding = null) {
   if (embedding) {
     const vectorStr = `[${embedding.join(',')}]`;
+    // Every query filters `embedding IS NOT NULL`. Without it, rows with no embedding come back
+    // with a NULL score, and the JS filter below admitted those unconditionally — so whenever
+    // embeddings were unavailable (a retired model, a missing key: both have happened here for
+    // months at a time) unrelated rows were injected into every search result.
+    //
+    // Ordering is by `embedding <=> $1` everywhere. The knowledge query used to order by the
+    // output alias `score`, which pgvector cannot answer from the HNSW index — it forced a full
+    // scan of the table on every search.
     const [todos, notes, learnings, knowledge] = await Promise.all([
       pool.query(
-        `SELECT 'todo' as type, id, content, tags, 1 - (embedding <=> $1) as score FROM todos WHERE done = false ORDER BY embedding <=> $1 LIMIT 3`,
+        `SELECT 'todo' as type, id, content, tags, 1 - (embedding <=> $1) as score FROM todos
+         WHERE done = false AND embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT 3`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'note' as type, id, content, tags, 1 - (embedding <=> $1) as score FROM notes ORDER BY embedding <=> $1 LIMIT 5`,
+        `SELECT 'note' as type, id, content, tags, 1 - (embedding <=> $1) as score FROM notes
+         WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'learning' as type, id, topic as content, tags, 1 - (embedding <=> $1) as score FROM learnings ORDER BY embedding <=> $1 LIMIT 5`,
+        `SELECT 'learning' as type, id, topic as content, tags, 1 - (embedding <=> $1) as score FROM learnings
+         WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
       pool.query(
-        `SELECT 'knowledge' as type, id, fact as content, tags, 1 - (embedding <=> $1) as score FROM knowledge ORDER BY score DESC LIMIT 5`,
+        `SELECT 'knowledge' as type, id, fact as content, tags, 1 - (embedding <=> $1) as score FROM knowledge
+         WHERE embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT 5`,
         [vectorStr]
       ),
     ]);
@@ -501,9 +531,10 @@ async function searchMemory(query, embedding = null) {
       updateKnowledgeLastReferenced(ids).catch(err => console.error('Error updating knowledge referenced time:', err));
     }
 
+    // Every row now carries a real score, so relevance is a straight threshold.
     return [...todos.rows, ...notes.rows, ...learnings.rows, ...knowledge.rows]
-      .filter(r => r.score === null || r.score > 0.6) // Filter out low relevance if score exists
-      .sort((a, b) => (b.score || 0) - (a.score || 0));
+      .filter(r => r.score > 0.6)
+      .sort((a, b) => b.score - a.score);
   }
 
   // Fallback to basic ILIKE
@@ -662,12 +693,21 @@ async function updateTodoReminder(id, remindAt) {
   );
 }
 
+// Returns the row it actually updated, or null when the keyword matched nothing. Without
+// RETURNING the caller could not tell "reminder set" from "no todo matched" and confirmed either
+// way — the same silent-success shape as the complete_todo bug fixed in dfe0288.
 async function setTodoReminderByContent(keyword, remindAt) {
-  await pool.query(
+  const { rows } = await pool.query(
     `UPDATE todos SET remind_at = $1, reminded = false
-     WHERE id = (SELECT id FROM todos WHERE done = false AND content ILIKE $2 ORDER BY created_at DESC LIMIT 1)`,
-    [remindAt, `%${keyword}%`]
+     WHERE id = (
+       SELECT id FROM todos
+       WHERE done = false AND content ILIKE $2 ESCAPE '\\'
+       ORDER BY created_at DESC LIMIT 1
+     )
+     RETURNING id, content`,
+    [remindAt, `%${escapeLike(keyword)}%`]
   );
+  return rows[0] || null;
 }
 
 async function getEventById(id) {
@@ -714,24 +754,42 @@ async function queueIncomingMessage(messageId, fromNumber, messageRaw) {
   return rows[0].id;
 }
 
+// How long a claim can be held before it is assumed dead. Serverless caps a function at 60s, so
+// anything still 'processing' after this lost its worker.
+const STALE_CLAIM_MINUTES = 10;
+
 async function getNextPendingMessages(limit = 10) {
   const { rows } = await pool.query(
     `SELECT * FROM pending_messages
-     WHERE status = 'pending' OR (status = 'failed' AND attempts < 3)
+     WHERE status = 'pending'
+        OR (status = 'failed' AND attempts < 3)
+        OR (status = 'processing' AND attempts < 3
+            AND claimed_at < NOW() - ($2 || ' minutes')::interval)
      ORDER BY created_at ASC
      LIMIT $1`,
-     [limit]
+     [limit, STALE_CLAIM_MINUTES]
   );
   return rows;
 }
 
+// Claims a message, returning true only if this caller won it. The status guard is what makes it
+// a claim: without it, the webhook's immediate processQueue and the 15-minute sweep could both
+// pick up the same row and answer it twice. Returns false when someone else got there first.
+//
+// `attempts` is incremented here rather than on failure, so a message that crashes the process
+// mid-flight still counts as tried and cannot loop forever.
 async function markMessageProcessing(id) {
-  await pool.query(
+  const { rows } = await pool.query(
     `UPDATE pending_messages
-     SET status = 'processing', attempts = attempts + 1
-     WHERE id = $1`,
-    [id]
+     SET status = 'processing', attempts = attempts + 1, claimed_at = NOW()
+     WHERE id = $1
+       AND (status <> 'processing'
+            OR claimed_at IS NULL
+            OR claimed_at < NOW() - ($2 || ' minutes')::interval)
+     RETURNING id`,
+    [id, STALE_CLAIM_MINUTES]
   );
+  return rows.length > 0;
 }
 
 async function markMessageCompleted(id, tokensInput = null, tokensOutput = null) {
@@ -843,7 +901,17 @@ async function getState(key) {
     `SELECT value FROM state WHERE key = $1 AND expires_at > NOW()`,
     [key]
   );
-  return rows[0] ? JSON.parse(rows[0].value) : null;
+  if (!rows[0]) return null;
+
+  // The `state` table has two writers with different encodings: saveState stores JSON, while
+  // saveContextSummary stores a bare string under 'context_summary'. Reading the latter through
+  // here used to throw a SyntaxError and take down whatever was asking. Fall back to the raw
+  // value instead — a caller that wanted a string gets its string.
+  try {
+    return JSON.parse(rows[0].value);
+  } catch {
+    return rows[0].value;
+  }
 }
 
 async function deleteState(key) {

@@ -93,7 +93,10 @@ async function processQueue() {
   
   console.log(`[QueueProcessor] Processing ${pending.length} pending messages...`);
   for (const row of pending) {
-    await memory.markMessageProcessing(row.id);
+    // Skip anything another worker claimed between the SELECT and here — the webhook kicks off an
+    // immediate drain while the cron sweep may already be running.
+    const claimed = await memory.markMessageProcessing(row.id);
+    if (!claimed) continue;
     await processMessage(row);
   }
 }

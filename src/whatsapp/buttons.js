@@ -79,13 +79,17 @@ async function handleButtonAction(id, from) {
       return true;
     }
 
-    // Reminder follow-up: tonight 9pm, rolling to tomorrow if 9pm has already passed
+    // Reminder follow-up: tonight 9pm, rolling to tomorrow if 9pm has already passed.
+    // The button id encodes the todo's content, which can drift from what is stored, so the
+    // update may match nothing — say so rather than confirming a reminder that does not exist.
     if (id.startsWith('rem_tonight_')) {
       const now = new Date();
       const remindAt = at(now, 21);
       if (remindAt <= now) remindAt.setDate(remindAt.getDate() + 1);
-      await memory.setTodoReminderByContent(decodeKeyword(id, 'rem_tonight_'), remindAt);
-      await send.sendMessage(from, 'Reminder set for 9pm.');
+      const updated = await memory.setTodoReminderByContent(decodeKeyword(id, 'rem_tonight_'), remindAt);
+      await send.sendMessage(from, updated
+        ? `Reminder set for 9pm: "${updated.content}"`
+        : "I couldn't find that todo to remind you about — nothing was set.");
       hub.notify();
       return true;
     }
@@ -94,8 +98,10 @@ async function handleButtonAction(id, from) {
     if (id.startsWith('rem_tmrw_')) {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
-      await memory.setTodoReminderByContent(decodeKeyword(id, 'rem_tmrw_'), at(tomorrow, 8));
-      await send.sendMessage(from, 'Reminder set for tomorrow 8am.');
+      const updated = await memory.setTodoReminderByContent(decodeKeyword(id, 'rem_tmrw_'), at(tomorrow, 8));
+      await send.sendMessage(from, updated
+        ? `Reminder set for tomorrow 8am: "${updated.content}"`
+        : "I couldn't find that todo to remind you about — nothing was set.");
       hub.notify();
       return true;
     }

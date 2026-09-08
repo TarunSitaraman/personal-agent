@@ -122,6 +122,10 @@ test('evsnooze_ still replies when the event has been deleted', async () => {
 
 test('rem_tonight_ sets 9pm and decodes the content keyword', async () => {
   const { sent, calls } = stub();
+  test.mock.method(memory, 'setTodoReminderByContent', async (...args) => {
+    (calls.setTodoReminderByContent ||= []).push(args);
+    return { id: 't1', content: 'buy milk' }; // a row was actually updated
+  });
 
   assert.strictEqual(await handleButtonAction('rem_tonight_buy_milk', FROM), true);
 
@@ -130,11 +134,29 @@ test('rem_tonight_ sets 9pm and decodes the content keyword', async () => {
   assert.strictEqual(remindAt.getHours(), 21);
   assert.strictEqual(remindAt.getMinutes(), 0);
   assert.ok(remindAt > new Date(), '9pm today would already be past — must roll to tomorrow');
-  assert.strictEqual(sent[0].text, 'Reminder set for 9pm.');
+  assert.match(sent[0].text, /9pm/);
+  assert.match(sent[0].text, /buy milk/, 'confirms the stored content, not the decoded keyword');
+});
+
+test('a reminder button that matches no todo says so instead of confirming', async () => {
+  // The button id encodes content that can drift from what is stored. Before setTodoReminderByContent
+  // returned the updated row, a miss was indistinguishable from success and the user was told
+  // "Reminder set" for a reminder that did not exist — the same shape as the dfe0288 bug.
+  const { sent } = stub();
+  test.mock.method(memory, 'setTodoReminderByContent', async () => null);
+
+  assert.strictEqual(await handleButtonAction('rem_tonight_long_gone', FROM), true);
+
+  assert.doesNotMatch(sent[0].text, /Reminder set/i, 'nothing was set, so nothing may be confirmed');
+  assert.match(sent[0].text, /couldn't find|nothing was set/i);
 });
 
 test('rem_tmrw_ sets 8am on the following day', async () => {
   const { sent, calls } = stub();
+  test.mock.method(memory, 'setTodoReminderByContent', async (...args) => {
+    (calls.setTodoReminderByContent ||= []).push(args);
+    return { id: 't2', content: 'ship it' };
+  });
 
   assert.strictEqual(await handleButtonAction('rem_tmrw_ship_it', FROM), true);
 
@@ -147,7 +169,8 @@ test('rem_tmrw_ sets 8am on the following day', async () => {
     remindAt.getDate(),
     new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).getDate()
   );
-  assert.strictEqual(sent[0].text, 'Reminder set for tomorrow 8am.');
+  assert.match(sent[0].text, /tomorrow 8am/);
+  assert.match(sent[0].text, /ship it/, 'confirms the stored content');
 });
 
 test('acknowledgement-only taps reply and change nothing', async () => {
