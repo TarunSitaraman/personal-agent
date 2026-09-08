@@ -18,14 +18,26 @@ const root = path.join(__dirname, '..');
 const memorySrc = fs.readFileSync(path.join(root, 'src/agent/memory.js'), 'utf8');
 const migrateSrc = fs.readFileSync(path.join(root, 'src/migrate_db.js'), 'utf8');
 
-// Tables the code inserts a `tags` column into.
-function tablesWrittenWithTags(src) {
+// Tables the code touches a `tags` column on, whether writing or reading.
+//
+// The first version of this guard checked INSERTs only, and missed that searchMemory SELECTs
+// `tags` from learnings — a table with no such column — so every semantic search threw. Reads
+// break just as loudly as writes, so both count.
+function tablesUsingTags(src) {
   const found = new Set();
+
   // INSERT INTO <table> (<columns>) — columns may wrap across lines.
   for (const m of src.matchAll(/INSERT INTO\s+([a-z_]+)\s*\(([^)]*)\)/gis)) {
     const [, table, columns] = m;
     if (/\btags\b/.test(columns)) found.add(table);
   }
+
+  // SELECT <columns> FROM <table>, where the projection names tags.
+  for (const m of src.matchAll(/SELECT\s+((?:(?!\bFROM\b)[\s\S])*?)\bFROM\s+([a-z_]+)/gi)) {
+    const [, columns, table] = m;
+    if (/\btags\b/.test(columns)) found.add(table);
+  }
+
   return found;
 }
 
@@ -39,10 +51,10 @@ function tablesMigratedForTags(src) {
 }
 
 test('every table the code tags is covered by the migration', () => {
-  const written = tablesWrittenWithTags(memorySrc);
+  const written = tablesUsingTags(memorySrc);
   const migrated = tablesMigratedForTags(migrateSrc);
 
-  assert.ok(written.size > 0, 'sanity: expected to find tagged INSERTs');
+  assert.ok(written.size > 0, 'sanity: expected to find tagged statements');
 
   const missing = [...written].filter(t => !migrated.has(t));
   assert.deepStrictEqual(
@@ -58,6 +70,7 @@ test('the tables that broke in production are both covered', () => {
   // Named explicitly: these are the two that were missed and caused the outage.
   assert.ok(migrated.has('knowledge'), 'knowledge.tags — learn_context fails without it');
   assert.ok(migrated.has('goals'), 'goals.tags — set_goal fails without it');
+  assert.ok(migrated.has('learnings'), 'learnings.tags — searchMemory SELECTs it, so every search fails without it');
 });
 
 test('saveGoal passes its own parameter, not an undefined global', () => {

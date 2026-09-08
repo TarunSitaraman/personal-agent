@@ -1012,6 +1012,11 @@ Rules:
     await memory.saveMessage("user", userMessage, PROMPT_VERSION, totalTokensInput, 0);
     await memory.saveMessage("model", replyText, PROMPT_VERSION, 0, totalTokensOutput);
 
+    // Learn from the exchange in the background. Deliberately after the reply is composed so a
+    // slow or failing extraction can never delay or break the answer Tarun actually gets.
+    extractFactsFromExchange(userMessage, replyText)
+      .catch(err => console.error('[Facts] Extraction error:', err.message));
+
     if (replyTo && primaryAction === 'add_todo' && primaryData?.content) {
       const key = primaryData.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
       setTimeout(async () => {
@@ -1462,6 +1467,70 @@ Follow the instructions exactly and return a clear, helpful response.`;
   }
 }
 
+// ── Passive fact learning ─────────────────────────────────────────────────────
+// learn_context only fires when Tarun states a fact outright and the model thinks to call it.
+// Most of what is worth remembering arrives in passing — "Rohan handles dispatch", "the patient
+// app is the hard part" — and nothing captured any of it. That is why the knowledge table held
+// five facts from June after months of use: the agent had no way to become better informed, so
+// every conversation started from the same near-empty base.
+//
+// This runs after the reply has already gone out, on the background route, and is deliberately
+// stingy. A wrong fact is worse than a missing one — it gets retrieved and reasoned from for
+// months, and there is no natural moment at which anyone reviews it.
+
+const FACT_EXTRACTION_PROMPT = `Extract durable facts about the user's world from this exchange.
+
+A durable fact is something still true in six months: people and their roles, projects and what
+they involve, the user's work, the tools they use, their routines, preferences and constraints.
+
+NOT facts: tasks or things to do, one-off events or appointments, questions the user asked,
+anything the assistant said about itself, temporary states ("I'm tired", "I'm busy today"), and
+anything you are inferring rather than being told directly.
+
+Return JSON: {"facts": ["...", "..."]}
+At most 2. Prefer none over a guess — return {"facts": []} when nothing qualifies.
+Write each fact as a standalone sentence that still makes sense with no other context.`;
+
+// Commands and one-word acknowledgements never carry a durable fact, and every exchange that
+// reaches the model costs a round trip. Kept separate so the rule is testable on its own.
+function shouldExtractFacts(userMessage) {
+  const msg = (userMessage || '').trim();
+  if (msg.length < 25) return false;
+  // Capture and retrieval commands — the content is a task or a query, not a fact.
+  if (/^(todo|task|note|save|jot|done|finished|completed|remind me to|add|remember to)\b[:\s]/i.test(msg)) return false;
+  if (/^(list|show|what|when|where|which|who|how|why|search|find)\b/i.test(msg)) return false;
+  return true;
+}
+
+async function extractFactsFromExchange(userMessage, replyText) {
+  if (!shouldExtractFacts(userMessage)) return;
+
+  const raw = await callLLM(
+    [{ role: 'user', content: `${FACT_EXTRACTION_PROMPT}\n\nUser: ${userMessage}\nAssistant: ${replyText}` }],
+    true,
+    'background'
+  );
+
+  const parsed = extractFirstJSON(raw);
+  const facts = Array.isArray(parsed?.facts) ? parsed.facts.slice(0, 2) : [];
+
+  for (const fact of facts) {
+    if (typeof fact !== 'string' || fact.trim().length < 10) continue;
+    const clean = fact.trim();
+
+    // Near-duplicates crowd out real recall — filterKnowledge scores by word overlap, so three
+    // phrasings of one fact push genuinely relevant facts out of the prompt.
+    const embedding = await getEmbedding(clean);
+    if (embedding) {
+      const matches = await memory.searchMemory(clean, embedding);
+      if (matches.some(m => m.type === 'knowledge' && m.score > 0.9)) continue;
+    }
+
+    const knowledgeId = await memory.saveKnowledge(clean, embedding, []);
+    extractAndLinkEntities(clean, knowledgeId).catch(() => {});
+  }
+}
+
 async function analyzePatterns() {
   const [history, stats] = await Promise.all([
     memory.getRecentHistory(40),
@@ -1723,6 +1792,8 @@ module.exports = {
   getEmbedding,
   // Exported for tests. Not part of the agent's runtime surface.
   executeAction,
+  shouldExtractFacts,
+  extractFactsFromExchange,
   extractFirstJSON,
   extractPartialReply,
   validateJsonSchema,

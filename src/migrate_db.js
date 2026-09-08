@@ -102,7 +102,9 @@ async function main() {
     // every query referencing tags failed. Additive: `context` is left in place for the queries
     // still reading it, and existing rows are backfilled.
     //
-    // knowledge and goals were missed the first time round, and the code writes `tags` to both.
+    // knowledge, goals and learnings were missed the first time round. The code writes `tags` to
+    // knowledge and goals, and searchMemory SELECTs `tags` from learnings — so every semantic
+    // search threw `column "tags" does not exist` and the whole pgvector feature was dead.
     // Every learn_context and set_goal therefore failed with `column "tags" does not exist` —
     // silently, because executeAction used to answer with the optimistic confirmation on error.
     // The live effect was that Blu could not learn a single fact about Tarun and no One Big Thing
@@ -114,6 +116,7 @@ async function main() {
       ALTER TABLE notes     ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
       ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
       ALTER TABLE goals     ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
+      ALTER TABLE learnings ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
       UPDATE todos     SET tags = ARRAY[context]
         WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
       UPDATE events    SET tags = ARRAY[context]
