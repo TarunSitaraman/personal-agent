@@ -9,10 +9,22 @@ node_modules/
 # conversation history. Never commit.
 migration-export/
 
-# Mobile app
+# Mobile app — .env holds EXPO_PUBLIC_API_TOKEN, which is a real credential
 mobile/node_modules/
 mobile/.expo/
+mobile/.env
 
 # Desktop pet
 desktop/node_modules/
+desktop/.env
 .env.backup-*
+
+# Spent one-off codegen from the semantic-tagging refactor (applied in 4f158be). Untracked but
+# previously unignored, so a single `git add .` would have published them.
+refactor_*.js
+rewrite_docs.js
+
+# Agent tooling scratch
+.claude/
+.claude-flow/
+*.log

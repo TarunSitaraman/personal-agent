@@ -1,5 +1,22 @@
-const BASE = 'https://personal-agent-6g2h.onrender.com';
-const TOKEN = 'dash123';
+// Never hardcode these. Both were previously literals committed to a public repository — a weak
+// shared token and a Render URL abandoned when the project moved to Vercel — so the credential
+// guarding every dashboard and /api route was readable by anyone, and the app had been pointing at
+// a host that no longer exists. The token has since been rotated.
+//
+// Expo inlines EXPO_PUBLIC_* at build time from mobile/.env, which is gitignored. Note that these
+// end up in the shipped bundle: that is acceptable for a single-user personal app, but it is the
+// reason the token must be rotatable and must never live in git.
+const BASE = process.env.EXPO_PUBLIC_API_BASE;
+const TOKEN = process.env.EXPO_PUBLIC_API_TOKEN;
+
+if (!BASE || !TOKEN) {
+  // Fail loudly at import rather than sending unauthenticated requests that 401 one screen at a
+  // time and look like a server problem.
+  throw new Error(
+    'Missing EXPO_PUBLIC_API_BASE or EXPO_PUBLIC_API_TOKEN. Copy mobile/.env.example to ' +
+    'mobile/.env and fill both in, then restart the Expo dev server.'
+  );
+}
 
 // Dashboard endpoints (existing screens use these)
 const api = (path) => `${BASE}${path}?token=${TOKEN}`;

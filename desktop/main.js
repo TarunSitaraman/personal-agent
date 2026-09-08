@@ -2,9 +2,23 @@ const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage } = require
 const path = require('path');
 const https = require('https');
 
-const FRAMES_DIR = 'C:\\Users\\Tarun\\Documents\\Codex\\2026-05-25\\hatch-pet-c-users-tarun-codex\\runs\\hex\\frames';
-const API_BASE   = 'https://personal-agent-6g2h.onrender.com';
-const API_TOKEN  = 'dash123';
+// Configuration, not constants. Both were previously literals committed to a public repository —
+// a weak shared token and a Render URL abandoned when the project moved to Vercel — so the
+// credential guarding every dashboard and /api route was readable by anyone, and the app had been
+// pointing at a host that no longer exists. The token has since been rotated.
+//
+// FRAMES_DIR pointed at an absolute path outside the repo, so the sprites were missing for anyone
+// who cloned it. It now defaults to ./frames alongside this file.
+const FRAMES_DIR = process.env.PET_FRAMES_DIR || path.join(__dirname, 'frames');
+const API_BASE   = process.env.API_BASE;
+const API_TOKEN  = process.env.API_TOKEN;
+
+if (!API_BASE || !API_TOKEN) {
+  throw new Error(
+    'Missing API_BASE or API_TOKEN. Copy desktop/.env.example to desktop/.env and fill both in, ' +
+    'or export them before launching.'
+  );
+}
 
 const PET_W = 128;
 const PET_H = 138;

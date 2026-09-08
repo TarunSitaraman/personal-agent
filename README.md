@@ -1,6 +1,60 @@
 # Blu — Personal AI Agent
 
+[![tests](https://github.com/TarunSitaraman/personal-agent/actions/workflows/test.yml/badge.svg)](https://github.com/TarunSitaraman/personal-agent/actions/workflows/test.yml)
+[![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Blu is a WhatsApp-native personal AI agent built for Tarun. It is not a todo app. It is a context-aware second brain that infers semantic context automatically, routes every message through a multi-tier LLM stack, stores memory in Postgres with vector search, and proactively surfaces what matters via scheduled briefs and nudges.
+
+<!-- TODO: replace with a screen recording of a real WhatsApp exchange — capture: (1) a capture
+     like "add oats and also remind me to call the dentist in 90 minutes" producing two items,
+     (2) the reminder arriving with Done / Snooze buttons, (3) tapping Done. Export as GIF to
+     docs/demo.gif and swap the line below for ![Blu in use](docs/demo.gif). -->
+
+> **Demo:** _recording pending._ See [In use](#in-use) for the shape of a conversation.
+
+---
+
+## In use
+
+```
+Tarun   when should I do my deep work?
+Blu     Since you focus best in the evenings and have meetings and PR reviews in
+        the morning, aim for your deep-work sessions after 7pm.
+
+Tarun   add oats and also remind me to call the dentist in 90 minutes
+Blu     Added the task "oats" and set the reminder for "call the dentist" in 90 minutes.
+
+        …90 minutes later, unprompted…
+
+Blu     Reminder: call the dentist          [ Done ]  [ Snooze 1hr ]
+```
+
+Nothing about Tarun is hard-coded. The first answer is possible only because the agent had
+previously learned, from ordinary conversation, that he does focused work in the evenings — see
+[Self-Learning](#self-learning).
+
+---
+
+## Quickstart
+
+```bash
+git clone https://github.com/TarunSitaraman/personal-agent.git
+cd personal-agent
+npm install
+
+cp .env.example .env        # fill in DATABASE_URL, WhatsApp and LLM keys
+node src/migrate_db.js      # idempotent; safe to re-run
+npm test                    # 98 tests, no database or network needed
+
+npm start                   # always-on Express server (webhook + cron + dashboard)
+```
+
+For the serverless path, import the repo into Vercel, set the same variables, and point
+cron-job.org at `api/cron/*` — see [Operations](#operations).
+
+Optional, and worth doing on a fresh install: `node src/seed_knowledge.js` walks through a short
+guided pass so the agent starts knowing something about you instead of accumulating it over weeks.
 
 ---
 
@@ -16,13 +70,13 @@ Vercel Serverless Functions (api/)
         │         │
         │         ▼ (ambiguous / complex)
         ├── LLM Brain (JSON-mode structured output)
-        │     ├── Round 1: Groq — DeepSeek R1 70B / Llama 3.3 70B / Llama 3.1 8B (parallel race)
-        │     ├── Round 2: OpenRouter — owl-alpha / Llama 3.3 70B free
+        │     ├── Round 1: Groq — gpt-oss-120b / gpt-oss-20b (parallel race)
+        │     ├── Round 2: OpenRouter — nemotron-3-super-120b (free tier)
         │     └── Round 3: Gemini 2.0 Flash / 1.5 Flash
         │
         ├── Action Executor
         │     ├── Postgres (Supabase) — todos, notes, learnings, events, knowledge, skills, conversations
-        │     └── pgvector — semantic search with text-embedding-004 (Gemini)
+        │     └── pgvector — semantic search with gemini-embedding-001, truncated to 768 dims
         │
         ├── Integrations
         │     ├── GitHub API — open PRs, issues, recent commits (SmartResQ repo)
@@ -66,9 +120,14 @@ and current items — so it stays correct as his life changes.
 
 The brain (`src/agent/brain.js`) uses a three-round fallback chain to maximise availability and minimise latency:
 
-1. **Groq (primary)** — Three models raced in parallel: DeepSeek R1 Distill 70B (chain-of-thought reasoning), Llama 3.3 70B, Llama 3.1 8B instant. Groq's R1 output is stripped of `<think>` blocks before parsing.
-2. **OpenRouter (secondary)** — owl-alpha and Llama 3.3 70B free tier as fallback.
+1. **Groq (primary)** — `openai/gpt-oss-120b` and `openai/gpt-oss-20b` raced in parallel. Reasoning-model output is stripped of `<think>` blocks before parsing.
+2. **OpenRouter (secondary)** — `nvidia/nemotron-3-super-120b-a12b:free` as fallback.
 3. **Gemini (tertiary)** — gemini-2.0-flash then gemini-1.5-flash via Google AI SDK.
+4. **Ollama (background only)** — local SLM for non-interactive work: fact extraction, summarisation, insight analysis.
+
+Model IDs are checked against the live provider catalogues periodically, because free-tier models get decommissioned without notice — that has silently taken the whole ladder down before.
+
+Routes are tuned per job rather than shared: the classifier prefers the fastest model, synthesis prefers Gemini, background work prefers local Ollama. `CLASSIFIER_MODEL` optionally puts a stronger paid model in front of the free ladder for intent classification alone — the one route where a wrong answer cascades into a wrong action. It is unset by default, and `src/compare_models.js` measures candidates against the free baseline before you pay for one.
 
 Failed models are cooled down for 5 minutes before retrying. All models return **JSON-mode structured output** with an `action`, `data`, and `reply` field so the executor never parses freeform text.
 
@@ -119,7 +178,7 @@ All memory lives in a Supabase (Postgres 17) database with the `pgvector` extens
 | `goals` | Daily "One Big Thing" goal tracking |
 | `user_insights` | Behavioural patterns extracted every 20 messages |
 | `reminders` | Time-based reminders |
-| `state` | key-value store for push tokens and state, push tokens |
+| `state` | key-value store for push tokens, context summaries and pending clarifications |
 
 ### Semantic Search
 
@@ -186,7 +245,7 @@ Beyond plain text, Blu uses WhatsApp's native interactive components:
 - **Button messages** — Up to 3 quick-reply buttons (e.g. Done / Snooze, Set goal / Skip, Tonight 9pm / Tomorrow 8am)
 - **List messages** — Sectioned scrollable list (e.g. todo list grouped by Work / SmartResQ / Personal, each row tappable to mark done)
 
-Interactive button replies (nteractive_reply events) are handled in the webhook and routed back through the brain for actions like `complete_todo`, `set_reminder`, and goal setting.
+Interactive button replies (`interactive_reply` events) are handled in the webhook and routed back through the brain for actions like `complete_todo`, `set_reminder`, and goal setting.
 
 After `add_todo`, Blu automatically follows up 800ms later with a reminder-offer button without requiring the user to ask.
 
@@ -249,9 +308,13 @@ personal-agent/
 │   │   └── intents.js            # Action name constants
 │   ├── scheduler/
 │   │   ├── briefs.js             # All cron jobs + reminder sweep
+│   │   ├── delivery.js           # Reminder formatting + send — shared by all 3 delivery paths
 │   │   └── timers.js             # Exact-time reminder delivery
 │   ├── migrate_db.js             # Idempotent schema migrations — run after pulling
+│   ├── seed_knowledge.js         # Guided knowledge seeding (see Self-Learning)
+│   ├── compare_models.js         # Classifier A/B harness across candidate models
 │   ├── whatsapp/
+│   │   ├── buttons.js            # Inbound button/list handling — shared by both webhooks
 │   │   ├── webhook.js            # Incoming message handler
 │   │   └── send.js               # Text, button, list message senders
 │   ├── integrations/
@@ -267,12 +330,53 @@ personal-agent/
 │   │   └── api.js                # Mobile app REST API
 │   └── events/
 │       └── hub.js                # Internal event bus
-├── mobile/                       # Expo companion app assets
+├── test/                         # 98 tests on the built-in node:test runner — no framework
+├── public/                       # Web dashboard assets (chat, live view, PWA manifest)
+├── mobile/                       # Expo app — six screens, push notifications (see below)
+├── desktop/                      # Electron tray pet — experimental, see desktop/README.md
 ├── CLAUDE.md                     # Project context for Claude Code
-├── PLAN.md                       # Original implementation plan
 ├── vercel.json                   # Vercel function config (maxDuration: 60s)
 └── package.json
 ```
+
+### Clients
+
+WhatsApp is the primary surface. Three secondary clients read the same `/api` routes:
+
+| Client | State |
+|---|---|
+| `public/` web dashboard | Analytics, live activity feed, chat |
+| `mobile/` Expo app | Six screens (home, chat, todos, calendar, notes, pet), Expo push with per-category Android channels |
+| `desktop/` Electron pet | Experimental — runs from source, sprite frames not committed |
+
+All three authenticate with `DASHBOARD_TOKEN`. Copy `mobile/.env.example` / `desktop/.env.example`
+and fill them in; the token is never committed.
+
+---
+
+## Testing
+
+```bash
+npm test        # 98 tests
+```
+
+The suite runs on Node's built-in `node:test` runner. **There are no test dependencies** — the
+project's seven runtime packages are the whole dependency tree. Tests substitute `memory`, `send`
+and `hub` with `test.mock.method` on the required module objects, so the entire suite runs with no
+database, no API keys and no network. CI needs nothing but `npm ci && npm test`.
+
+The tests are written around failures that actually shipped, and each file opens by naming the one
+it prevents. A sample:
+
+| Area | What it locks down |
+|---|---|
+| `brain.executeAction` | A storage failure must never echo the optimistic confirmation. Reporting "Todo added" for a write that failed silently dropped captures for weeks. |
+| `brain.prefilter` | Questions and compound requests must reach the LLM, not be swallowed as a single todo. |
+| `buttons` + `delivery` | The button IDs one side emits must parse on the side that receives them — a wire contract that had already drifted between three copies. |
+| `schema.tags` | Every table the code writes or reads `tags` on must be covered by a migration. Two missing columns had stopped the agent learning entirely. |
+
+New behaviour is verified by mutation, not just a green run: break the thing deliberately and
+confirm the test fails. A test that cannot fail is not covering anything.
 
 ---
 
