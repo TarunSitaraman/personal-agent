@@ -1489,7 +1489,9 @@ anything you are inferring rather than being told directly.
 
 Return JSON: {"facts": ["...", "..."]}
 At most 2. Prefer none over a guess — return {"facts": []} when nothing qualifies.
-Write each fact as a standalone sentence that still makes sense with no other context.`;
+Write each fact as a standalone sentence that still makes sense with no other context, in the
+third person about the user. Never write a fact as "I" or "me": these are stored as things an
+assistant knows about the user, and a first-person fact reads as the assistant describing itself.`;
 
 // Commands and one-word acknowledgements never carry a durable fact, and every exchange that
 // reaches the model costs a round trip. Kept separate so the rule is testable on its own.
@@ -1515,20 +1517,81 @@ async function extractFactsFromExchange(userMessage, replyText) {
   const facts = Array.isArray(parsed?.facts) ? parsed.facts.slice(0, 2) : [];
 
   for (const fact of facts) {
-    if (typeof fact !== 'string' || fact.trim().length < 10) continue;
-    const clean = fact.trim();
-
-    // Near-duplicates crowd out real recall — filterKnowledge scores by word overlap, so three
-    // phrasings of one fact push genuinely relevant facts out of the prompt.
-    const embedding = await getEmbedding(clean);
-    if (embedding) {
-      const matches = await memory.searchMemory(clean, embedding);
-      if (matches.some(m => m.type === 'knowledge' && m.score > 0.9)) continue;
-    }
-
-    const knowledgeId = await memory.saveKnowledge(clean, embedding, []);
-    extractAndLinkEntities(clean, knowledgeId).catch(() => {});
+    await storeFactIfNew(fact);
   }
+}
+
+// Stores one fact unless something close enough is already known. Shared with the seeding script
+// (src/seed_knowledge.js) so both paths dedupe the same way.
+//
+// Near-duplicates are not harmless: filterKnowledge ranks by word overlap, so three phrasings of
+// the same fact crowd genuinely relevant ones out of the prompt window.
+// Returns the new row id, or null when nothing was written.
+async function storeFactIfNew(fact) {
+  if (typeof fact !== 'string') return null;
+  const clean = fact.trim();
+  if (clean.length < 10) return null;
+
+  const embedding = await getEmbedding(clean);
+  if (embedding) {
+    const matches = await memory.searchMemory(clean, embedding);
+    if (matches.some(m => m.type === 'knowledge' && m.score > 0.9)) return null;
+  } else {
+    // Embeddings have been unavailable for months at a stretch on this project — a retired model
+    // and a missing key (8f7a7f6). Without a fallback the dedupe silently disappears exactly when
+    // facts are still being written, and the table fills with the near-duplicates this check
+    // exists to prevent. Normalised equality is conservative: it misses paraphrases, but it
+    // stops the same sentence being stored on every mention.
+    const known = await memory.getAllKnowledge();
+    const norm = s => String(s).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    const target = norm(clean);
+    if (known.some(k => norm(k) === target)) return null;
+  }
+
+  const knowledgeId = await memory.saveKnowledge(clean, embedding, []);
+  extractAndLinkEntities(clean, knowledgeId).catch(() => {});
+  return knowledgeId;
+}
+
+// Bulk extraction for seeding: the same discipline as the per-exchange path, but over a
+// deliberate brain dump rather than a passing remark, so it takes many facts instead of two.
+const USER_NAME = process.env.USER_NAME || 'Tarun';
+
+const SEED_EXTRACTION_PROMPT = `Split the user's description of their world into atomic facts.
+
+Each fact must be a single standalone sentence that still makes sense with no other context —
+name people and projects explicitly rather than writing "he", "it" or "the project".
+
+Write every fact in the third person about ${USER_NAME}. The input is written in the first
+person, so convert it: "I run X" becomes "${USER_NAME} runs X". Never write a fact as "I" or
+"me" — these are stored as things an assistant knows about ${USER_NAME}, and a first-person
+fact reads as the assistant describing itself.
+
+Keep: people and their roles, projects and what they involve, ${USER_NAME}'s work, tools and
+stack, routines and recurring commitments, preferences, and constraints.
+Drop: one-off tasks, specific dated appointments, and anything you are inferring rather than
+being told.
+
+Return JSON: {"facts": ["...", "..."]}
+Split compound statements into separate facts. Do not invent detail that is not present.`;
+
+// A deliberate brain dump legitimately contains a lot; the per-exchange path is the stingy one.
+async function extractFactsFromText(text, max = 30) {
+  if (!text || !text.trim()) return [];
+
+  const raw = await callLLM(
+    [{ role: 'user', content: `${SEED_EXTRACTION_PROMPT}\n\n${text.trim()}` }],
+    true,
+    'background'
+  );
+
+  const parsed = extractFirstJSON(raw);
+  if (!Array.isArray(parsed?.facts)) return [];
+
+  return parsed.facts
+    .filter(f => typeof f === 'string' && f.trim().length >= 10)
+    .map(f => f.trim())
+    .slice(0, max);
 }
 
 async function analyzePatterns() {
@@ -1794,6 +1857,8 @@ module.exports = {
   executeAction,
   shouldExtractFacts,
   extractFactsFromExchange,
+  extractFactsFromText,
+  storeFactIfNew,
   extractFirstJSON,
   extractPartialReply,
   validateJsonSchema,
