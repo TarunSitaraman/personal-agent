@@ -11,7 +11,7 @@ Blu is a WhatsApp-native personal AI agent built for Tarun. It is not a todo app
      (2) the reminder arriving with Done / Snooze buttons, (3) tapping Done. Export as GIF to
      docs/demo.gif and swap the line below for ![Blu in use](docs/demo.gif). -->
 
-> **Demo:** _recording pending._ See [In use](#in-use) for the shape of a conversation.
+> **Demo:** _recording pending._ See the WhatsApp number in .env.example to capture one._
 
 ---
 
