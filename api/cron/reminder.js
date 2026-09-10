@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { asOwner } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const { sweepDueReminders } = require('../../src/scheduler/delivery');
 
 function auth(req) {
@@ -18,11 +18,15 @@ function auth(req) {
 module.exports = async (req, res) => {
   if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
   // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
-  return asOwner(run)(req, res);
+  // The sweep runs per user: its queries are scoped, so a single pass would only ever find the
+  // owner's due reminders and everyone else's would sit unfired forever.
+  try {
+    const fired = await forEachUser(run);
+    res.json({ ok: true, fired });
+  } catch (err) {
+    console.error('Reminder sweep fan-out error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
 
-const run = async (req, res) => {
-
-  const fired = await sweepDueReminders();
-  res.json({ ok: true, fired });
-};
+const run = async () => sweepDueReminders();

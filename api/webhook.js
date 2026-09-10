@@ -6,6 +6,7 @@ const { analyzeImage } = require('../src/integrations/vision');
 const { handleButtonAction, parseInteractive } = require('../src/whatsapp/buttons');
 const memory = require('../src/agent/memory');
 const { runAsUser } = require('../src/agent/context');
+const { resolveSender, WELCOME } = require('../src/agent/registration');
 
 // Dedup cache — WhatsApp retries if it doesn't get 200 quickly enough
 const seenIds = new Map();
@@ -45,10 +46,13 @@ module.exports = async (req, res) => {
     if (isDuplicate(message.id)) return res.status(200).end();
 
     const from = message.from;
-    // The sender is looked up rather than compared against a single number — this is the seam
-    // multi-user opens through. Until registration lands, only a known, active user passes.
-    const user = await memory.getUserByNumber(from);
-    if (!user || !user.active) return res.status(200).end();
+    // The sender is resolved rather than compared against a single number. An unknown number
+    // registers only if the allowlist names it; otherwise this returns null and the message is
+    // dropped in silence, exactly as the old number mismatch did.
+    const sender = await resolveSender(from);
+    if (!sender) return res.status(200).end();
+    const { user, isNew } = sender;
+    if (isNew) await sendMessage(from, WELCOME);
 
     // `await` is load-bearing: returning the promise unawaited would let a rejection escape
     // the catch below, and WhatsApp would get silence instead of the apology message.
@@ -90,7 +94,14 @@ module.exports = async (req, res) => {
     console.error('Webhook error:', err.message);
     // Never echo raw exception text to WhatsApp — upstream failures (DB quota, provider
     // outages) leak infrastructure detail and spam the chat on every retry.
-    try { await sendMessage(process.env.MY_WHATSAPP_NUMBER, 'Something went wrong on my end. It\'s logged — try again in a bit.'); } catch {}
+    //
+    // The apology goes to whoever wrote in, not to the owner: sending it to the owner would
+    // both leave the actual sender hanging and page the owner about someone else's message.
+    // Guarded, because an error thrown before the body was parsed leaves no sender to answer.
+    const replyTo = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from;
+    if (replyTo) {
+      try { await sendMessage(replyTo, 'Something went wrong on my end. It\'s logged — try again in a bit.'); } catch {}
+    }
     res.status(200).end(); // always 200 to WhatsApp
   }
 };
