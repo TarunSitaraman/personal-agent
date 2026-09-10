@@ -1,4 +1,5 @@
 {
+  "framework": "express",
   "functions": {
     "api/webhook.js":        { "maxDuration": 60 },
     "api/chat.js":           { "maxDuration": 60 },
