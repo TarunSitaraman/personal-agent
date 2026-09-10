@@ -98,12 +98,18 @@ TZ=Asia/Kolkata
 ## Current status
 - [x] PLAN.md written
 - [x] Meta WhatsApp setup
-- [x] Supabase schema applied (migrated off Neon 2026-08-19)  
+- [x] Supabase schema applied (migrated off Neon 2026-08-19)
 - [x] Gemini API key obtained
 - [x] Code implemented
-- [x] Vercel deployed
+- [x] Vercel deployed (2026-09-10 — pushed eab7b6f + e4e0de4, restoring production writes)
 - [x] Webhook URL registered in Meta app
 - [x] End-to-end test: message bot → response
+- [x] Multi-user: registration, per-user ownership (13 tables), fan-out crons
+- [x] Recurring reminders: single source of truth in src/agent/recurrence.js
+- [x] Memory.js audit: all defects fixed (99 → 130 tests)
+- [ ] ALLOWED_NUMBERS set in Vercel env (empty = closed to owner only)
+- [ ] GITHUB_TOKEN replaced with classic repo-scoped PAT (currently 403)
+- [ ] cron-job.org reminder job confirmed at every 15 minutes
 
 ## Conventions
 - **No AI attribution in commits.** No `Co-Authored-By`, no session trailers, no tool mentions
@@ -111,53 +117,45 @@ TZ=Asia/Kolkata
 - Run `npm test` before committing. Tests use the built-in `node --test` runner — deliberately
   no test framework dependency.
 
-## Known issues / in flight (2026-09-09)
+## Known issues / in flight (2026-09-10)
 
-### memory.js — real defects, found by audit, not yet fixed
-`src/agent/memory.js` is 909 lines and 77 exports with **zero SQL coverage** — no test executes a
-single query in it. These were found by reading it and are ranked by consequence:
+### Resolved (2026-09-10 sprint)
+All 12 memory.js defects from the 2026-09-09 audit were fixed in commit `91913ca`
+(verified against production, 99 → 130 tests). See that commit for details.
 
-- **`src/agent/brain.js:779` — live arity bug.** `memory.addNote(pending.newContent,
-  pending.context, [], embedding)` against `addNote(content, tags, embedding)`. A string lands in
-  the `tags text[]` slot and `[]` becomes the embedding. The correct call is at `:1302`.
-- **`getEventsStartingSoon` (`memory.js:394`)** — the outer `UPDATE` has no `reminded = false`
-  re-check, unlike `claimTodoReminder`/`claimEventReminder`. Two concurrent sweeps can both claim
-  a row and send the same reminder twice.
-- **`searchMemory` (`:475`)** — (a) the JS filter is `r.score === null || r.score > 0.6` and the
-  todo/note/learning queries do not filter `embedding IS NOT NULL`, so every NULL-embedding row is
-  admitted unconditionally; (b) the knowledge query orders by the output alias `score` instead of
-  `embedding <=> $1`, defeating the HNSW index.
-- **`getStaleTodos` (`:429`)** — `INTERVAL '${days} days'` string-interpolated, not parameterised.
-  The only such case in the file.
-- **Queue claim (`:717`, `:728`)** — no `FOR UPDATE SKIP LOCKED`, no `WHERE status = 'pending'`
-  guard, no `RETURNING`. Two workers can process one message, and rows stuck in `processing` are
-  never retried (the retry filter is `status = 'failed'`).
-- **`state` encoding mismatch** — `saveState` stores `JSON.stringify`, `saveContextSummary` stores
-  a raw string, `getState` always `JSON.parse`s. `getState('context_summary')` throws.
-- **`setTodoReminderByContent` (`:665`)** — no `RETURNING`, so "matched nothing" is
-  indistinguishable from success. Same class as the `dfe0288` bug already fixed once.
-- **`migrate_db.js:42`** declares `todos.embedding vector(1536)` while the schema and
-  `EMBEDDING_DIMS` say 768. Inert on the existing DB (`IF NOT EXISTS`), fatal on a fresh one.
-- Unescaped `%` / `_` in every ILIKE — `completeTodoByContent:103` has the widest blast radius.
-- `isDuplicateRequest:693` depends on a constraint created only in `03_constraints.sql`. If that
-  was ever skipped it returns `false` forever and every message is reprocessed.
+### Still pending
 
-### Smaller / structural
-- `todos.context` / `events.context` coexist with `tags`; code still reads `context` in places.
-- `src/whatsapp/webhook.js` still imports `transcribeAudio` / `analyzeImage` and defines an unused
-  `isDuplicate`/`seenIds` pair — dead since media handling moved to the queue processor.
-- Brief composition duplicates the stale-todo button block between `src/scheduler/briefs.js` and
-  `api/cron/morning.js`. Same shape as the handler duplication already resolved.
-- `migrate_db.js` is not a full schema — it creates only four tables; the rest exist only in
-  `migration-export/01_schema.sql`. No single authoritative schema, which is exactly how the
-  `tags` drift happened. Generalising `test/schema.tags.test.js` to any column would catch the next.
-- **`ssl: { rejectUnauthorized: false }`** on the pool (`memory.js:13`) disables TLS verification
-  against the database. Pre-existing; fix when not mid-incident.
+**Phase 2 — Google Calendar.** Blocked on you: needs an OAuth client with
+Calendar read-only scope and one-time consent. Highest usefulness-per-hour item.
+
+**Smaller items:**
+- `findConnections` sends 30 items to the LLM on every save when pgvector could do it
+- No eval harness that replays real messages and asserts the resulting actions
+- No `update_todo` / `delete_note` endpoints
+
+### Two things still single-user
+- **DASHBOARD_TOKEN** is one shared secret — the web and mobile APIs act as the
+  owner. A second user has no web access (phase 3e, written up in
+  `~/.claude/plans/personal-agent-multi-user.md`)
+- **Brief timing** is one timezone. `users.tz` is stored and honoured by delivery,
+  but both schedulers register fixed times — a Berlin user would get a 9am IST brief.
+  Needs hourly-firing jobs plus a cron-job.org schedule change.
 
 ### Ops
-- Vercel `GITHUB_TOKEN` is a fine-grained PAT without access to the private SmartResQ-dev repo —
-  production logs `403 Resource not accessible by personal access token`. Replace with a classic
-  token carrying `repo` scope and briefs regain PR/commit context.
+- Vercel `GITHUB_TOKEN` is a fine-grained PAT without access to the private
+  SmartResQ-dev repo — production logs `403 Resource not accessible by personal
+  access token`. Replace with a classic token carrying `repo` scope and briefs
+  regain PR/commit context.
+- `ssl: { rejectUnauthorized: false }` on the pool (`memory.js:13`) disables TLS
+  verification against the database. Pre-existing; fix when not mid-incident.
+
+### Stale items from older plans (verify before acting)
+- `todos.context` / `events.context` coexist with `tags`; code still reads
+  `context` in places (likely resolved by the ownership refactor — verify)
+- `src/whatsapp/webhook.js` dead imports (likely resolved — verify)
+- Brief composition duplication (likely resolved by scheduler/delivery.js)
+- `migrate_db.js` is not a full schema — it creates only four tables; the rest exist
+  only in `migration-export/01_schema.sql`. No single authoritative schema.
 
 ## Key references
 - This project: `C:\Users\Tarun\Documents\personal-agent`
