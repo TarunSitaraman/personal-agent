@@ -164,12 +164,11 @@ await pool.query(`
        );
      `);
 
-    // The seed has to exist before the backfill can point at it. Without a number configured
-    // there is nobody to attribute the existing rows to, so stop rather than invent an owner.
-    const myNumber = process.env.MY_WHATSAPP_NUMBER;
-    if (!myNumber) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot seed the owner of existing rows');
+// Ensure the dashboard_token column exists on existing databases.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS dashboard_token text UNIQUE`);
+    console.log('✔ users.dashboard_token column added/verified');
 
-const { rows: seeded } = await pool.query(
+     const { rows: seeded } = await pool.query(
        `INSERT INTO users (wa_number, name, dashboard_token) VALUES ($1, $2, $3)
         ON CONFLICT (wa_number) DO NOTHING
         RETURNING id`,
