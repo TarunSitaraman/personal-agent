@@ -105,10 +105,14 @@ async function main() {
 
     // 9. Reminder-fired flag on events — lets the reminder sweep claim rows atomically
     // instead of relying on a narrow time window plus an in-process dedup Set.
+    // `reminded` is a boolean, which can say "this event was reminded" but not "this event was
+    // reminded for Tuesday" — so it cannot claim a recurring event, which fires many times.
+    // `last_reminded_at` holds the occurrence claimed, making the guard per-occurrence.
     await pool.query(`
       ALTER TABLE events ADD COLUMN IF NOT EXISTS reminded BOOLEAN DEFAULT false;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS last_reminded_at TIMESTAMPTZ;
     `);
-    console.log('✔ events.reminded column added/verified');
+    console.log('✔ events.reminded / events.last_reminded_at columns added/verified');
 
     // 10. Tag columns. The semantic-tagging refactor moved the code from a single `context`
     // string to `tags` arrays (notes already had them) but the schema was never migrated, so
@@ -140,6 +144,84 @@ async function main() {
         WHERE context IS NOT NULL AND (tags IS NULL OR cardinality(tags) = 0);
     `);
     console.log('✔ tags columns added and backfilled on todos/events/notes/knowledge/goals');
+
+    // 11. Ownership. Every row in every table has belonged implicitly to one person, because
+    // there has only ever been one person: MY_WHATSAPP_NUMBER served as both the auth check and
+    // the send destination. This gives that person a row, and every other row an owner.
+    //
+    // dedup_messages and prompt_versions are deliberately left global — a WhatsApp message id is
+    // unique across the world, and prompt versions are agent configuration, not user data.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        wa_number text UNIQUE NOT NULL,
+        name text,
+        tz text DEFAULT 'Asia/Kolkata',
+        active boolean DEFAULT true,
+        created_at timestamptz DEFAULT NOW()
+      );
+    `);
+
+    // The seed has to exist before the backfill can point at it. Without a number configured
+    // there is nobody to attribute the existing rows to, so stop rather than invent an owner.
+    const myNumber = process.env.MY_WHATSAPP_NUMBER;
+    if (!myNumber) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot seed the owner of existing rows');
+
+    const { rows: seeded } = await pool.query(
+      `INSERT INTO users (wa_number, name) VALUES ($1, $2)
+       ON CONFLICT (wa_number) DO UPDATE SET wa_number = EXCLUDED.wa_number
+       RETURNING id`,
+      [myNumber, 'Tarun']
+    );
+    const ownerId = seeded[0].id;
+    console.log(`✔ users table created/verified, owner seeded (${ownerId})`);
+
+    const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
+                   'conversations', 'state', 'skills', 'user_insights',
+                   'pending_messages', 'entity_links', 'reminders'];
+
+    for (const table of OWNED) {
+      await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id)`);
+      await pool.query(`UPDATE ${table} SET user_id = $1 WHERE user_id IS NULL`, [ownerId]);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table} (user_id)`);
+    }
+    console.log(`✔ user_id added, backfilled and indexed on ${OWNED.length} tables`);
+
+    // Two uniqueness constraints are scoped to one person's world and collide the moment there
+    // are two: state.key — "context_summary" is per-person — and skills.name. The composite
+    // replacements are created here so they exist before anything needs them.
+    //
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS state_user_key ON state (user_id, key);
+      CREATE UNIQUE INDEX IF NOT EXISTS skills_user_name ON skills (user_id, name);
+    `);
+    console.log('✔ composite uniqueness added for state(user_id,key) and skills(user_id,name)');
+
+    // 12. The single-column uniqueness the composites replace. Dropped only now, because until
+    // the queries were scoped four statements still named these as ON CONFLICT targets
+    // (saveState, saveContextSummary, savePushToken/removePushToken, saveSkill) and dropping the
+    // index out from under them would have broken exactly those writes in production.
+    await pool.query(`
+      ALTER TABLE state  DROP CONSTRAINT IF EXISTS state_pkey;
+      DROP INDEX IF EXISTS state_pkey;
+      ALTER TABLE skills DROP CONSTRAINT IF EXISTS skills_name_key;
+      DROP INDEX IF EXISTS skills_name_key;
+    `);
+    console.log('✔ single-user uniqueness on state.key and skills.name removed');
+
+    // 13. Ownership is now mandatory. Every write path sets user_id, so an unowned row can only
+    // arrive from a query that forgot its scope — which is precisely what must not be allowed to
+    // land quietly. Guarded: enforce only once the table is genuinely clean.
+    for (const table of OWNED) {
+      const { rows } = await pool.query(
+        `SELECT count(*)::int AS orphans FROM ${table} WHERE user_id IS NULL`);
+      if (rows[0].orphans > 0) {
+        console.warn(`  ! ${table} still has ${rows[0].orphans} unowned rows — leaving it nullable`);
+        continue;
+      }
+      await pool.query(`ALTER TABLE ${table} ALTER COLUMN user_id SET NOT NULL`);
+    }
+    console.log('✔ user_id is NOT NULL wherever the table was clean');
 
     console.log('Migrations completed successfully!');
   } catch (err) {

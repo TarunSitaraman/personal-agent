@@ -1,10 +1,14 @@
 const express = require('express');
+const { ownerMiddleware } = require('../agent/context');
 const axios = require('axios');
 const memory = require('../agent/memory');
 const { handleIncoming } = require('../agent/brain');
 const { sendPush } = require('../push/push');
 
 const router = express.Router();
+
+// Every route below reads or writes one person's data, so the whole router runs in scope.
+router.use(ownerMiddleware);
 
 // Public cron queue processing endpoint (Item 1)
 router.post('/cron/process', async (req, res) => {

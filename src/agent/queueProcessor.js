@@ -1,4 +1,5 @@
 const memory = require('./memory');
+const { runAsUser } = require('./context');
 const { handleIncoming } = require('./brain');
 const { sendMessage } = require('../whatsapp/send');
 const { transcribeAudio } = require('../integrations/whisper');
@@ -97,7 +98,18 @@ async function processQueue() {
     // immediate drain while the cron sweep may already be running.
     const claimed = await memory.markMessageProcessing(row.id);
     if (!claimed) continue;
-    await processMessage(row);
+
+    // Scope is per message, not per drain: a queue pass can hold messages from several senders,
+    // and each one has to be handled as its own owner.
+    const user = await memory.getUserByNumber(row.from_number);
+    if (!user || !user.active) {
+      // Completed, not skipped: the row was already claimed into `processing`, and the retry
+      // filter only picks up `failed`. A bare `continue` would strand it there forever.
+      console.warn(`[QueueProcessor] No active user for ${row.from_number} — dropping ${row.id}`);
+      await memory.markMessageCompleted(row.id);
+      continue;
+    }
+    await runAsUser(user, () => processMessage(row));
   }
 }
 

@@ -5,12 +5,19 @@ const { sendBriefPush, sendNudgePush } = require('../push/push');
 const memory = require('../agent/memory');
 const timers = require('./timers');
 const { sweepDueReminders } = require('./delivery');
+const { withOwner } = require('../agent/context');
+
+// Every scheduled job acts for the owner. Wrapping once at registration leaves the nine job
+// bodies untouched and makes it impossible to add a tenth that forgets the scope.
+const scheduleAsOwner = (expr, fn, opts) =>
+  cron.schedule(expr, () => withOwner(fn).catch(err =>
+    console.error('[Scheduler] job failed:', err.message)), opts);
 
 function startScheduler() {
   const myNumber = process.env.MY_WHATSAPP_NUMBER;
 
   // 9:00 AM IST — Morning brief (Morning Brief)
-  cron.schedule('0 9 * * 1-5', async () => {
+  scheduleAsOwner('0 9 * * 1-5', async () => {
     try {
       const standup = await generateStandup("generic");
       await sendMessage(myNumber, standup);
@@ -21,7 +28,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // 6:00 PM IST — Evening Brief
-  cron.schedule('0 18 * * *', async () => {
+  scheduleAsOwner('0 18 * * *', async () => {
     try {
       const standup = await generateStandup("generic");
       await sendMessage(myNumber, standup);
@@ -43,7 +50,7 @@ function startScheduler() {
   // 24/7 (~730 compute-hours/month against a ~192-hour free-tier budget), which exhausts the
   // quota mid-month and makes every DB call fail. Inbound messages are already processed
   // immediately by the webhook, so this sweep never needs to be the fast path.
-  cron.schedule('*/15 6-23 * * *', async () => {
+  scheduleAsOwner('*/15 6-23 * * *', async () => {
     // 1. Process message queue
     try {
       const { processQueue } = require('../agent/queueProcessor');
@@ -61,7 +68,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // Midnight daily — run memory decay check + auto-summarise old notes (Item 8 & 13)
-  cron.schedule('0 0 * * *', async () => {
+  scheduleAsOwner('0 0 * * *', async () => {
     try {
       console.log('Running daily memory decay check...');
       const decayResults = await memory.processMemoryDecay();
@@ -80,7 +87,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // 9:00 AM IST daily — stale todo alert
-  cron.schedule('0 9 * * 1-5', async () => {
+  scheduleAsOwner('0 9 * * 1-5', async () => {
     try {
       const alert = await generateStaleAlert();
       if (alert) {
@@ -95,7 +102,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // Sunday 8:00 PM IST — weekly review + conversation trim
-  cron.schedule('0 20 * * 0', async () => {
+  scheduleAsOwner('0 20 * * 0', async () => {
     try {
       await memory.trimConversations(200);
       const review = await generateWeeklyReview();
@@ -106,7 +113,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // 9:00 PM IST — proactive nudge
-  cron.schedule('0 21 * * *', async () => {
+  scheduleAsOwner('0 21 * * *', async () => {
     try {
       const nudge = await generateProactiveNudge();
       if (nudge) {
@@ -120,7 +127,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // 10:00 AM Sunday — Tech Twitter Pulse
-  cron.schedule('0 10 * * 0', async () => {
+  scheduleAsOwner('0 10 * * 0', async () => {
     try {
       const pulse = await generateTechPulse();
       if (pulse) await sendMessage(myNumber, pulse);
@@ -130,7 +137,7 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // 10:00 PM IST — late night goal nudge
-  cron.schedule('0 22 * * *', async () => {
+  scheduleAsOwner('0 22 * * *', async () => {
     try {
       const pendingGoal = await memory.getPendingGoal();
       if (pendingGoal) {
@@ -142,8 +149,10 @@ function startScheduler() {
   }, { timezone: 'Asia/Kolkata' });
 
   // Arm timers for anything already due within the horizon, so a restart doesn't wait
-  // for the first sweep.
-  timers.refresh();
+  // for the first sweep. This one runs at boot rather than inside a job, so it needs the
+  // scope established explicitly.
+  withOwner(() => timers.refresh())
+    .catch(err => console.error('[Scheduler] initial timer refresh failed:', err.message));
 
   console.log('Scheduler started — morning brief (9am Mon-Fri), evening brief (6pm), reminder sweep (every 15min, 6am-midnight), Tech Pulse (Sun 10am), Weekly Review (Sun 8pm), Goal Nudge (10pm)');
 }
