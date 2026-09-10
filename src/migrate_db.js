@@ -173,17 +173,16 @@ await pool.query(`
      const myNumber = process.env.MY_WHATSAPP_NUMBER;
      if (!myNumber) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot seed the owner of existing rows');
 
-     const { rows: seeded } = await pool.query(
+const { rows: seeded } = await pool.query(
        `INSERT INTO users (wa_number, name, dashboard_token) VALUES ($1, $2, $3)
-        ON CONFLICT (wa_number) DO NOTHING
+        ON CONFLICT (wa_number) DO UPDATE SET dashboard_token = COALESCE(users.dashboard_token, EXCLUDED.dashboard_token)
         RETURNING id`,
        [myNumber, 'Tarun', crypto.randomUUID()]
      );
-     const ownerId = seeded?.[0]?.id
-       || (await pool.query(`SELECT id FROM users WHERE wa_number = $1`, [myNumber])).rows[0].id;
+     const ownerId = seeded[0].id;
      console.log(`✔ users table created/verified, owner seeded (${ownerId})`);
 
-    const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
+     const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
                    'conversations', 'state', 'skills', 'user_insights',
                    'pending_messages', 'entity_links', 'reminders'];
 
