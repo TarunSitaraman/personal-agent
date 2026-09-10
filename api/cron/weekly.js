@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { asOwner } = require('../../src/agent/context');
+const { forEachUser, currentNumber } = require('../../src/agent/context');
 const { generateWeeklyReview } = require('../../src/agent/brain');
 const { sendMessage } = require('../../src/whatsapp/send');
 const memory = require('../../src/agent/memory');
@@ -12,18 +12,20 @@ function auth(req) {
 module.exports = async (req, res) => {
   if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
   // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
-  return asOwner(run)(req, res);
-};
-
-const run = async (req, res) => {
-
+  // One pass per active user, each in its own scope. forEachUser logs and skips a user
+  // who fails, so one broken account cannot cost everyone else their brief.
   try {
-    await memory.trimConversations(200);
-    const review = await generateWeeklyReview();
-    await sendMessage(process.env.MY_WHATSAPP_NUMBER, review);
-    res.json({ ok: true });
+    const results = await forEachUser(run);
+    res.json({ ok: true, results });
   } catch (err) {
-    console.error('Weekly review error:', err.message);
+    console.error('Weekly review fan-out error:', err.message);
     res.status(500).json({ error: err.message });
   }
+};
+
+const run = async (user) => {
+  await memory.trimConversations(200);
+  const review = await generateWeeklyReview();
+  await sendMessage(currentNumber(), review);
+  return `${user.wa_number}: weekly review sent`;
 };

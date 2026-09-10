@@ -6,6 +6,9 @@
 // Keeping three copies in step by hand is how a button id or a wording change silently applies
 // to one path only. They all route through here now.
 //
+// The destination is currentNumber(), not an env var: every caller already runs inside a user
+// scope, so a reminder goes to whoever owns it rather than to whoever deployed the process.
+//
 // Dedup is not this module's job — it lives in the DB. The sweep queries claim the rows they
 // return, and the timer path claims via memory.claimTodoReminder/claimEventReminder, so a timer
 // and a sweep racing the same row still send once.
@@ -13,6 +16,7 @@
 const memory = require('../agent/memory');
 const { sendButtonMessage } = require('../whatsapp/send');
 const { sendReminderPush, sendNudgePush } = require('../push/push');
+const { currentNumber } = require('../agent/context');
 
 // Formatting is kept pure and separate from sending so it can be asserted on directly.
 function formatTodoReminder(todo) {
@@ -41,13 +45,13 @@ function formatEventReminder(ev, now = Date.now()) {
 
 async function deliverTodoReminder(todo) {
   const { text, buttons } = formatTodoReminder(todo);
-  await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, text, buttons);
+  await sendButtonMessage(currentNumber(), text, buttons);
   await sendReminderPush(todo.id, todo.content);
 }
 
 async function deliverEventReminder(ev) {
   const { text, pushText, buttons } = formatEventReminder(ev);
-  await sendButtonMessage(process.env.MY_WHATSAPP_NUMBER, text, buttons);
+  await sendButtonMessage(currentNumber(), text, buttons);
   await sendNudgePush(pushText);
 }
 

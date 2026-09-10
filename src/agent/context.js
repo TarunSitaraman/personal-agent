@@ -45,6 +45,37 @@ function currentTz() {
   return currentUser()?.tz || process.env.TZ || 'Asia/Kolkata';
 }
 
+// Where a message goes. This replaces process.env.MY_WHATSAPP_NUMBER at every send site: the
+// destination is a property of who the agent is acting for, not of the deployment.
+function currentNumber() {
+  const user = currentUser();
+  if (!user?.wa_number) {
+    throw new Error('No user in scope: tried to send a message without knowing who it is for.');
+  }
+  return user.wa_number;
+}
+
+// Runs fn once per active user, each inside its own scope. One user's failure is logged and
+// skipped rather than allowed to cancel everyone else's brief — a fan-out that stops at the
+// first error silently degrades to "only the first few users get anything".
+async function forEachUser(fn) {
+  const memory = require('./memory');
+  const users = await memory.getActiveUsers();
+  const results = [];
+
+  for (const user of users) {
+    try {
+      const value = await runAsUser(user, () => fn(user));
+      if (Array.isArray(value)) results.push(...value);
+      else if (value !== undefined) results.push(value);
+    } catch (err) {
+      console.error(`[fan-out] ${user.wa_number} failed:`, err.message);
+      results.push(`${user.wa_number}: failed — ${err.message}`);
+    }
+  }
+  return results;
+}
+
 // Convenience for the entry points that have no sender to identify — the dashboard, and the crons
 // until they fan out over every active user. Resolves the owner and enters the scope.
 //
@@ -69,6 +100,6 @@ function ownerMiddleware(req, res, next) {
 }
 
 module.exports = {
-  runAsUser, currentUser, currentUserId, currentTz,
-  withOwner, asOwner, ownerMiddleware,
+  runAsUser, currentUser, currentUserId, currentTz, currentNumber,
+  withOwner, asOwner, ownerMiddleware, forEachUser,
 };

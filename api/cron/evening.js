@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { asOwner } = require('../../src/agent/context');
+const { forEachUser, currentNumber } = require('../../src/agent/context');
 const { generateStandup } = require('../../src/agent/brain');
 const { sendMessage, sendButtonMessage } = require('../../src/whatsapp/send');
 
@@ -11,23 +11,25 @@ function auth(req) {
 module.exports = async (req, res) => {
   if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
   // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
-  return asOwner(run)(req, res);
-};
-
-const run = async (req, res) => {
-
-  const myNumber = process.env.MY_WHATSAPP_NUMBER;
-
+  // One pass per active user, each in its own scope. forEachUser logs and skips a user
+  // who fails, so one broken account cannot cost everyone else their brief.
   try {
-    const standup = await generateStandup('smartresq');
-    await sendMessage(myNumber, standup);
-    await sendButtonMessage(myNumber, "What's the *One Big Thing* you want to move tonight?", [
-      { id: 'obt_set', title: 'Set it now' },
-      { id: 'obt_skip', title: 'Skip tonight' },
-    ]);
-    res.json({ ok: true });
+    const results = await forEachUser(run);
+    res.json({ ok: true, results });
   } catch (err) {
-    console.error('Evening brief error:', err.message);
+    console.error('Evening brief fan-out error:', err.message);
     res.status(500).json({ error: err.message });
   }
+};
+
+const run = async (user) => {
+  const myNumber = currentNumber();
+
+  const standup = await generateStandup('smartresq');
+  await sendMessage(myNumber, standup);
+  await sendButtonMessage(myNumber, "What's the *One Big Thing* you want to move tonight?", [
+    { id: 'obt_set', title: 'Set it now' },
+    { id: 'obt_skip', title: 'Skip tonight' },
+  ]);
+  return `${user.wa_number}: evening brief sent`;
 };

@@ -1097,6 +1097,18 @@ async function getUserByNumber(waNumber) {
   return rows[0] || null;
 }
 
+// First contact. ON CONFLICT rather than INSERT so two messages arriving together — WhatsApp
+// retries aggressively — cannot create the same person twice.
+async function createUser(waNumber, name = null) {
+  const { rows } = await pool.query(
+    `INSERT INTO users (wa_number, name) VALUES ($1, $2)
+     ON CONFLICT (wa_number) DO UPDATE SET wa_number = EXCLUDED.wa_number
+     RETURNING id, wa_number, name, tz, active`,
+    [waNumber, name]
+  );
+  return rows[0];
+}
+
 async function getActiveUsers() {
   const { rows } = await pool.query(
     'SELECT id, wa_number, name, tz, active FROM users WHERE active = true ORDER BY created_at'
@@ -1115,7 +1127,7 @@ async function getOwner() {
 }
 
 module.exports = {
-  getUserByNumber, getActiveUsers, getOwner,
+  getUserByNumber, getActiveUsers, getOwner, createUser,
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
   addNote, updateNoteTags, getRecentNotes, deleteNote, getLastCreatedItem,
   addLearning, getUnreviewedLearnings, markLearningReviewed,

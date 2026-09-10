@@ -1,5 +1,6 @@
 const express = require('express');
 const { runAsUser } = require('../agent/context');
+const { resolveSender, WELCOME } = require('../agent/registration');
 const { transcribeAudio } = require('../integrations/whisper');
 const { analyzeImage } = require('../integrations/vision');
 const memory = require('../agent/memory');
@@ -59,11 +60,17 @@ router.post('/', async (req, res) => {
     if (!message) return;
 
     const from = message.from;
-    // Looked up rather than compared against one number — the seam multi-user opens through.
-    const user = await memory.getUserByNumber(from);
-    if (!user || !user.active) {
-      logHit({ filtered: true, from, reason: user ? 'inactive' : 'unregistered' });
+    // Resolved rather than compared against one number. Unknown senders register only if the
+    // allowlist names them; everyone else is dropped without a reply.
+    const sender = await resolveSender(from);
+    if (!sender) {
+      logHit({ filtered: true, from, reason: 'not allowed' });
       return;
+    }
+    const { user, isNew } = sender;
+    if (isNew) {
+      const { sendMessage } = require('./send');
+      await sendMessage(from, WELCOME);
     }
 
     // Only the enqueue needs the scope here. processQueue establishes its own, per message,

@@ -78,7 +78,8 @@ personal-agent/
 WHATSAPP_TOKEN=          # Meta permanent access token
 WHATSAPP_PHONE_ID=       # Phone number ID from Meta app
 WHATSAPP_VERIFY_TOKEN=   # Any string you choose (webhook verification)
-MY_WHATSAPP_NUMBER=      # Tarun's personal number (E.164 format: 91XXXXXXXXXX)
+MY_WHATSAPP_NUMBER=      # Tarun's personal number (E.164 format: 91XXXXXXXXXX) — seeds the owner row
+ALLOWED_NUMBERS=         # Comma-separated numbers allowed to self-register. Empty = closed.
 GEMINI_API_KEY=          # From aistudio.google.com
 DATABASE_URL=            # Supabase → Connect → Transaction pooler (port 6543)
 PORT=3000
