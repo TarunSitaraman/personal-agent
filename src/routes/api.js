@@ -4,19 +4,34 @@ const axios = require('axios');
 const memory = require('../agent/memory');
 const { handleIncoming } = require('../agent/brain');
 const { sendPush } = require('../push/push');
+const { getUserByDashboardToken } = require('../agent/memory');
 
 const router = express.Router();
 
+// Resolve the authenticated user from the dashboard token query param.
+// Each user has their own token stored in the database.
+function tokenMiddleware(req, res, next) {
+   const token = req.query.token;
+   if (!token) return res.status(401).json({ error: 'Unauthorized' });
+   getUserByDashboardToken(token).then(user => {
+     if (!user) return res.status(401).json({ error: 'Unauthorized' });
+     req.user = user;
+     next();
+   }).catch(next);
+}
+
 // Every route below reads or writes one person's data, so the whole router runs in scope.
-router.use(ownerMiddleware);
+router.use(tokenMiddleware);
 
 // Public cron queue processing endpoint (Item 1)
 router.post('/cron/process', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token || req.headers['x-cron-secret'];
-  const cronSecret = process.env.CRON_SECRET || process.env.DASHBOARD_TOKEN;
-  if (cronSecret && token !== cronSecret) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+   const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token || req.headers['x-cron-secret'];
+   const cronSecret = process.env.CRON_SECRET || '';
+   // Allow cron access if the token matches CRON_SECRET or any valid user token
+   const user = token ? await getUserByDashboardToken(token).catch(() => null) : null;
+   if (cronSecret && token !== cronSecret && !user) {
+     return res.status(401).json({ error: 'Unauthorized' });
+   }
   
   try {
     const { processQueue } = require('../agent/queueProcessor');
@@ -78,7 +93,7 @@ router.get('/health/full', async (req, res) => {
 // Simple bearer token auth — same token as the dashboard
 function auth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  if (token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
 
