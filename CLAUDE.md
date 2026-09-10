@@ -107,6 +107,7 @@ TZ=Asia/Kolkata
 - [x] Multi-user: registration, per-user ownership (13 tables), fan-out crons
 - [x] Recurring reminders: single source of truth in src/agent/recurrence.js
 - [x] Memory.js audit: all defects fixed (99 → 130 tests)
+- [x] Per-user dashboard auth: shared DASHBOARD_TOKEN replaced with per-user tokens
 - [ ] ALLOWED_NUMBERS set in Vercel env (empty = closed to owner only)
 - [ ] GITHUB_TOKEN replaced with classic repo-scoped PAT (currently 403)
 - [ ] cron-job.org reminder job confirmed at every 15 minutes
