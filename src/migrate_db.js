@@ -165,8 +165,13 @@ await pool.query(`
      `);
 
 // Ensure the dashboard_token column exists on existing databases.
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS dashboard_token text UNIQUE`);
-    console.log('✔ users.dashboard_token column added/verified');
+     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS dashboard_token text UNIQUE`);
+     console.log('✔ users.dashboard_token column added/verified');
+
+     // The seed has to exist before the backfill can point at it. Without a number configured
+     // there is nobody to attribute the existing rows to, so stop rather than invent an owner.
+     const myNumber = process.env.MY_WHATSAPP_NUMBER;
+     if (!myNumber) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot seed the owner of existing rows');
 
      const { rows: seeded } = await pool.query(
        `INSERT INTO users (wa_number, name, dashboard_token) VALUES ($1, $2, $3)
@@ -174,7 +179,8 @@ await pool.query(`
         RETURNING id`,
        [myNumber, 'Tarun', crypto.randomUUID()]
      );
-     const ownerId = seeded[0].id;
+     const ownerId = seeded?.[0]?.id
+       || (await pool.query(`SELECT id FROM users WHERE wa_number = $1`, [myNumber])).rows[0].id;
      console.log(`✔ users table created/verified, owner seeded (${ownerId})`);
 
     const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
