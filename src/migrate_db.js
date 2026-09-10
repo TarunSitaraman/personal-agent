@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -151,30 +152,31 @@ async function main() {
     //
     // dedup_messages and prompt_versions are deliberately left global — a WhatsApp message id is
     // unique across the world, and prompt versions are agent configuration, not user data.
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        wa_number text UNIQUE NOT NULL,
-        name text,
-        tz text DEFAULT 'Asia/Kolkata',
-        active boolean DEFAULT true,
-        created_at timestamptz DEFAULT NOW()
-      );
-    `);
+await pool.query(`
+       CREATE TABLE IF NOT EXISTS users (
+         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         wa_number text UNIQUE NOT NULL,
+         name text,
+         tz text DEFAULT 'Asia/Kolkata',
+         active boolean DEFAULT true,
+         dashboard_token text UNIQUE,
+         created_at timestamptz DEFAULT NOW()
+       );
+     `);
 
     // The seed has to exist before the backfill can point at it. Without a number configured
     // there is nobody to attribute the existing rows to, so stop rather than invent an owner.
     const myNumber = process.env.MY_WHATSAPP_NUMBER;
     if (!myNumber) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot seed the owner of existing rows');
 
-    const { rows: seeded } = await pool.query(
-      `INSERT INTO users (wa_number, name) VALUES ($1, $2)
-       ON CONFLICT (wa_number) DO UPDATE SET wa_number = EXCLUDED.wa_number
-       RETURNING id`,
-      [myNumber, 'Tarun']
-    );
-    const ownerId = seeded[0].id;
-    console.log(`✔ users table created/verified, owner seeded (${ownerId})`);
+const { rows: seeded } = await pool.query(
+       `INSERT INTO users (wa_number, name, dashboard_token) VALUES ($1, $2, $3)
+        ON CONFLICT (wa_number) DO NOTHING
+        RETURNING id`,
+       [myNumber, 'Tarun', crypto.randomUUID()]
+     );
+     const ownerId = seeded[0].id;
+     console.log(`✔ users table created/verified, owner seeded (${ownerId})`);
 
     const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
                    'conversations', 'state', 'skills', 'user_insights',

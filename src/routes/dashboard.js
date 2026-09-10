@@ -1,7 +1,7 @@
 const express = require('express');
 const { ownerMiddleware } = require('../agent/context');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, getUserByDashboardToken } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
@@ -9,8 +9,20 @@ const { occurrencesBetween } = require('../agent/recurrence');
 
 const router = express.Router();
 
+// Resolve the authenticated user from the dashboard token query param.
+// Replaces the shared DASHBOARD_TOKEN — each user has their own token stored in the database.
+function tokenMiddleware(req, res, next) {
+   const token = req.query.token;
+   if (!token) return res.status(401).send('Unauthorized');
+   getUserByDashboardToken(token).then(user => {
+     if (!user) return res.status(401).send('Unauthorized');
+     req.user = user;
+     next();
+   }).catch(next);
+}
+
 // Every route below reads or writes one person's data, so the whole router runs in scope.
-router.use(ownerMiddleware);
+router.use(tokenMiddleware);
 
 // Calendar expansion for a month view: day-of-month (1-31) → events on that day.
 //
@@ -38,7 +50,7 @@ function expandMonth(dbEvents, monthYear, monthNum, daysInMonth) {
 
 // Diagnostic — tests LLM + WhatsApp sending
 router.get('/test', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).send('Unauthorized');
+  if (!req.user) return res.status(401);
   const { sendMessage } = require('../whatsapp/send');
   const results = {};
 
@@ -83,7 +95,7 @@ router.get('/test', async (req, res) => {
 
 // Todos API — for live sidebar refresh
 router.get('/api/todos', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const todos = await getPendingTodos();
     res.json({
@@ -96,7 +108,7 @@ router.get('/api/todos', async (req, res) => {
 
 // Complete todo by content match
 router.post('/api/complete-todo', express.json(), async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   const { content } = req.body;
   if (!content) return res.status(400).json({ error: 'No content' });
   try {
@@ -109,7 +121,7 @@ router.post('/api/complete-todo', express.json(), async (req, res) => {
 
 // Chat — streaming text (Upgraded for Mobile/Hermes)
 router.post('/chat/stream', express.json(), async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).end();
+  if (!req.user) return res.status(401).end();
   const { message } = req.body;
   if (!message?.trim()) return res.status(400).end();
 
@@ -159,7 +171,7 @@ router.post('/chat/stream', express.json(), async (req, res) => {
 
 // Chat — text message (Upgraded for Mobile/Hermes)
 router.post('/chat', express.json(), async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   const { message } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'No message' });
   try {
@@ -178,7 +190,7 @@ router.post('/chat', express.json(), async (req, res) => {
 
 // GET /dashboard/api/auth/verify — simple token check for mobile app boot
 router.get('/api/auth/verify', (req, res) => {
-  if (req.query.token === process.env.DASHBOARD_TOKEN) {
+  if (req.user) {
     return res.json({ ok: true, name: 'Tarun' });
   }
   res.status(401).json({ ok: false });
@@ -186,7 +198,7 @@ router.get('/api/auth/verify', (req, res) => {
 
 // Chat — image upload (base64)
 router.post('/chat/image', express.json({ limit: '10mb' }), async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   const { base64, mimeType = 'image/jpeg', caption = '' } = req.body;
   if (!base64) return res.status(400).json({ error: 'No image' });
   try {
@@ -220,7 +232,7 @@ router.post('/chat/image', express.json({ limit: '10mb' }), async (req, res) => 
 
 // SSE endpoint — dashboard holds this open and reloads on 'refresh' event
 router.get('/stream', (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).end();
+  if (!req.user) return res.status(401).end();
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -231,7 +243,7 @@ router.get('/stream', (req, res) => {
 });
 
 router.get('/', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) {
+  if (!req.user) {
     return res.status(401).send('Unauthorized');
   }
 
@@ -904,7 +916,7 @@ header {
 
 // GET /dashboard/api/status  — stats, upcoming events (home screen)
 router.get('/api/status', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const [stats, openPRs, openIssues, upcoming] = await Promise.all([
       getSummaryStats(),
@@ -936,7 +948,7 @@ router.get('/api/status', async (req, res) => {
 
 // GET /dashboard/api/notes  — recent notes (mobile notes screen)
 router.get('/api/notes', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const ctx = req.query.context || null;
     const limit = Math.min(parseInt(req.query.limit) || 20, 50);
@@ -949,7 +961,7 @@ router.get('/api/notes', async (req, res) => {
 
 // GET /dashboard/api/learnings  — learnings due for review (spaced repetition)
 router.get('/api/learnings', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const learnings = await getDueLearnings(20);
     res.json(learnings);
@@ -960,7 +972,7 @@ router.get('/api/learnings', async (req, res) => {
 
 // POST /dashboard/api/learnings/:id/review — review a learning (spaced repetition result)
 router.post('/api/learnings/:id/review', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const { gotRight } = req.body;
     await reviewLearning(req.params.id, gotRight !== false);
@@ -972,7 +984,7 @@ router.post('/api/learnings/:id/review', async (req, res) => {
 
 // GET /dashboard/api/events  — calendar events
 router.get('/api/events', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const ctx = req.query.context || null;
     const limit = Math.min(parseInt(req.query.limit) || 20, 50);
@@ -985,7 +997,7 @@ router.get('/api/events', async (req, res) => {
 
 // GET /dashboard/api/calendar — current month event map for live refresh
 router.get('/api/calendar', async (req, res) => {
-  if (req.query.token !== process.env.DASHBOARD_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
     const monthYear = nowIST.getFullYear();

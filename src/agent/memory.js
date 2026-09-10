@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const crypto = require('crypto');
 const { occurrencesBetween } = require('./recurrence');
 const { currentUserId } = require('./context');
 
@@ -1100,14 +1101,15 @@ async function getUserByNumber(waNumber) {
 // First contact. ON CONFLICT rather than INSERT so two messages arriving together — WhatsApp
 // retries aggressively — cannot create the same person twice.
 async function createUser(waNumber, name = null) {
-  const { rows } = await pool.query(
-    `INSERT INTO users (wa_number, name) VALUES ($1, $2)
-     ON CONFLICT (wa_number) DO UPDATE SET wa_number = EXCLUDED.wa_number
-     RETURNING id, wa_number, name, tz, active`,
-    [waNumber, name]
-  );
-  return rows[0];
-}
+   const token = crypto.randomUUID();
+   const { rows } = await pool.query(
+     `INSERT INTO users (wa_number, name, dashboard_token) VALUES ($1, $2, $3)
+      ON CONFLICT (wa_number) DO UPDATE SET wa_number = EXCLUDED.wa_number, name = EXCLUDED.name
+      RETURNING id, wa_number, name, tz, active, dashboard_token`,
+     [waNumber, name, token]
+   );
+   return rows[0];
+ }
 
 async function getActiveUsers() {
   const { rows } = await pool.query(
@@ -1119,15 +1121,23 @@ async function getActiveUsers() {
 // The owner — the person the single-user era belonged to. Entry points that have no sender to
 // look up (the dashboard, a cron before fan-out lands) resolve through here.
 async function getOwner() {
-  const number = process.env.MY_WHATSAPP_NUMBER;
-  if (!number) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot resolve the owner');
-  const user = await getUserByNumber(number);
-  if (!user) throw new Error(`No users row for ${number} — run node src/migrate_db.js`);
-  return user;
-}
+   const number = process.env.MY_WHATSAPP_NUMBER;
+   if (!number) throw new Error('MY_WHATSAPP_NUMBER is not set — cannot resolve the owner');
+   const user = await getUserByNumber(number);
+   if (!user) throw new Error(`No users row for ${number} — run node src/migrate_db.js`);
+   return user;
+ }
 
-module.exports = {
-  getUserByNumber, getActiveUsers, getOwner, createUser,
+ async function getUserByDashboardToken(token) {
+   const { rows } = await pool.query(
+     'SELECT id, wa_number, name, tz, active, dashboard_token FROM users WHERE dashboard_token = $1 AND active = true',
+     [token]
+   );
+   return rows[0] || null;
+ }
+
+ module.exports = {
+   getUserByNumber, getActiveUsers, getOwner, createUser, getUserByDashboardToken,
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
   addNote, updateNoteTags, getRecentNotes, deleteNote, getLastCreatedItem,
   addLearning, getUnreviewedLearnings, markLearningReviewed,
