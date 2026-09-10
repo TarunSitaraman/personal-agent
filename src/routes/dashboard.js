@@ -1,5 +1,5 @@
 const express = require('express');
-const { ownerMiddleware } = require('../agent/context');
+const { runAsUser } = require('../agent/context');
 const axios = require('axios');
 const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, getUserByDashboardToken } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
@@ -16,8 +16,7 @@ function tokenMiddleware(req, res, next) {
    if (!token) return res.status(401).send('Unauthorized');
    getUserByDashboardToken(token).then(user => {
      if (!user) return res.status(401).send('Unauthorized');
-     req.user = user;
-     next();
+     runAsUser(user, () => next());
    }).catch(next);
 }
 

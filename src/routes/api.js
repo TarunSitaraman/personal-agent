@@ -1,9 +1,8 @@
 const express = require('express');
-const { ownerMiddleware } = require('../agent/context');
 const axios = require('axios');
-const memory = require('../agent/memory');
 const { handleIncoming } = require('../agent/brain');
 const { sendPush } = require('../push/push');
+const { runAsUser } = require('../agent/context');
 const { getUserByDashboardToken } = require('../agent/memory');
 
 const router = express.Router();
@@ -15,8 +14,7 @@ function tokenMiddleware(req, res, next) {
    if (!token) return res.status(401).json({ error: 'Unauthorized' });
    getUserByDashboardToken(token).then(user => {
      if (!user) return res.status(401).json({ error: 'Unauthorized' });
-     req.user = user;
-     next();
+     runAsUser(user, () => next());
    }).catch(next);
 }
 
@@ -27,9 +25,7 @@ router.use(tokenMiddleware);
 router.post('/cron/process', async (req, res) => {
    const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token || req.headers['x-cron-secret'];
    const cronSecret = process.env.CRON_SECRET || '';
-   // Allow cron access if the token matches CRON_SECRET or any valid user token
-   const user = token ? await getUserByDashboardToken(token).catch(() => null) : null;
-   if (cronSecret && token !== cronSecret && !user) {
+   if (cronSecret && token !== cronSecret && !req.user) {
      return res.status(401).json({ error: 'Unauthorized' });
    }
   
