@@ -41,8 +41,8 @@ async function deliverTodo(id) {
   await deliverTodoReminder(todo);
 }
 
-async function deliverEvent(id) {
-  const ev = await memory.claimEventReminder(id);
+async function deliverEvent(id, occurrenceAt = null) {
+  const ev = await memory.claimEventReminder(id, occurrenceAt);
   if (!ev) return; // already delivered or the event was removed
   await deliverEventReminder(ev);
 }
@@ -57,7 +57,12 @@ async function refresh() {
       armTimer(`todo:${todo.id}`, todo.fire_at, () => deliverTodo(todo.id));
     }
     for (const ev of events) {
-      armTimer(`event:${ev.id}`, ev.fire_at, () => deliverEvent(ev.id));
+      // A recurring event is one row with many firings, so the row id alone would let Monday's
+      // armed timer suppress Tuesday's. The occurrence is part of the key.
+      const key = ev.occurrence_at
+        ? `event:${ev.id}:${new Date(ev.occurrence_at).toISOString()}`
+        : `event:${ev.id}`;
+      armTimer(key, ev.fire_at, () => deliverEvent(ev.id, ev.occurrence_at || null));
     }
   } catch (err) {
     console.error('[Timers] Refresh failed:', err.message);

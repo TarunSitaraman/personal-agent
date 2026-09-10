@@ -1,11 +1,40 @@
 const express = require('express');
+const { ownerMiddleware } = require('../agent/context');
 const axios = require('axios');
 const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
+const { occurrencesBetween } = require('../agent/recurrence');
 
 const router = express.Router();
+
+// Every route below reads or writes one person's data, so the whole router runs in scope.
+router.use(ownerMiddleware);
+
+// Calendar expansion for a month view: day-of-month (1-31) → events on that day.
+//
+// Both month renderers below used to carry their own copy of the recurrence rules. They are now
+// the same walk the reminder path uses, which also fixes a quiet wrong answer: the copies ignored
+// `start_at` as a lower bound, so a standup created in June was drawn onto every March day too.
+function expandMonth(dbEvents, monthYear, monthNum, daysInMonth) {
+  const map = {};
+  for (let d = 1; d <= daysInMonth; d++) map[d] = [];
+
+  const from = new Date(monthYear, monthNum, 1, 0, 0, 0, 0);
+  const to = new Date(monthYear, monthNum + 1, 1, 0, 0, 0, 0);
+
+  for (const ev of dbEvents) {
+    for (const occurrence of occurrencesBetween(ev.recurrence, ev.start_at, from, to)) {
+      map[occurrence.getDate()].push({
+        title: ev.title,
+        start_at: occurrence.toISOString(),
+        context: ev.context,
+      });
+    }
+  }
+  return map;
+}
 
 // Diagnostic — tests LLM + WhatsApp sending
 router.get('/test', async (req, res) => {
@@ -280,31 +309,7 @@ router.get('/', async (req, res) => {
     const CTX_DOT = {};
 
     // Build event map: day (1-31) → sorted events[]
-    const monthEventMap = {};
-    for (let d = 1; d <= daysInMonth; d++) monthEventMap[d] = [];
-
-    for (const ev of dbEvents) {
-      const refStart = new Date(ev.start_at);
-      if (ev.recurrence === 'none') {
-        if (refStart.getFullYear() === monthYear && refStart.getMonth() === monthNum) {
-          monthEventMap[refStart.getDate()].push({ title: ev.title, start_at: refStart.toISOString(), context: ev.context });
-        }
-      } else {
-        for (let d = 1; d <= daysInMonth; d++) {
-          const date = new Date(monthYear, monthNum, d);
-          const dow = date.getDay();
-          const isWeekday = dow >= 1 && dow <= 5;
-          const refDow = refStart.getDay();
-          if (ev.recurrence === 'daily' ||
-              (ev.recurrence === 'weekdays' && isWeekday) ||
-              (ev.recurrence === 'weekly' && dow === refDow)) {
-            const s = new Date(date);
-            s.setHours(refStart.getHours(), refStart.getMinutes(), 0, 0);
-            monthEventMap[d].push({ title: ev.title, start_at: s.toISOString(), context: ev.context });
-          }
-        }
-      }
-    }
+    const monthEventMap = expandMonth(dbEvents, monthYear, monthNum, daysInMonth);
     for (const todo of allTodos) {
       if (!todo.remind_at) continue;
       const d = new Date(todo.remind_at);
@@ -994,30 +999,7 @@ router.get('/api/calendar', async (req, res) => {
       getPendingTodos(),
     ]);
 
-    const map = {};
-    for (let d = 1; d <= daysInMonth; d++) map[d] = [];
-
-    for (const ev of dbEvents) {
-      const refStart = new Date(ev.start_at);
-      if (ev.recurrence === 'none') {
-        if (refStart.getFullYear() === monthYear && refStart.getMonth() === monthNum) {
-          map[refStart.getDate()].push({ title: ev.title, start_at: refStart.toISOString(), context: ev.context });
-        }
-      } else {
-        for (let d = 1; d <= daysInMonth; d++) {
-          const date = new Date(monthYear, monthNum, d);
-          const dow = date.getDay();
-          const refDow = refStart.getDay();
-          if (ev.recurrence === 'daily' ||
-              (ev.recurrence === 'weekdays' && dow >= 1 && dow <= 5) ||
-              (ev.recurrence === 'weekly' && dow === refDow)) {
-            const s = new Date(date);
-            s.setHours(refStart.getHours(), refStart.getMinutes(), 0, 0);
-            map[d].push({ title: ev.title, start_at: s.toISOString(), context: ev.context });
-          }
-        }
-      }
-    }
+    const map = expandMonth(dbEvents, monthYear, monthNum, daysInMonth);
 
     for (const todo of allTodos) {
       if (!todo.remind_at) continue;

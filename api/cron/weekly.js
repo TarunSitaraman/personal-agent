@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { asOwner } = require('../../src/agent/context');
 const { generateWeeklyReview } = require('../../src/agent/brain');
 const { sendMessage } = require('../../src/whatsapp/send');
 const memory = require('../../src/agent/memory');
@@ -10,6 +11,11 @@ function auth(req) {
 
 module.exports = async (req, res) => {
   if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
+  // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
+  return asOwner(run)(req, res);
+};
+
+const run = async (req, res) => {
 
   try {
     await memory.trimConversations(200);

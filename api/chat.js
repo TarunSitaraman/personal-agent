@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { asOwner } = require('../src/agent/context');
 const { handleIncoming } = require('../src/agent/brain');
 
 function auth(req) {
@@ -8,6 +9,11 @@ function auth(req) {
 
 module.exports = async (req, res) => {
   if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
+  // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
+  return asOwner(run)(req, res);
+};
+
+const run = async (req, res) => {
   if (req.method !== 'POST') return res.sendStatus(405);
 
   const { message } = req.body;

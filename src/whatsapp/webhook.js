@@ -1,4 +1,5 @@
 const express = require('express');
+const { runAsUser } = require('../agent/context');
 const { transcribeAudio } = require('../integrations/whisper');
 const { analyzeImage } = require('../integrations/vision');
 const memory = require('../agent/memory');
@@ -58,20 +59,31 @@ router.post('/', async (req, res) => {
     if (!message) return;
 
     const from = message.from;
-    if (from !== process.env.MY_WHATSAPP_NUMBER) {
-      logHit({ filtered: true, from, expected: process.env.MY_WHATSAPP_NUMBER });
+    // Looked up rather than compared against one number — the seam multi-user opens through.
+    const user = await memory.getUserByNumber(from);
+    if (!user || !user.active) {
+      logHit({ filtered: true, from, reason: user ? 'inactive' : 'unregistered' });
       return;
     }
 
-    // 5. Dedup via DB
-    const isDup = await memory.isDuplicateRequest(message.id);
-    if (isDup) {
-      console.warn(`[Webhook] Duplicate message ${message.id} — skipping`);
-      return;
-    }
+    // Only the enqueue needs the scope here. processQueue establishes its own, per message,
+    // because one drain can carry messages from several senders.
+    //
+    // The callback reports whether it queued anything: a bare `return` inside it would fall
+    // through to the drain below, so a duplicate would still kick off a queue pass.
+    const queued = await runAsUser(user, async () => {
+      // 5. Dedup via DB
+      const isDup = await memory.isDuplicateRequest(message.id);
+      if (isDup) {
+        console.warn(`[Webhook] Duplicate message ${message.id} — skipping`);
+        return false;
+      }
 
-    // 1. Store in queue table
-    await memory.queueIncomingMessage(message.id, from, message);
+      // 1. Store in queue table
+      await memory.queueIncomingMessage(message.id, from, message);
+      return true;
+    });
+    if (!queued) return;
 
     // Kick off immediate processing in background (non-blocking)
     processQueue().catch(err => console.error('[Webhook] Immediate process queue error:', err.message));
