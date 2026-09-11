@@ -16,6 +16,7 @@ function tokenMiddleware(req, res, next) {
    if (!token) return res.status(401).send('Unauthorized');
    getUserByDashboardToken(token).then(user => {
      if (!user) return res.status(401).send('Unauthorized');
+     req.user = user;
      runAsUser(user, () => next());
    }).catch(next);
 }
@@ -385,7 +386,7 @@ router.get('/', async (req, res) => {
   --t1:      #fafafa;
   --t2:      #71717a;
   --t3:      #3f3f46;
-  --acc:     ${modeConf.color};
+  --acc:     #a78bfa;
 
   /* Spotlight — updated via JS */
   --mx: 0;
