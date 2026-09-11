@@ -3,6 +3,7 @@ const axios = require('axios');
 const { handleIncoming } = require('../agent/brain');
 const { sendPush } = require('../push/push');
 const { runAsUser } = require('../agent/context');
+const memory = require('../agent/memory');
 const { getUserByDashboardToken } = require('../agent/memory');
 
 const router = express.Router();
@@ -14,6 +15,7 @@ function tokenMiddleware(req, res, next) {
    if (!token) return res.status(401).json({ error: 'Unauthorized' });
    getUserByDashboardToken(token).then(user => {
      if (!user) return res.status(401).json({ error: 'Unauthorized' });
+     req.user = user;
      runAsUser(user, () => next());
    }).catch(next);
 }
