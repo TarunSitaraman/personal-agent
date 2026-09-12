@@ -113,7 +113,8 @@ TZ=Asia/Kolkata
 - [ ] ALLOWED_NUMBERS set in Vercel env (empty = closed to owner only)
 - [ ] GITHUB_TOKEN replaced with classic repo-scoped PAT — unclear if still 403 in Vercel;
   worked locally with no token errors on 2026-09-12, worth re-checking before assuming broken
-- [ ] cron-job.org reminder job confirmed at every 15 minutes
+- [x] cron-job.org reminder job confirmed at every 15 minutes (verified 2026-09-12 —
+  two consecutive prod hits 15m28s apart, both 200 in ~2s)
 
 ## Conventions
 - **No AI attribution in commits.** No `Co-Authored-By`, no session trailers, no tool mentions
@@ -146,21 +147,32 @@ All 12 memory.js defects from the 2026-09-09 audit were fixed in commit `91913ca
 
 ### Still pending
 
-**Phase 2 — Google Calendar.** Blocked on you: needs an OAuth client with
-Calendar read-only scope and one-time consent. Highest usefulness-per-hour item.
+**Phase 2 — Google Calendar.** Deprioritised by Tarun (2026-09-12): "google calendar will
+never work." Don't propose it again unless he raises it.
 
-**Smaller items:**
-- `findConnections` sends 30 items to the LLM on every save when pgvector could do it
-- No eval harness that replays real messages and asserts the resulting actions
-- No `update_todo` / `delete_note` endpoints
+**Needs you (config, not code):**
+- **Per-user timezone briefs** — code shipped 2026-09-12 but is opt-in. Switch the six timed
+  cron-job.org jobs to hourly AND append `&hourly=1`, together (README → Per-user timezone
+  briefs). Until then every user still gets IST-anchored briefs. Irrelevant while the owner is
+  the only user.
+- **Review `eval/captured.json`** — 10 real messages captured, none reviewed. Two look wrong:
+  `"retry"` → `undo_last`, and `"when should I do my deep work?"` → `search_web`.
 
-### Two things still single-user
-- **DASHBOARD_TOKEN** is one shared secret — the web and mobile APIs act as the
-  owner. A second user has no web access (phase 3e, written up in
-  `~/.claude/plans/personal-agent-multi-user.md`)
-- **Brief timing** is one timezone. `users.tz` is stored and honoured by delivery,
-  but both schedulers register fixed times — a Berlin user would get a 9am IST brief.
-  Needs hourly-firing jobs plus a cron-job.org schedule change.
+### Resolved 2026-09-12 (second pass)
+- `findConnections` pre-filters with pgvector (`memory.getSimilarContent`, top 8 by cosine)
+  instead of sending the 30 most recent items; falls back to recency with no embedding.
+- `update_todo` / `delete_note` intents: in both prompts, handled in `executeAction` with the
+  delete_event disambiguation shape. `test/updateDelete.test.js`.
+- Eval harness: `npm run eval` asserts `eval/cases.json` against the live classifier (12/12 on
+  first run); `--capture N` replays real messages from `conversations`.
+  `src/eval/`, `test/eval.scoring.test.js`. `src/compare_models.js` is still the model shoot-out.
+- DASHBOARD_TOKEN was already per-user (shipped 2026-09-11, `users.dashboard_token`) — the
+  "still single-user" note here was stale.
+- Brief timing: `src/scheduler/briefTiming.js` gates all six timed endpoints on `users.tz`
+  behind `?hourly=1`. Opt-in because cron-job.org's actual trigger times aren't visible from the
+  repo and the docs disagreed (10am/7pm vs 9am/6pm) — a hard gate on a guessed hour would have
+  silently stopped every brief. The Express `src/scheduler/briefs.js` still uses fixed IST; it
+  isn't deployed.
 
 ### Ops
 - Vercel `GITHUB_TOKEN` is a fine-grained PAT without access to the private

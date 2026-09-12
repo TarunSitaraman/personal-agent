@@ -1,8 +1,13 @@
 const memory = require('../agent/memory');
 
-async function findConnections(callGroq, newContent, type) {
+async function findConnections(callGroq, newContent, type, embedding = null) {
   try {
-    const existing = await memory.getRecentContent(30);
+    // Pre-filter with pgvector when an embedding is available — sends only genuinely similar
+    // items to the LLM instead of the 30 most recent regardless of relevance. Falls back to
+    // recency when no embedding was computed (e.g. the embedding provider was unavailable).
+    const existing = embedding
+      ? await memory.getSimilarContent(embedding, 8)
+      : await memory.getRecentContent(30);
     if (existing.length < 3) return;
 
     const list = existing

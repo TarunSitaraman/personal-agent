@@ -1,0 +1,14 @@
+[
+  { "msg": "finished the dispatch refactor", "accept": [["complete_todo"]] },
+  { "msg": "did I finish the dispatch refactor?", "accept": [["list_todos"], ["search"], ["none"]] },
+  { "msg": "remind me about the demo at 4pm tomorrow", "accept": [["set_reminder"], ["add_event"]] },
+  { "msg": "Rohan is taking over the biometric module", "accept": [["learn_context"]] },
+  { "msg": "what am I meant to be doing today", "accept": [["list_todos"], ["generate_brief"], ["list_events"]] },
+  { "msg": "book the standup for 9am every weekday", "accept": [["add_event"]] },
+  { "msg": "I keep forgetting to check my todos", "accept": [["none"], ["learn_context"]] },
+  { "msg": "add milk and also remind me to call the bank", "accept": [["add_todo", "set_reminder"]] },
+  { "msg": "change the parking pass todo to renew it at the DMV", "accept": [["update_todo"]] },
+  { "msg": "delete the note about the Vite bundler", "accept": [["delete_note"]] },
+  { "msg": "note: the Supabase pooler runs on port 6543", "accept": [["add_note"]] },
+  { "msg": "learned that pgvector HNSW indexes need the same distance operator as the query", "accept": [["add_learning"]] }
+]

@@ -28,3 +28,4 @@ rewrite_docs.js
 .claude/
 .claude-flow/
 *.log
+eval/captured.json

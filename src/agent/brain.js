@@ -182,7 +182,7 @@ For a single action:
 For compound requests (multiple things to do in one message), use the "actions" array instead:
 {"reply": "your natural WhatsApp reply", "actions": [{"action": "add_event", "data": {...}}, {"action": "set_reminder", "data": {...}}], "confidence": <float between 0.0 and 1.0>}
 
-Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | list_notes | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | review_learning | summarise_conversation | none
+Action names: add_todo | ask_context | add_note | add_learning | learn_context | list_todos | complete_todo | update_todo | list_notes | delete_note | list_learnings | search | search_web | set_reminder | add_event | list_events | delete_event | update_event | generate_brief | undo_last | create_skill | run_skill | set_goal | complete_goal | review_learning | summarise_conversation | none
 
 Data fields:
 - content: extracted content or search query
@@ -195,6 +195,7 @@ Data fields:
 - duration: event duration in minutes (default 60)
 - recurrence: none | daily | weekdays | weekly
 - new_title: new event name if updating
+- new_content: replacement text — use for update_todo when the wording of a todo is changing
 - cache: true/false — whether to permanently save a web search fact
 - fact: concise fact to save if cache=true
 - skill_name: name of skill to create/run
@@ -218,6 +219,12 @@ User: learned that Vite uses esbuild for dev bundler
 
 User: delete the client meeting tomorrow
 {"reply": "Are you sure you want to delete the event 'client meeting'?", "action": "delete_event", "data": {"title": "client meeting"}, "confidence": 0.7}
+
+User: change the parking pass todo to "renew parking pass at DMV, not online"
+{"reply": "Updated — parking pass todo now says: renew parking pass at DMV, not online.", "action": "update_todo", "data": {"content": "parking pass", "new_content": "renew parking pass at DMV, not online"}, "confidence": 0.9}
+
+User: delete the note about the Vite bundler
+{"reply": "Are you sure you want to delete the note about the Vite bundler?", "action": "delete_note", "data": {"content": "Vite bundler"}, "confidence": 0.7}
 
 User: what's pending on SmartResQ?
 {"reply": "Here's what's still open on SmartResQ.", "action": "list_todos", "data": {"tags": ["smartresq"]}, "confidence": 1.0}
@@ -267,7 +274,10 @@ Allowed Action Names:
 - add_todo: user wants to capture a task to do later (e.g., "remember to X", "todo: X")
 - complete_todo: user reports finishing a task (past tense statement, e.g., "renewed X",
   "finished X", "shipped X"). A question such as "did I finish X?" is NOT this — see rule 1.
+- update_todo: user wants to change the wording/content of an existing todo, not mark it done
+  (e.g., "change the parking pass todo to X", "update the milk todo — make it oat milk")
 - add_note: user wants to jot down information (e.g., "note: X", "save this: X")
+- delete_note: user wants to remove a saved note (e.g., "delete the note about X")
 - add_learning: user captured a new concept/lesson (e.g., "learned X", "learning: X")
 - learn_context: user tells you a fact about their world/people/projects (e.g., "Rohan is X")
 - list_todos: user asks to see tasks
@@ -299,6 +309,7 @@ CRITICAL: Return ONLY a valid JSON object in this exact schema, with no addition
     "duration": "integer duration in minutes (default 60)",
     "recurrence": "none | daily | weekdays | weekly",
     "new_title": "new event name if updating",
+    "new_content": "replacement text for update_todo",
     "id": "learning id for review_learning",
     "gotRight": "boolean for review_learning"
   },
@@ -1305,7 +1316,7 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
 
           const noteId = await memory.addNote(data.content, tags, embedding);
           autoTagNote(noteId, data.content).catch(() => {});
-          findConnections(callLLM, data.content, 'note').catch(() => {});
+          findConnections(callLLM, data.content, 'note', embedding).catch(() => {});
           return `Note saved: "${data.content}"`;
         }
         return "No note content provided.";
@@ -1322,7 +1333,7 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
         if (data?.topic && data?.content) {
           const embedding = await getEmbedding(`${data.topic}: ${data.content}`);
           await memory.addLearning(data.topic, data.content, data.source, embedding);
-          findConnections(callLLM, `${data.topic}: ${data.content}`, 'learning').catch(() => {});
+          findConnections(callLLM, `${data.topic}: ${data.content}`, 'learning', embedding).catch(() => {});
           return `Learning captured on *${data.topic}*: "${data.content}"`;
         }
         return "Topic and content are required for learnings.";
@@ -1369,6 +1380,22 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
         if (!near.length) return `I couldn't find a pending todo matching "${data.content}". Nothing was changed.`;
         return `I couldn't find an exact match for "${data.content}". Did you mean:\n` +
           near.map((x, i) => `${i + 1}. ${x.t.content}`).join('\n');
+      }
+
+      case "update_todo": {
+        if (!data?.content) return "No todo specified to update.";
+        if (!data?.new_content) return "No replacement text given for the update.";
+
+        const matches = await memory.findTodoByContent(data.content);
+        if (!matches.length) return `Couldn't find a pending todo matching "${data.content}".`;
+        if (matches.length > 1) {
+          const list = matches.map((t, i) => `${i + 1}. ${t.content}`).join('\n');
+          return `Found ${matches.length} matching todos:\n${list}\n\nWhich one should I update?`;
+        }
+
+        const embedding = await getEmbedding(data.new_content);
+        await memory.updateTodoContent(matches[0].id, data.new_content, embedding);
+        return `Updated: "${matches[0].content}" -> "${data.new_content}"`;
       }
 
       case "set_reminder": {
@@ -1458,6 +1485,20 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
         if (!notes.length) return 'No notes saved yet.';
         return `*Recent Notes* (${notes.length})\n\n` +
           notes.map((n, i) => `${i + 1}. ${n.content}`).join('\n');
+      }
+
+      // Same disambiguation shape as delete_event: a single match deletes immediately, multiple
+      // matches list themselves and ask which one, rather than guessing.
+      case "delete_note": {
+        if (!data?.content) return "No note specified to delete.";
+        const matches = await memory.findNoteByContent(data.content);
+        if (!matches.length) return `Couldn't find a note matching "${data.content}".`;
+        if (matches.length === 1) {
+          await memory.deleteNote(matches[0].id);
+          return `Deleted note: "${matches[0].content}"`;
+        }
+        const list = matches.map((n, i) => `${i + 1}. ${n.content}`).join('\n');
+        return `Found ${matches.length} matching notes:\n${list}\n\nWhich one should I delete?`;
       }
 
       case "list_learnings": {
@@ -2061,8 +2102,10 @@ module.exports = {
   validateJsonSchema,
   filterKnowledge,
   selectKnowledge,
-  // The live classifier prompt, so src/compare_models.js measures the real thing.
+  // The live classifier prompt and ladder, so src/compare_models.js and src/eval/run_eval.js
+  // measure the real thing rather than a copy of it.
   CLASSIFIER_PROMPT,
+  callLLM,
   PREFILTER_RULES,
   COMPOUND_REQUEST,
 };

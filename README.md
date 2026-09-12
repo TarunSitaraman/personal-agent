@@ -442,7 +442,41 @@ compute quota, but it still burns pooler connections and buys nothing — the sw
 catch-up mechanism, not the delivery path. See
 [How reminder delivery works](#how-reminder-delivery-works).
 
-The other `api/cron/*` endpoints are once-daily or weekly and need no tuning.
+The other `api/cron/*` endpoints are once-daily or weekly and need no tuning — unless you have
+users outside IST.
+
+### Per-user timezone briefs (opt-in)
+
+By default each timed endpoint sends to **every** user when cron-job.org calls it, so a Berlin
+user gets the brief at whatever hour your IST trigger lands on in Berlin. To deliver at each
+user's own local time (`users.tz`), switch these jobs to **hourly** and append `&hourly=1` to
+their URLs:
+
+| Endpoint | Sends at (user's local time) |
+|---|---|
+| `api/cron/morning` | 09:00, Mon–Fri |
+| `api/cron/evening` | 18:00 |
+| `api/cron/nudge` | 21:00 |
+| `api/cron/goal` | 22:00 |
+| `api/cron/pulse` | 10:00, Sundays |
+| `api/cron/weekly` | 20:00, Sundays |
+
+Switch schedule and URL **together**. `hourly=1` on a once-daily trigger means a user only gets
+the brief if that one trigger happens to land on their target hour; an hourly trigger without
+`hourly=1` sends every brief 24 times a day. Hourly calls that aren't a user's hour return
+`skipped` for that user in the JSON response without calling the LLM.
+
+### Classifier eval
+
+```bash
+npm run eval                        # assert labeled cases against the live classifier; exit 1 on failure
+node src/eval/run_eval.js --capture 30   # classify your last 30 real messages into eval/captured.json
+```
+
+`eval/captured.json` holds your real WhatsApp text and is gitignored. Captured cases are only
+asserted after you correct each `accept` list and set `"reviewed": true`. Run `npm run eval`
+before changing `CLASSIFIER_PROMPT` or `CLASSIFIER_MODEL`. It calls the free LLM ladder, which
+rate-limits — a skipped or errored case is a quota problem, not necessarily a model problem.
 
 ### Troubleshooting
 
