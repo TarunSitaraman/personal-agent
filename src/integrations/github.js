@@ -40,6 +40,27 @@ async function getOpenPRs() {
   );
 }
 
+// Structured PR data for item-state tracking (standup/nudge only — see itemTracking.js).
+// Deliberately omits review state and comment counts: both require a second API call per PR
+// (the /pulls list endpoint doesn't carry them), which doubles GitHub API usage for signal this
+// feature doesn't need yet. requestedReviewers + headSha + draft + state already distinguish
+// "nothing happened" from "something happened" without that cost.
+async function getOpenPRsDetailed() {
+  return fetchFromRepo('PR', '/pulls?state=open&per_page=10', data =>
+    data.map(pr => ({
+      number: pr.number,
+      title: pr.title,
+      author: pr.user.login,
+      url: pr.html_url,
+      state: pr.state,
+      draft: pr.draft,
+      headSha: pr.head.sha,
+      requestedReviewers: (pr.requested_reviewers || []).map(r => r.login).sort(),
+      createdAt: pr.created_at,
+    }))
+  );
+}
+
 async function getRecentCommits() {
   return fetchFromRepo('commits', '/commits?per_page=5', data =>
     data.map(c => `${c.commit.message.split('\n')[0]} (${c.commit.author.name})`)
@@ -55,4 +76,4 @@ async function getOpenIssues() {
   );
 }
 
-module.exports = { getOpenPRs, getRecentCommits, getOpenIssues, describeError };
+module.exports = { getOpenPRs, getOpenPRsDetailed, getRecentCommits, getOpenIssues, describeError };

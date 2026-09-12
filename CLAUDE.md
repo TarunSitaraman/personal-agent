@@ -108,8 +108,11 @@ TZ=Asia/Kolkata
 - [x] Recurring reminders: single source of truth in src/agent/recurrence.js
 - [x] Memory.js audit: all defects fixed (99 → 130 tests)
 - [x] Per-user dashboard auth: shared DASHBOARD_TOKEN replaced with per-user tokens
+- [x] Item-state awareness: standup/nudge briefs stop re-announcing unchanged open PRs as news
+  (2026-09-12 — migration step 14, `src/agent/itemTracking.js`, verified against real PRs)
 - [ ] ALLOWED_NUMBERS set in Vercel env (empty = closed to owner only)
-- [ ] GITHUB_TOKEN replaced with classic repo-scoped PAT (currently 403)
+- [ ] GITHUB_TOKEN replaced with classic repo-scoped PAT — unclear if still 403 in Vercel;
+  worked locally with no token errors on 2026-09-12, worth re-checking before assuming broken
 - [ ] cron-job.org reminder job confirmed at every 15 minutes
 
 ## Conventions
@@ -118,9 +121,26 @@ TZ=Asia/Kolkata
 - Run `npm test` before committing. Tests use the built-in `node --test` runner — deliberately
   no test framework dependency.
 
-## Known issues / in flight (2026-09-10)
+## Known issues / in flight (2026-09-12)
 
-### Resolved (2026-09-10 sprint)
+### Resolved (2026-09-12 sprint)
+Item-state awareness shipped: `generateStandup`/`generateProactiveNudge` no longer re-announce
+the same open PR as "news" on every brief. New `items`/`item_events` tables (global, not
+per-user — GitHub integration is single-repo via the `REPO` env var, not per-user) track each
+PR's snapshot (state, draft, head commit, requested reviewers — volatile fields like raw
+`updated_at` are deliberately excluded from the diff). Classification only runs when something
+in that allow-list actually changed; an unchanged item keeps its last verdict and costs zero
+LLM calls. `generateWeeklyReview`, the live chat path, and the dashboard all still call
+`getOpenPRs()` raw and unfiltered — only the two proactive surfaces got the new behavior.
+Design doc + review history: `~/.gstack/projects/TarunSitaraman-personal-agent/Tarun-master-design-20260912-122627.md`.
+New files: `src/agent/itemTracking.js` (pure diff logic, unit-tested in
+`test/itemTracking.test.js`). Migration: `migrate_db.js` step 14.
+
+Note while implementing: `getOpenPRsDetailed()` fetched successfully against the real
+`SmartResQ-dev` repo with no 403 — the `GITHUB_TOKEN` issue below may already be resolved, or
+this repo doesn't require the token it's failing on in Vercel. Worth checking the Vercel env var
+directly rather than assuming the Ops item below is still live.
+
 All 12 memory.js defects from the 2026-09-09 audit were fixed in commit `91913ca`
 (verified against production, 99 → 130 tests). See that commit for details.
 
@@ -155,8 +175,12 @@ Calendar read-only scope and one-time consent. Highest usefulness-per-hour item.
   `context` in places (likely resolved by the ownership refactor — verify)
 - `src/whatsapp/webhook.js` dead imports (likely resolved — verify)
 - Brief composition duplication (likely resolved by scheduler/delivery.js)
-- `migrate_db.js` is not a full schema — it creates only four tables; the rest exist
-  only in `migration-export/01_schema.sql`. No single authoritative schema.
+- ~~`migrate_db.js` is not a full schema — it creates only four tables~~ — stale as of
+  2026-09-12: it now creates/alters `users`, `entity_links`, `prompt_versions`, `items`,
+  `item_events`, and a dozen-plus columns across every other table (confirmed by reading it
+  directly while adding step 14). Still true that `migration-export/01_schema.sql` is a
+  separate file and the two aren't reconciled into one authoritative schema — that part of
+  the concern stands.
 
 ## Key references
 - This project: `C:\Users\Tarun\Documents\personal-agent`

@@ -1136,6 +1136,72 @@ async function getOwner() {
    return rows[0] || null;
  }
 
+// --- Item-state tracking (items/item_events) ---
+// Deliberately not in the per-user OWNED list (see migrate_db.js #14) — GitHub integration is
+// already single-repo, not per-user, so these stay global.
+
+async function getItem(source, sourceId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM items WHERE source = $1 AND source_id = $2',
+    [source, String(sourceId)]
+  );
+  return rows[0] || null;
+}
+
+// Upserts the item's identity/title and bumps last_seen_at every call. Status and
+// attention_state are written separately by recordClassification, so a classification-skipped
+// (unchanged) poll still updates last_seen_at without touching the stored verdict.
+async function upsertItemSeen(source, sourceId, title) {
+  const { rows } = await pool.query(
+    `INSERT INTO items (source, source_id, title, last_seen_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (source, source_id)
+     DO UPDATE SET title = EXCLUDED.title, last_seen_at = NOW()
+     RETURNING *`,
+    [source, String(sourceId), title]
+  );
+  return rows[0];
+}
+
+// The diff needs a previous snapshot to compare against. Stored in metadata.snapshot rather
+// than read back from item_events, so the hot path is one row lookup, not a join.
+async function updateItemSnapshot(itemId, snapshot) {
+  await pool.query(
+    `UPDATE items SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{snapshot}', $2::jsonb)
+     WHERE id = $1`,
+    [itemId, JSON.stringify(snapshot)]
+  );
+}
+
+// `reason` is stored in metadata, not a dedicated column — it's display text for the brief, not
+// something anything queries on. Without this, an item that keeps surfacing across multiple
+// unchanged cycles (e.g. stale_concerning) shows the PR with no reason on every cycle except the
+// one where classification actually ran — which is exactly the "meaningless bump" this feature
+// exists to kill. Found by actually running this against real PRs, not by static review.
+async function recordClassification(itemId, status, attentionState, reason) {
+  await pool.query(
+    `UPDATE items SET status = $2, attention_state = $3, last_changed_at = NOW(),
+       metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{reason}', $4::jsonb)
+     WHERE id = $1`,
+    [itemId, status, attentionState, JSON.stringify(reason || null)]
+  );
+}
+
+async function recordItemBriefed(itemId) {
+  await pool.query(
+    `UPDATE items SET last_briefed_at = NOW(), brief_count = brief_count + 1 WHERE id = $1`,
+    [itemId]
+  );
+}
+
+async function recordItemEvent(itemId, eventType, snapshot, diffSummary) {
+  await pool.query(
+    `INSERT INTO item_events (item_id, event_type, snapshot, diff_summary)
+     VALUES ($1, $2, $3, $4)`,
+    [itemId, eventType, JSON.stringify(snapshot), diffSummary]
+  );
+}
+
  module.exports = {
    getUserByNumber, getActiveUsers, getOwner, createUser, getUserByDashboardToken,
   addTodo, getPendingTodos, completeTodo, completeTodoByContent,
@@ -1169,4 +1235,6 @@ async function getOwner() {
   updateNoteContent, saveState, getState, deleteState,
   getOldNotes, getConversationsLastWeek,
   rawQuery,
+
+  getItem, upsertItemSeen, updateItemSnapshot, recordClassification, recordItemBriefed, recordItemEvent,
 };
