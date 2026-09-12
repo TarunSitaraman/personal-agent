@@ -1,6 +1,7 @@
 const axios = require("axios");
 const memory = require("./memory");
-const { getOpenPRs, getRecentCommits, getOpenIssues } = require("../integrations/github");
+const { getOpenPRs, getOpenPRsDetailed, getRecentCommits, getOpenIssues } = require("../integrations/github");
+const { extractGithubSnapshot, diffSnapshot, shouldSurface } = require("./itemTracking");
 const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
 const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
@@ -1737,11 +1738,86 @@ Return ONLY a JSON array: ["insight 1", "insight 2"]`;
   } catch { /* skip */ }
 }
 
+// Item-state awareness for GitHub PRs — the fix for Jarvis re-announcing the same open PR as
+// "news" on every brief. Scoped to generateStandup/generateProactiveNudge only: the live chat
+// path (handleIncoming/handleIncomingStream), the dashboard, and generateWeeklyReview all keep
+// calling getOpenPRs() raw, unfiltered, exactly as before — see the design doc's "Call-site
+// scope" section for why each of those is deliberately excluded.
+async function trackAndClassifyPRs() {
+  const prs = await getOpenPRsDetailed();
+  const surfaced = [];
+
+  for (const pr of prs) {
+    const sourceId = String(pr.number);
+    const snapshot = extractGithubSnapshot(pr);
+    const existing = await memory.getItem('github_pr', sourceId);
+    const { changed, diffSummary } = diffSnapshot(existing?.metadata?.snapshot, snapshot);
+
+    const item = await memory.upsertItemSeen('github_pr', sourceId, pr.title);
+    await memory.recordItemEvent(item.id, changed ? 'changed' : 'unchanged', snapshot, diffSummary);
+    await memory.updateItemSnapshot(item.id, snapshot);
+
+    let status = item.status;
+    let attentionState = item.attention_state;
+
+    // Classification only runs on a real diff — an unchanged item keeps its last stored
+    // verdict and costs zero LLM calls this cycle (this is what Approach C's rejected
+    // "reclassify everything, every time" would have cost instead).
+    if (changed) {
+      const ageDays = Math.floor((Date.now() - new Date(pr.createdAt)) / 86400000);
+      const prompt = `Classify this GitHub PR's state for Tarun, a founder reviewing his own team's PRs. Return ONLY strict JSON: {"status": "needs_action"|"waiting"|"blocked"|"done", "attention_state": "new"|"changed"|"stale_ok"|"stale_concerning", "reason": "one short sentence"}.
+
+PR #${pr.number} "${pr.title}" by ${pr.author}
+Age: ${ageDays} days since opened
+Draft: ${pr.draft}
+Requested reviewers: ${pr.requestedReviewers.join(', ') || 'none'}
+What changed since last seen: ${diffSummary}
+
+Guidance: a PR with requested reviewers and no recent activity usually means Tarun is waiting
+on someone else, not that he needs to act. Only "stale_concerning" if it's been open a long
+time (2+ weeks) with zero movement and no reviewers requested (i.e. genuinely stuck, not just
+waiting).`;
+
+      try {
+        const raw = await callLLM([{ role: 'user', content: prompt }], true, 'classifier');
+        const match = raw.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(match[0]);
+        status = parsed.status;
+        attentionState = parsed.attention_state;
+        await memory.recordClassification(item.id, status, attentionState, parsed.reason);
+        if (shouldSurface(attentionState)) {
+          surfaced.push(`#${pr.number} ${pr.title} (by ${pr.author}) — ${parsed.reason}`);
+        }
+      } catch (e) {
+        // Classification failure fails closed: keep the last stored state, don't surface.
+        // (Design doc: "fails closed — stays quiet rather than failing open".)
+        console.warn(`[itemTracking] PR #${pr.number} classification failed, keeping last state:`, e.message);
+      }
+    } else if (shouldSurface(attentionState)) {
+      // Reuse the reason from the cycle classification actually ran, so a repeatedly-surfaced
+      // item (e.g. still stale_concerning) doesn't go unexplained on every later brief.
+      const storedReason = item.metadata?.reason;
+      surfaced.push(
+        storedReason
+          ? `#${pr.number} ${pr.title} (by ${pr.author}) — ${storedReason}`
+          : `#${pr.number} ${pr.title} (by ${pr.author})`
+      );
+    }
+
+    if (shouldSurface(attentionState)) {
+      await memory.recordItemEvent(item.id, 'briefed', snapshot, null);
+      await memory.recordItemBriefed(item.id);
+    }
+  }
+
+  return surfaced;
+}
+
 async function generateProactiveNudge() {
   const [stats, insights, openPRs, pendingGoal] = await Promise.all([
     memory.getSummaryStats(),
     memory.getRecentInsights(5),
-    getOpenPRs(),
+    trackAndClassifyPRs(),
     memory.getPendingGoal(),
   ]);
 
@@ -1767,7 +1843,7 @@ Tone: Guardian-like, efficiency-obsessed, direct. Under 5 lines. No markdown exc
 async function generateStandup(type) {
   const [stats, openPRs, recentCommits] = await Promise.all([
     memory.getSummaryStats(),
-    getOpenPRs(),
+    trackAndClassifyPRs(),
     getRecentCommits(),
   ]);
 

@@ -229,6 +229,42 @@ const { rows: seeded } = await pool.query(
     }
     console.log('✔ user_id is NOT NULL wherever the table was clean');
 
+    // 14. Item-state tracking (items/item_events). Deliberately global, not in OWNED: GitHub
+    // integration is already single-repo/single-owner (REPO env var, not per-user), so scoping
+    // these to a user would be pretend-multi-tenancy for data that isn't multi-tenant. See
+    // ~/.gstack/projects/TarunSitaraman-personal-agent/Tarun-master-design-20260912-122627.md.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'needs_action',
+        attention_state TEXT NOT NULL DEFAULT 'new',
+        first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+        last_changed_at TIMESTAMPTZ DEFAULT NOW(),
+        last_briefed_at TIMESTAMPTZ,
+        brief_count INTEGER DEFAULT 0,
+        metadata JSONB DEFAULT '{}'
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source ON items (source, source_id);
+    `);
+    console.log('✔ items table and index created/verified');
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS item_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        item_id UUID REFERENCES items(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        observed_at TIMESTAMPTZ DEFAULT NOW(),
+        snapshot JSONB,
+        diff_summary TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_item_events_item ON item_events (item_id, observed_at DESC);
+    `);
+    console.log('✔ item_events table and index created/verified');
+
     console.log('Migrations completed successfully!');
   } catch (err) {
     console.error('Migration error:', err);
