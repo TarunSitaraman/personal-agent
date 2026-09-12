@@ -2,6 +2,7 @@ require('dotenv').config();
 const { forEachUser, currentNumber } = require('../../src/agent/context');
 const { generateTechPulse } = require('../../src/agent/brain');
 const { sendMessage } = require('../../src/whatsapp/send');
+const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
   const secret = req.headers['authorization']?.replace('Bearer ', '') || req.query.secret;
@@ -14,7 +15,7 @@ module.exports = async (req, res) => {
   // One pass per active user, each in its own scope. forEachUser logs and skips a user
   // who fails, so one broken account cannot cost everyone else their brief.
   try {
-    const results = await forEachUser(run);
+    const results = await forEachUser(user => run(user, req.query));
     res.json({ ok: true, results });
   } catch (err) {
     console.error('Tech Pulse fan-out error:', err.message);
@@ -22,7 +23,11 @@ module.exports = async (req, res) => {
   }
 };
 
-const run = async (user) => {
+// With ?hourly=1, runs only at 10am local, Sundays per user.tz (src/scheduler/briefTiming.js).
+const run = async (user, query) => {
+  const skip = localTimeSkip(query, user, 10, { sundayOnly: true });
+  if (skip) return skip;
+
   const pulse = await generateTechPulse();
   if (!pulse) return `${user.wa_number}: no pulse today`;
 

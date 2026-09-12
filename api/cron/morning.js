@@ -3,6 +3,7 @@ const { forEachUser, currentNumber } = require('../../src/agent/context');
 const { generateStandup, generateStaleAlert } = require('../../src/agent/brain');
 const { sendMessage, sendButtonMessage } = require('../../src/whatsapp/send');
 const { sendBriefPush } = require('../../src/push/push');
+const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
   const secret = req.headers['authorization']?.replace('Bearer ', '') || req.query.secret;
@@ -15,7 +16,7 @@ module.exports = async (req, res) => {
   // One pass per active user, each in its own scope. forEachUser logs and skips a user
   // who fails, so one broken account cannot cost everyone else their brief.
   try {
-    const results = await forEachUser(run);
+    const results = await forEachUser(user => run(user, req.query));
     res.json({ ok: true, results });
   } catch (err) {
     console.error('Morning brief fan-out error:', err.message);
@@ -23,7 +24,11 @@ module.exports = async (req, res) => {
   }
 };
 
-const run = async (user) => {
+// With ?hourly=1, runs only at 9am local, Mon-Fri per user.tz (src/scheduler/briefTiming.js).
+const run = async (user, query) => {
+  const skip = localTimeSkip(query, user, 9, { weekdaysOnly: true });
+  if (skip) return skip;
+
   const myNumber = currentNumber();
   const results = [];
 

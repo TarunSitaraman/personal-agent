@@ -166,6 +166,22 @@ function escapeLike(value) {
   return String(value).replace(/[\\%_]/g, c => `\\${c}`);
 }
 
+async function findTodoByContent(keyword) {
+  const { rows } = await pool.query(
+    `SELECT id, content FROM todos WHERE done = false AND content ILIKE $1 ESCAPE '\\' AND user_id = $2
+     ORDER BY created_at DESC`,
+    [`%${escapeLike(keyword)}%`, currentUserId()]
+  );
+  return rows;
+}
+
+async function updateTodoContent(id, content, embedding = null) {
+  await pool.query(
+    'UPDATE todos SET content = $2, embedding = $3 WHERE id = $1 AND user_id = $4',
+    [id, content, embedding ? `[${embedding.join(',')}]` : null, currentUserId()]
+  );
+}
+
 async function completeTodoByContent(keyword) {
   const { rows } = await pool.query(
     `UPDATE todos SET done = true, completed_at = NOW()
@@ -271,6 +287,16 @@ async function trimConversations(keep = 200) {
 
 // --- Conversation history ---
 
+// Real inbound messages, newest first — the eval harness replays these (src/eval/run_eval.js).
+async function getRecentUserMessages(limit = 30) {
+  const { rows } = await pool.query(
+    `SELECT content, created_at FROM conversations
+     WHERE role = 'user' AND user_id = $2 ORDER BY created_at DESC LIMIT $1`,
+    [limit, currentUserId()]
+  );
+  return rows;
+}
+
 async function saveMessage(role, content, promptVersion = null, tokensInput = null, tokensOutput = null) {
   await pool.query(
     'INSERT INTO conversations (role, content, prompt_version, tokens_input, tokens_output, user_id) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -362,6 +388,29 @@ async function getAnalytics() {
 }
 
 // --- Knowledge connections ---
+
+// findConnections used to hand the LLM the 30 most recently created notes/learnings regardless
+// of relevance to the new item — most saves, the new content has nothing to do with any of them,
+// so the LLM burned a call finding "no connection" against mostly-irrelevant context. This
+// filters with pgvector first, the same `embedding <=> $1` pattern searchMemory already uses, so
+// only genuinely similar items reach the LLM at all.
+async function getSimilarContent(embedding, limit = 8) {
+  const uid = currentUserId();
+  const vectorStr = `[${embedding.join(',')}]`;
+  const [notes, learnings] = await Promise.all([
+    pool.query(
+      `SELECT id, 'note' AS type, content, tags FROM notes
+       WHERE embedding IS NOT NULL AND user_id = $2 ORDER BY embedding <=> $1 LIMIT $3`,
+      [vectorStr, uid, limit]
+    ),
+    pool.query(
+      `SELECT id, 'learning' AS type, topic AS content, null AS tags FROM learnings
+       WHERE embedding IS NOT NULL AND user_id = $2 ORDER BY embedding <=> $1 LIMIT $3`,
+      [vectorStr, uid, limit]
+    ),
+  ]);
+  return [...notes.rows, ...learnings.rows];
+}
 
 async function getRecentContent(limit = 30) {
   const [notes, learnings] = await Promise.all([
@@ -536,6 +585,15 @@ async function getEventsStartingSoon(minutesFrom = 5, minutesTo = 20) {
 
 async function deleteNote(id) {
   await pool.query('DELETE FROM notes WHERE id = $1 AND user_id = $2', [id, currentUserId()]);
+}
+
+async function findNoteByContent(keyword) {
+  const { rows } = await pool.query(
+    `SELECT id, content FROM notes WHERE content ILIKE $1 ESCAPE '\\' AND user_id = $2
+     ORDER BY created_at DESC`,
+    [`%${escapeLike(keyword)}%`, currentUserId()]
+  );
+  return rows;
 }
 
 async function getLastCreatedItem() {
@@ -1237,4 +1295,7 @@ async function recordItemEvent(itemId, eventType, snapshot, diffSummary) {
   rawQuery,
 
   getItem, upsertItemSeen, updateItemSnapshot, recordClassification, recordItemBriefed, recordItemEvent,
+  getSimilarContent,
+  findTodoByContent, updateTodoContent, findNoteByContent,
+  getRecentUserMessages,
 };
