@@ -90,7 +90,7 @@ async function getEmbedding(text) {
 }
 
 // v2.0 — removed hard-coded life modes and fixed identity; tags are internal-only
-const PROMPT_VERSION = "v2.0";
+const PROMPT_VERSION = "v2.1";
 
 const SYSTEM_PROMPT = `You are Blu, Tarun's Hermes Agent on WhatsApp — a context-bridge and second brain.
 
@@ -141,7 +141,7 @@ CRITICAL: Past tense = already done. Never add these as new todos.
 - "summarise our last week of conversations" / "weekly conversation summary" → SUMMARISE_CONVERSATION
 
 **System**:
-- "undo", "undo that" → UNDO_LAST
+- "undo", "undo that" → UNDO_LAST. "retry" / "try again" is NOT undo — it deletes his last item. Use NONE.
 - "learn a new skill: [name] - [desc]" → CREATE_SKILL
 - Tarun wants to use a learned skill from "Available Skills" → RUN_SKILL
 - "reviewed learning [id] yes" / "no to learning [id]" → REVIEW_LEARNING
@@ -284,13 +284,15 @@ Allowed Action Names:
 - list_notes: user asks to see notes
 - list_learnings: user asks to see learnings
 - search: user asks to find/lookup information (e.g., "what do I know about X", "find X")
-- search_web: user asks a factual question requiring external search
+- search_web: user asks a factual question about the outside world requiring external search.
+  Asking for personal advice or planning ("when should I do my deep work?") is none, not search_web.
 - set_reminder: user wants a task with a specific reminder time/date
 - add_event: user wants to schedule a calendar event
 - list_events: user asks for calendar list
 - delete_event: user wants to delete an event
 - update_event: user wants to update an event
-- undo_last: user wants to undo
+- undo_last: user explicitly says "undo". "retry" / "try again" is NOT undo — it would delete his
+  last item. Use none.
 - review_learning: user is reviewing learnings
 - summarise_conversation: user requests a weekly conversation summary
 - none: default chat / question
