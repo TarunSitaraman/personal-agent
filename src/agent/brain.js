@@ -41,15 +41,21 @@ const NVIDIA_MODELS = [
 // Compare candidates with `node src/compare_models.js` before turning one on.
 const CLASSIFIER_MODEL = process.env.CLASSIFIER_MODEL || null;
 
-// Track failures: modelId → timestamp of last failure
+// Track failures: modelId → timestamp the model may be tried again
 const modelFailCache = new Map();
 const MODEL_COOLDOWN_MS = 5 * 60 * 1000;
+// Free-tier limits reset per minute; a 5-minute bench on a 429 emptied the ladder mid-burst.
+const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 
-function isModelCoolingDown(id) {
-  const t = modelFailCache.get(id);
-  return t && Date.now() - t < MODEL_COOLDOWN_MS;
+function cooldownFor(err) {
+  const isRateLimit = err?.response?.status === 429 || /429|RESOURCE_EXHAUSTED/.test(err?.message || '');
+  return isRateLimit ? RATE_LIMIT_COOLDOWN_MS : MODEL_COOLDOWN_MS;
 }
-function markModelFailed(id) { modelFailCache.set(id, Date.now()); }
+function isModelCoolingDown(id) {
+  const until = modelFailCache.get(id);
+  return until && Date.now() < until;
+}
+function markModelFailed(id, err) { modelFailCache.set(id, Date.now() + cooldownFor(err)); }
 function markModelOk(id)     { modelFailCache.delete(id); }
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -482,7 +488,7 @@ async function callLLMStream(messages, onToken) {
         return full;
       } catch (err) {
         console.warn(`[LLM stream] Groq ${model.id} failed (${err.response?.status || err.message})`);
-        markModelFailed(model.id);
+        markModelFailed(model.id, err);
       }
     }
   }
@@ -506,7 +512,7 @@ async function callLLMStream(messages, onToken) {
         return full;
       } catch (err) {
         console.warn(`[LLM stream] OR ${model} failed (${err.response?.status || err.message})`);
-        markModelFailed(model);
+        markModelFailed(model, err);
       }
     }
   }
@@ -581,7 +587,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
         markModelOk(CLASSIFIER_MODEL);
         return r;
       } catch (e) {
-        markModelFailed(CLASSIFIER_MODEL);
+        markModelFailed(CLASSIFIER_MODEL, e);
         console.warn(`[LLM] CLASSIFIER_MODEL ${CLASSIFIER_MODEL} failed, using the free ladder:`, e.message);
       }
     }
@@ -597,7 +603,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
           markModelOk(modelId);
           return r;
         } catch (e) {
-          markModelFailed(modelId);
+          markModelFailed(modelId, e);
         }
       }
     }
@@ -623,7 +629,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
           } catch (e) {
             const s = e.response?.status;
             console.warn(`[LLM] Groq ${m.id} failed (${s || e.code}): ${e.response?.data?.error?.message || e.message}`.slice(0, 120));
-            markModelFailed(m.id);
+            markModelFailed(m.id, e);
             throw e;
           }
         }));
@@ -643,7 +649,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
       } catch (e) {
         const is429 = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED');
         console.warn(`[LLM] Gemini ${modelId} failed${is429 ? ' (429)' : ''}: ${e.message?.slice(0, 80)}`);
-        markModelFailed(modelId);
+        markModelFailed(modelId, e);
       }
     }
   }
@@ -659,7 +665,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
         return r;
       } catch (e) {
         console.warn(`[LLM] NVIDIA ${modelId} failed (${e.response?.status || e.code}): ${e.response?.data?.detail || e.message}`.slice(0, 120));
-        markModelFailed(cacheKey);
+        markModelFailed(cacheKey, e);
       }
     }
   }
@@ -677,7 +683,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
           } catch (e) {
             const s = e.response?.status;
             console.warn(`[LLM] OR ${id} failed (${s || e.code}): ${e.response?.data?.error?.message || e.message}`.slice(0, 120));
-            markModelFailed(id);
+            markModelFailed(id, e);
             throw e;
           }
         }));
@@ -2125,6 +2131,7 @@ Output only the single summarized factual statement, nothing else.`;
 }
 
 module.exports = { 
+  cooldownFor,
   handleIncoming, 
   handleIncomingStream, 
   generateStandup, 
