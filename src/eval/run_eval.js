@@ -28,6 +28,7 @@ const CAPTURED = path.join(ROOT, 'eval', 'captured.json');
 
 // The free-tier ladder rate-limits quickly; spacing calls keeps failures about the model.
 const GAP_MS = 1200;
+const RETRY_AFTER_ERROR_MS = 65 * 1000; // just past the 60s rate-limit cooldown in brain.js
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const readJson = file => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : []);
@@ -88,24 +89,34 @@ async function assertAll() {
     (captured.length > reviewed.length ? ` (${captured.length - reviewed.length} captured, unreviewed, skipped)` : ''));
 
   const failures = [];
+  const errors = [];
   for (const c of cases) {
     await sleep(GAP_MS);
     let actual;
     try {
       actual = await classify(c.msg);
-    } catch (e) {
-      actual = [`ERROR: ${e.message}`];
+    } catch {
+      // Every provider was unavailable — says nothing about the classifier. Wait out the
+      // per-minute rate-limit window once, then record it as an ERROR rather than a wrong answer.
+      await sleep(RETRY_AFTER_ERROR_MS);
+      try { actual = await classify(c.msg); } catch (e) {
+        errors.push(c);
+        console.log(`  ERROR ${e.message.slice(0, 28).padEnd(28)} ${c.msg.slice(0, 60)}`);
+        continue;
+      }
     }
     const pass = scoreCase(actual, c.accept);
     if (!pass) failures.push({ ...c, actual });
-    console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${(actual.join(' + ') || '(none)').padEnd(28)} ${c.msg.slice(0, 60)}`);
+    console.log(`  ${pass ? 'PASS ' : 'FAIL '} ${(actual.join(' + ') || '(none)').padEnd(28)} ${c.msg.slice(0, 60)}`);
   }
 
-  console.log(`\n${cases.length - failures.length}/${cases.length} passed.`);
+  const scored = cases.length - errors.length;
+  console.log(`\n${scored - failures.length}/${scored} passed` +
+    (errors.length ? `, ${errors.length} not scored (all LLMs unavailable — re-run later)` : '') + '.');
   for (const f of failures) {
     console.log(`  FAIL "${f.msg}"\n       got ${f.actual.join(' + ') || '(none)'}, accepted ${f.accept.map(a => a.join(' + ')).join(' | ')}`);
   }
-  process.exitCode = failures.length ? 1 : 0;
+  process.exitCode = failures.length || errors.length ? 1 : 0;
 }
 
 const i = process.argv.indexOf('--capture');
