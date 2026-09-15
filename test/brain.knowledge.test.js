@@ -72,8 +72,8 @@ test('no paid model is hardcoded into the model ladder', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/agent/brain.js'), 'utf8');
 
   // The ladder arrays, not the comments explaining how to opt in.
-  const ladders = src.match(/const (GROQ_MODELS|OR_MODELS|GEMINI_MODELS) = \[[\s\S]*?\];/g) || [];
-  assert.ok(ladders.length === 3, 'expected all three ladder definitions');
+  const ladders = src.match(/const (GROQ_MODELS|OR_MODELS|GEMINI_MODELS|NVIDIA_MODELS) = \[[\s\S]*?\];/g) || [];
+  assert.ok(ladders.length === 4, 'expected all four ladder definitions');
 
   for (const ladder of ladders) {
     assert.doesNotMatch(ladder, /nousresearch|anthropic\/|openai\/gpt-4|\bgpt-5\b/,
