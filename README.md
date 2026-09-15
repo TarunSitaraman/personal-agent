@@ -389,8 +389,9 @@ WHATSAPP_VERIFY_TOKEN=   # Any string (webhook verification handshake)
 MY_WHATSAPP_NUMBER=      # Tarun's number in E.164 format (91XXXXXXXXXX)
 
 GROQ_API_KEY=            # Primary LLM provider (groq.com)
-OPENROUTER_API_KEY=      # Secondary LLM fallback (openrouter.ai)
-GEMINI_API_KEY=          # Tertiary LLM + embeddings (aistudio.google.com)
+GEMINI_API_KEY=          # First LLM fallback + embeddings (aistudio.google.com)
+NVIDIA_API_KEY=          # Optional second LLM fallback (build.nvidia.com, free)
+OPENROUTER_API_KEY=      # Last hosted LLM fallback (openrouter.ai) — free tier often overloaded
 
 DATABASE_URL=            # Supabase transaction-pooler URI, port 6543 (with pgvector)
 SERPER_API_KEY=          # Google search API (serper.dev)

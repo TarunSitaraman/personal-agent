@@ -21,10 +21,20 @@ const GROQ_MODELS = [
   { id: "openai/gpt-oss-120b", quality: "high" }, // ~0.6s, reliable JSON mode
   { id: "openai/gpt-oss-20b",  quality: "fast" }, // ~0.7s
 ];
+// Re-verified 2026-09-15. The free nemotron is frequently "Service temporarily overloaded"
+// upstream, so OpenRouter is the last hosted fallback, not the second.
 const OR_MODELS = [
   "nvidia/nemotron-3-super-120b-a12b:free", // ~5s, slower but valid JSON
 ];
-const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
+// gemini-2.0-flash / 1.5-flash / 2.5-flash all return 404 for this key as of 2026-09-15 —
+// that is why the whole ladder collapsed whenever Groq rate-limited.
+const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]; // ~1s / ~3.5s, 4/4 on real classifier cases
+// NVIDIA NIM (build.nvidia.com), free developer key, OpenAI-compatible. Skipped unless NVIDIA_API_KEY is set.
+const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const NVIDIA_MODELS = [
+  "nvidia/nemotron-3-super-120b-a12b", // same model as the OpenRouter free one, without the shared queue
+  "openai/gpt-oss-20b",
+];
 
 // Optional paid OpenRouter model for intent classification only. Unset by default: the whole
 // ladder above is free tier, and nothing here should start billing because a file was deployed.
@@ -367,6 +377,20 @@ async function callOpenRouterModel(modelId, messages, jsonMode) {
     },
     timeout: 20000,
   });
+  // OpenRouter reports upstream failures (e.g. "Service temporarily overloaded") inside a 200 body.
+  if (r.data?.error) throw new Error(`upstream ${r.data.error.code}: ${r.data.error.message}`);
+  const content = r.data?.choices?.[0]?.message?.content;
+  if (!content?.trim()) throw new Error('Empty response');
+  return content;
+}
+
+async function callNvidiaModel(modelId, messages) {
+  const body = { model: modelId, messages, max_tokens: 2048, temperature: 0.2 };
+  if (modelId.includes('gpt-oss')) body.reasoning_effort = 'low';
+  const r = await axios.post(NVIDIA_URL, body, {
+    headers: { Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`, 'Content-Type': 'application/json' },
+    timeout: 25000,
+  });
   const content = r.data?.choices?.[0]?.message?.content;
   if (!content?.trim()) throw new Error('Empty response');
   return content;
@@ -534,6 +558,7 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
   const hasGroq   = !!process.env.GROQ_API_KEY;
   const hasOR     = !!process.env.OPENROUTER_API_KEY;
   const hasGemini = !!process.env.GEMINI_API_KEY;
+  const hasNvidia = !!process.env.NVIDIA_API_KEY;
 
   let groqOrder = [...GROQ_MODELS];
   let geminiOrder = [...GEMINI_MODELS];
@@ -607,7 +632,39 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
     }
   }
 
-  // ── Round 2: OpenRouter (one surviving free model) ───────────────────────
+  // ── Round 2: Gemini (if key present) ─────────────────────────────────────
+  if (hasGemini) {
+    for (const modelId of geminiOrder) {
+      if (isModelCoolingDown(modelId)) continue;
+      try {
+        const r = await callGeminiModel(modelId, messages, jsonMode);
+        markModelOk(modelId);
+        return r;
+      } catch (e) {
+        const is429 = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED');
+        console.warn(`[LLM] Gemini ${modelId} failed${is429 ? ' (429)' : ''}: ${e.message?.slice(0, 80)}`);
+        markModelFailed(modelId);
+      }
+    }
+  }
+
+  // ── Round 3: NVIDIA NIM (if key present) ─────────────────────────────────
+  if (hasNvidia) {
+    for (const modelId of NVIDIA_MODELS) {
+      const cacheKey = `nvidia:${modelId}`;
+      if (isModelCoolingDown(cacheKey)) continue;
+      try {
+        const r = await callNvidiaModel(modelId, messages);
+        markModelOk(cacheKey);
+        return r;
+      } catch (e) {
+        console.warn(`[LLM] NVIDIA ${modelId} failed (${e.response?.status || e.code}): ${e.response?.data?.detail || e.message}`.slice(0, 120));
+        markModelFailed(cacheKey);
+      }
+    }
+  }
+
+  // ── Round 4: OpenRouter (one surviving free model, often overloaded) ─────
   if (hasOR) {
     const available = OR_MODELS.filter(id => !isModelCoolingDown(id));
     if (available.length) {
@@ -626,22 +683,6 @@ async function callLLM(messages, jsonMode = false, routeType = 'default') {
         }));
         return text;
       } catch { /* fall through */ }
-    }
-  }
-
-  // ── Round 3: Gemini (if key present) ─────────────────────────────────────
-  if (hasGemini) {
-    for (const modelId of geminiOrder) {
-      if (isModelCoolingDown(modelId)) continue;
-      try {
-        const r = await callGeminiModel(modelId, messages, jsonMode);
-        markModelOk(modelId);
-        return r;
-      } catch (e) {
-        const is429 = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED');
-        console.warn(`[LLM] Gemini ${modelId} failed${is429 ? ' (429)' : ''}: ${e.message?.slice(0, 80)}`);
-        markModelFailed(modelId);
-      }
     }
   }
 
