@@ -123,6 +123,7 @@ test('capture actions refuse empty content instead of storing a blank row', asyn
 test('set_reminder defaults to an hour out when no time is given', async () => {
   const seen = [];
   test.mock.method(memory, 'addTodo', async (...a) => { seen.push(a); });
+  test.mock.method(memory, 'setTodoReminderByContent', async () => null);
   const before = Date.now();
 
   await executeAction('set_reminder', { content: 'call the bank' }, null);
@@ -134,12 +135,68 @@ test('set_reminder defaults to an hour out when no time is given', async () => {
 test('set_reminder honours an explicit minute offset', async () => {
   const seen = [];
   test.mock.method(memory, 'addTodo', async (...a) => { seen.push(a); });
+  test.mock.method(memory, 'setTodoReminderByContent', async () => null);
   const before = Date.now();
 
   await executeAction('set_reminder', { content: 'x', minutes: '30' }, null);
 
   const offsetMin = (seen[0][2].getTime() - before) / 60000;
   assert.ok(offsetMin >= 29.9 && offsetMin <= 30.1, `expected ~30 min, got ${offsetMin}`);
+});
+
+// ── set_reminder must attach, not duplicate ──────────────────────────────────
+//
+// Every reminder used to be an unconditional addTodo, so "apply for Google winter internship"
+// followed by "remind me tomorrow at 9pm" left two rows: one with remind_at and one without.
+// Confirmed in production on 2026-09-16 — three such pairs, plus an older one from 2026-09-12.
+// The list_todos output showed each task twice, which is what surfaced it.
+
+test('set_reminder attaches to an existing todo instead of creating a second one', async () => {
+  const added = [];
+  test.mock.method(memory, 'addTodo', async (...a) => { added.push(a); });
+  test.mock.method(memory, 'setTodoReminderByContent', async () => (
+    { id: 'abc', content: 'apply for Google winter internship' }));
+
+  const reply = await executeAction(
+    'set_reminder', { content: 'apply for Google winter internship', minutes: '30' }, null);
+
+  assert.strictEqual(added.length, 0, 'must not insert a duplicate row');
+  assert.match(reply, /apply for Google winter internship/);
+});
+
+test('set_reminder echoes the stored wording, not the keyword the user typed', async () => {
+  test.mock.method(memory, 'addTodo', async () => { throw new Error('should not insert'); });
+  test.mock.method(memory, 'setTodoReminderByContent', async () => (
+    { id: 'abc', content: 'apply for Google winter internship' }));
+
+  const reply = await executeAction('set_reminder', { content: 'internship', minutes: '30' }, null);
+
+  assert.match(reply, /apply for Google winter internship/,
+    'should name the todo that actually changed');
+});
+
+test('set_reminder still creates a todo when nothing matches', async () => {
+  const added = [];
+  test.mock.method(memory, 'addTodo', async (...a) => { added.push(a); });
+  test.mock.method(memory, 'setTodoReminderByContent', async () => null);
+
+  const reply = await executeAction('set_reminder', { content: 'call the bank', minutes: '30' }, null);
+
+  assert.strictEqual(added.length, 1, 'a genuinely new reminder is still a new todo');
+  assert.strictEqual(added[0][0], 'call the bank');
+  assert.ok(added[0][2] instanceof Date, 'remind_at must be set on the new row');
+  assert.match(reply, /call the bank/);
+});
+
+test('set_reminder reports honestly when the attach fails', async () => {
+  test.mock.method(memory, 'setTodoReminderByContent', async () => {
+    throw new Error('bind message supplies 2 parameters, but prepared statement "" requires 3');
+  });
+
+  const reply = await executeAction('set_reminder', { content: 'x', minutes: '30' }, 'Reminder set.');
+
+  assert.notStrictEqual(reply, 'Reminder set.', 'must not claim a reminder that was never stored');
+  assert.match(reply, /went wrong|didn't go through/i);
 });
 
 // ── Listing ──────────────────────────────────────────────────────────────────

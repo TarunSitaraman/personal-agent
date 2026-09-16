@@ -1458,9 +1458,18 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
         const remindAt = data?.datetime
           ? new Date(data.datetime)
           : new Date(Date.now() + (parseInt(data?.minutes) || 60) * 60 * 1000);
+        const timeStr = remindAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+
+        // A reminder for something already on the list is an update, not a new item. Inserting
+        // unconditionally is what left duplicate pairs in production — one row carrying remind_at
+        // and one without — for every "add X" followed by "remind me about X", whether those
+        // arrived as two messages or as one compound `actions` array. Same match rule the
+        // Tonight 9pm / Tomorrow 8am buttons use, so both routes to a reminder behave alike.
+        const attached = await memory.setTodoReminderByContent(data.content, remindAt);
+        if (attached) return `Reminder set for ${timeStr}: "${attached.content}"`;
+
         const embedding = await getEmbedding(data.content);
         await memory.addTodo(data.content, tags, remindAt, embedding);
-        const timeStr = remindAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
         return `Reminder set for ${timeStr}: "${data.content}"`;
       }
 

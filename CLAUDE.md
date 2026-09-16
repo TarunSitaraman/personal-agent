@@ -122,7 +122,7 @@ TZ=Asia/Kolkata
 - Run `npm test` before committing. Tests use the built-in `node --test` runner — deliberately
   no test framework dependency.
 
-## Known issues / in flight (2026-09-12)
+## Known issues / in flight (2026-09-16)
 
 ### Resolved (2026-09-12 sprint)
 Item-state awareness shipped: `generateStandup`/`generateProactiveNudge` no longer re-announce
@@ -173,6 +173,33 @@ never work." Don't propose it again unless he raises it.
   repo and the docs disagreed (10am/7pm vs 9am/6pm) — a hard gate on a guessed hour would have
   silently stopped every brief. The Express `src/scheduler/briefs.js` still uses fixed IST; it
   isn't deployed.
+
+### Resolved 2026-09-16 (duplicate todos on WhatsApp)
+The pending list was showing most tasks twice — one row carrying `remind_at`, one without. Two
+independent bugs, diagnosed against production data:
+
+1. **Missing query parameter (crash).** `setTodoReminderByContent` referenced `$3` for `user_id`
+   twice but passed only two values, so every tap on the *Tonight 9pm* / *Tomorrow 8am* follow-up
+   button threw `bind message supplies 2 parameters, but prepared statement "" requires 3`.
+   `handleButtonAction` caught it and returned `false`, which both webhook entry points treat as
+   "not a button" — so the button *title* went to the LLM as message text and was saved as a todo
+   literally named "Tonight 9pm". A crash inside a caught branch surfaced as a data bug three
+   files away. The same mistake (a `user_id = $3` added to satisfy the scoping guard without
+   adding the value) was also in `getNextPendingMessages` and `markMessageProcessing`, so the
+   Express queue-drain path was throwing on every call too. All three fixed.
+2. **`set_reminder` always inserted.** It never looked for an existing todo, so "add X" followed
+   by "remind me about X" left two rows — whether those arrived as two messages or as one
+   compound `actions` array. It now calls `setTodoReminderByContent` first and only inserts when
+   nothing matches, which also makes the chat path and the button path agree on the match rule.
+
+New guard: `test/schema.params.test.js` asserts every query passes at least as many params as its
+highest `$N`, by reading the source — the same approach as `schema.scoping.test.js`, and for the
+same reason (unit tests mock `setTodoReminderByContent`, so its SQL never executes in CI). That
+guard is what found bugs in the queue path; it carries a vacuity check so it fails rather than
+passes silently if the scanner stops matching. 169 -> 174 tests.
+
+Production data cleaned up the same day: 5 duplicate rows deleted, and the 9pm reminder the ghost
+row was carrying moved onto `study fla for exam`, which is the todo the original tap meant.
 
 ### Ops
 - Vercel `GITHUB_TOKEN` is a fine-grained PAT without access to the private
