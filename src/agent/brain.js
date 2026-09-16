@@ -44,12 +44,16 @@ const CLASSIFIER_MODEL = process.env.CLASSIFIER_MODEL || null;
 // Track failures: modelId → timestamp the model may be tried again
 const modelFailCache = new Map();
 const MODEL_COOLDOWN_MS = 5 * 60 * 1000;
-// Free-tier limits reset per minute; a 5-minute bench on a 429 emptied the ladder mid-burst.
-const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+// Free-tier limits reset per minute and upstream overload clears in seconds; a 5-minute bench on
+// either emptied the ladder mid-burst.
+const TRANSIENT_COOLDOWN_MS = 60 * 1000;
 
 function cooldownFor(err) {
-  const isRateLimit = err?.response?.status === 429 || /429|RESOURCE_EXHAUSTED/.test(err?.message || '');
-  return isRateLimit ? RATE_LIMIT_COOLDOWN_MS : MODEL_COOLDOWN_MS;
+  const status = err?.response?.status;
+  const msg = err?.message || '';
+  const isTransient = [429, 502, 503, 504].includes(status) ||
+    /429|RESOURCE_EXHAUSTED|50[234]|overloaded/i.test(msg);
+  return isTransient ? TRANSIENT_COOLDOWN_MS : MODEL_COOLDOWN_MS;
 }
 function isModelCoolingDown(id) {
   const until = modelFailCache.get(id);
