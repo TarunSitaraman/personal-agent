@@ -898,7 +898,7 @@ async function setTodoReminderByContent(keyword, remindAt) {
        ORDER BY created_at DESC LIMIT 1
      )
      RETURNING id, content`,
-    [remindAt, `%${escapeLike(keyword)}%`]
+    [remindAt, `%${escapeLike(keyword)}%`, currentUserId()]
   );
   return rows[0] || null;
 }
@@ -965,7 +965,7 @@ async function getNextPendingMessages(limit = 10) {
             AND claimed_at < NOW() - ($2 || ' minutes')::interval))
      ORDER BY created_at ASC
      LIMIT $1`,
-     [limit, STALE_CLAIM_MINUTES]
+     [limit, STALE_CLAIM_MINUTES, currentUserId()]
   );
   return rows;
 }
@@ -985,7 +985,7 @@ async function markMessageProcessing(id) {
             OR claimed_at IS NULL
             OR claimed_at < NOW() - ($2 || ' minutes')::interval)
      RETURNING id`,
-    [id, STALE_CLAIM_MINUTES]
+    [id, STALE_CLAIM_MINUTES, currentUserId()]
   );
   return rows.length > 0;
 }
