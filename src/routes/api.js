@@ -157,61 +157,11 @@ router.post('/chat', async (req, res) => {
   }
 });
 
-// Live health check — tests all configured LLM providers
+// Live health check — tests all configured LLM providers.
+// Shared with the Vercel function api/llm-health.js, which is the one production actually serves.
 router.get('/llm-health', async (req, res) => {
-  const results = {};
-  const probe = [{ role: 'user', content: 'Reply with only: OK' }];
-
-  const tests = [];
-
-  // Probe the live ladder rather than a hardcoded copy — the old list still named Groq and
-  // OpenRouter models that were decommissioned, so this route reported outages that weren't real.
-  const { MODEL_LADDERS } = require('../agent/brain');
-  const OPENAI_COMPATIBLE = {
-    groq:       { url: 'https://api.groq.com/openai/v1/chat/completions', headers: k => ({ Authorization: `Bearer ${k}` }) },
-    nvidia:     { url: 'https://integrate.api.nvidia.com/v1/chat/completions', headers: k => ({ Authorization: `Bearer ${k}` }) },
-    openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', headers: k => ({ Authorization: `Bearer ${k}`, 'HTTP-Referer': 'https://personal-agent', 'X-Title': 'Personal Agent' }) },
-  };
-
-  for (const [provider, { key, models }] of Object.entries(MODEL_LADDERS)) {
-    if (!process.env[key]) continue;
-    for (const model of models) {
-      tests.push(async () => {
-        const label = `${provider}:${model}`;
-        const start = Date.now();
-        try {
-          if (provider === 'gemini') {
-            const { GoogleGenerativeAI } = require('@google/generative-ai');
-            const genAI = new GoogleGenerativeAI(process.env[key]);
-            const r = await Promise.race([
-              genAI.getGenerativeModel({ model }).generateContent('Reply with only: OK'),
-              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
-            ]);
-            results[label] = { ok: true, ms: Date.now() - start, reply: r.response.text().trim().slice(0, 20) };
-            return;
-          }
-          const { url, headers } = OPENAI_COMPATIBLE[provider];
-          // gpt-oss reasons inside the completion: a 10-token budget is spent thinking and the
-          // content comes back empty, which read as an outage. Mirror what callGroqModel sends.
-          const body = { model, messages: probe, max_tokens: 256 };
-          if (model.includes('gpt-oss')) body.reasoning_effort = 'low';
-          const r = await axios.post(url, body, { headers: headers(process.env[key]), timeout: 8000 });
-          if (r.data?.error) throw new Error(r.data.error.message);
-          const content = r.data?.choices?.[0]?.message?.content;
-          results[label] = { ok: !!content, ms: Date.now() - start, reply: content?.trim().slice(0, 20) };
-        } catch (e) {
-          results[label] = { ok: false, error: (e.response?.data?.error?.message || e.message)?.slice(0, 80) };
-        }
-      });
-    }
-  }
-
-  results._env = Object.fromEntries(
-    Object.entries(MODEL_LADDERS).map(([provider, { key }]) => [provider, !!process.env[key]])
-  );
-
-  await Promise.all(tests.map(t => t()));
-  const anyOk = Object.entries(results).filter(([k]) => k !== '_env').some(([, v]) => v.ok);
+  const { probeAllProviders } = require('../agent/llmHealth');
+  const { results, anyOk } = await probeAllProviders();
   res.status(anyOk ? 200 : 503).json(results);
 });
 
