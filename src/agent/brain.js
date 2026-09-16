@@ -306,6 +306,8 @@ Allowed Action Names:
 - search: user asks to find/lookup information (e.g., "what do I know about X", "find X")
 - search_web: user asks a factual question about the outside world requiring external search.
   Asking for personal advice or planning ("when should I do my deep work?") is none, not search_web.
+  NEVER search_web for anything about Tarun's own tasks, notes, projects or progress — the web
+  does not know whether his cutover shipped. That is search or list_todos.
 - set_reminder: user wants a task with a specific reminder time/date
 - add_event: user wants to schedule a calendar event
 - list_events: user asks for calendar list
