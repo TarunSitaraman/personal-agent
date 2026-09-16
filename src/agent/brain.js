@@ -2145,8 +2145,15 @@ Output only the single summarized factual statement, nothing else.`;
   }
 }
 
-module.exports = { 
+module.exports = {
   cooldownFor,
+  // The live ladder, so /llm-health probes what the agent actually calls.
+  MODEL_LADDERS: {
+    groq:       { key: 'GROQ_API_KEY',       models: GROQ_MODELS.map(m => m.id) },
+    gemini:     { key: 'GEMINI_API_KEY',     models: GEMINI_MODELS },
+    nvidia:     { key: 'NVIDIA_API_KEY',     models: NVIDIA_MODELS },
+    openrouter: { key: 'OPENROUTER_API_KEY', models: OR_MODELS },
+  },
   handleIncoming, 
   handleIncomingStream, 
   generateStandup, 

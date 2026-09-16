@@ -164,67 +164,51 @@ router.get('/llm-health', async (req, res) => {
 
   const tests = [];
 
-  // Groq
-  if (process.env.GROQ_API_KEY) {
-    for (const model of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
+  // Probe the live ladder rather than a hardcoded copy — the old list still named Groq and
+  // OpenRouter models that were decommissioned, so this route reported outages that weren't real.
+  const { MODEL_LADDERS } = require('../agent/brain');
+  const OPENAI_COMPATIBLE = {
+    groq:       { url: 'https://api.groq.com/openai/v1/chat/completions', headers: k => ({ Authorization: `Bearer ${k}` }) },
+    nvidia:     { url: 'https://integrate.api.nvidia.com/v1/chat/completions', headers: k => ({ Authorization: `Bearer ${k}` }) },
+    openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', headers: k => ({ Authorization: `Bearer ${k}`, 'HTTP-Referer': 'https://personal-agent', 'X-Title': 'Personal Agent' }) },
+  };
+
+  for (const [provider, { key, models }] of Object.entries(MODEL_LADDERS)) {
+    if (!process.env[key]) continue;
+    for (const model of models) {
       tests.push(async () => {
+        const label = `${provider}:${model}`;
         const start = Date.now();
         try {
-          const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
-            { model, messages: probe, max_tokens: 10 },
-            { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` }, timeout: 8000 }
-          );
+          if (provider === 'gemini') {
+            const { GoogleGenerativeAI } = require('@google/generative-ai');
+            const genAI = new GoogleGenerativeAI(process.env[key]);
+            const r = await Promise.race([
+              genAI.getGenerativeModel({ model }).generateContent('Reply with only: OK'),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+            ]);
+            results[label] = { ok: true, ms: Date.now() - start, reply: r.response.text().trim().slice(0, 20) };
+            return;
+          }
+          const { url, headers } = OPENAI_COMPATIBLE[provider];
+          // gpt-oss reasons inside the completion: a 10-token budget is spent thinking and the
+          // content comes back empty, which read as an outage. Mirror what callGroqModel sends.
+          const body = { model, messages: probe, max_tokens: 256 };
+          if (model.includes('gpt-oss')) body.reasoning_effort = 'low';
+          const r = await axios.post(url, body, { headers: headers(process.env[key]), timeout: 8000 });
+          if (r.data?.error) throw new Error(r.data.error.message);
           const content = r.data?.choices?.[0]?.message?.content;
-          results[`groq:${model}`] = { ok: !!content, ms: Date.now() - start, reply: content?.slice(0, 20) };
+          results[label] = { ok: !!content, ms: Date.now() - start, reply: content?.trim().slice(0, 20) };
         } catch (e) {
-          results[`groq:${model}`] = { ok: false, error: (e.response?.data?.error?.message || e.message)?.slice(0, 80) };
+          results[label] = { ok: false, error: (e.response?.data?.error?.message || e.message)?.slice(0, 80) };
         }
       });
     }
   }
 
-  // OpenRouter
-  if (process.env.OPENROUTER_API_KEY) {
-    tests.push(async () => {
-      const m = 'meta-llama/llama-3.3-70b-instruct:free';
-      const start = Date.now();
-      try {
-        const r = await axios.post('https://openrouter.ai/api/v1/chat/completions',
-          { model: m, messages: probe, max_tokens: 10 },
-          { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': 'https://personal-agent', 'X-Title': 'Personal Agent' }, timeout: 8000 }
-        );
-        const content = r.data?.choices?.[0]?.message?.content;
-        results[`or:${m}`] = { ok: !!content, ms: Date.now() - start };
-      } catch (e) {
-        results[`or:${m}`] = { ok: false, error: (e.response?.data?.error?.message || e.message)?.slice(0, 80) };
-      }
-    });
-  }
-
-  // Gemini
-  if (process.env.GEMINI_API_KEY) {
-    tests.push(async () => {
-      try {
-        const { GoogleGenerativeAI } = require('@google/generative-ai');
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-3.5-flash-lite' });
-        const start = Date.now();
-        const r = await Promise.race([
-          model.generateContent('Reply with only: OK'),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
-        ]);
-        results['gemini:2.0-flash'] = { ok: true, ms: Date.now() - start, reply: r.response.text().slice(0, 20) };
-      } catch (e) {
-        results['gemini:2.0-flash'] = { ok: false, error: e.message?.slice(0, 80) };
-      }
-    });
-  }
-
-  results._env = {
-    groq: !!process.env.GROQ_API_KEY,
-    openrouter: !!process.env.OPENROUTER_API_KEY,
-    gemini: !!process.env.GEMINI_API_KEY,
-  };
+  results._env = Object.fromEntries(
+    Object.entries(MODEL_LADDERS).map(([provider, { key }]) => [provider, !!process.env[key]])
+  );
 
   await Promise.all(tests.map(t => t()));
   const anyOk = Object.entries(results).filter(([k]) => k !== '_env').some(([, v]) => v.ok);
