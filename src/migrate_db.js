@@ -182,9 +182,29 @@ const { rows: seeded } = await pool.query(
      const ownerId = seeded[0].id;
      console.log(`✔ users table created/verified, owner seeded (${ownerId})`);
 
+    // 11b. Captured classifier misroutes. Created here, before the OWNED loop below, because that
+    // loop ALTERs every owned table to add user_id — a table added to OWNED but created later
+    // makes it throw. user_id is nullable here and tightened to NOT NULL by step 13, which is how
+    // every other owned table gets its column.
+    // See docs/superpowers/specs/2026-09-17-correction-capture-design.md.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classifier_corrections (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        message TEXT NOT NULL,
+        rejected_action TEXT[] NOT NULL,
+        signal TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        exported_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_corrections_unexported
+        ON classifier_corrections (created_at) WHERE exported_at IS NULL;
+    `);
+    console.log('✔ classifier_corrections table and index created/verified');
+
      const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
                    'conversations', 'state', 'skills', 'user_insights',
-                   'pending_messages', 'entity_links', 'reminders'];
+                   'pending_messages', 'entity_links', 'reminders',
+                   'classifier_corrections'];
 
     for (const table of OWNED) {
       await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id)`);

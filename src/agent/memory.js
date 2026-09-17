@@ -1118,6 +1118,36 @@ async function deleteState(key) {
   await pool.query('DELETE FROM state WHERE key = $1 AND user_id = $2', [key, currentUserId()]);
 }
 
+// Captured classifier misroutes. Written in production because Vercel's filesystem is read-only,
+// and exported into eval/captured.json locally by src/eval/import_corrections.js.
+// See docs/superpowers/specs/2026-09-17-correction-capture-design.md.
+async function recordCorrection({ message, rejected, signal }) {
+  await pool.query(
+    `INSERT INTO classifier_corrections (message, rejected_action, signal, user_id)
+     VALUES ($1, $2, $3, $4)`,
+    [message, rejected, signal, currentUserId()]
+  );
+}
+
+async function getUnexportedCorrections() {
+  const { rows } = await pool.query(
+    `SELECT id, message, rejected_action, signal FROM classifier_corrections
+     WHERE exported_at IS NULL AND user_id = $1
+     ORDER BY created_at ASC`,
+    [currentUserId()]
+  );
+  return rows;
+}
+
+async function markCorrectionsExported(ids) {
+  if (!ids || !ids.length) return;
+  await pool.query(
+    `UPDATE classifier_corrections SET exported_at = NOW()
+     WHERE id = ANY($1::uuid[]) AND user_id = $2`,
+    [ids, currentUserId()]
+  );
+}
+
 // Escape hatch for one-off maintenance scripts. Not for application code — use a named
 // function so the query lives next to the schema it depends on.
 async function rawQuery(text, params = []) {
@@ -1291,6 +1321,7 @@ async function recordItemEvent(itemId, eventType, snapshot, diffSummary) {
   linkEntityToKnowledge, getKnowledgeByEntity,
   reviewLearning, getDueLearnings,
   updateNoteContent, saveState, getState, deleteState,
+  recordCorrection, getUnexportedCorrections, markCorrectionsExported,
   getOldNotes, getConversationsLastWeek,
   rawQuery,
 
