@@ -122,7 +122,7 @@ TZ=Asia/Kolkata
 - Run `npm test` before committing. Tests use the built-in `node --test` runner — deliberately
   no test framework dependency.
 
-## Known issues / in flight (2026-09-16)
+## Known issues / in flight (2026-09-17)
 
 ### Resolved (2026-09-12 sprint)
 Item-state awareness shipped: `generateStandup`/`generateProactiveNudge` no longer re-announce
@@ -200,6 +200,39 @@ passes silently if the scanner stops matching. 169 -> 174 tests.
 
 Production data cleaned up the same day: 5 duplicate rows deleted, and the 9pm reminder the ghost
 row was carrying moved onto `study fla for exam`, which is the todo the original tap meant.
+
+### Resolved 2026-09-17 (correction capture)
+The classifier runs on a frozen prompt plus the last three messages (`brain.js:894-901`), so it
+never sees anything the agent has learned, and nothing recorded a misroute when one happened.
+`eval/captured.json` labelled each case with *what the classifier did*, which can only confirm
+current behaviour, and only grew when `--capture` was run by hand.
+
+Now: a capture action leaves a `last_capture` breadcrumb (`saveState`, 10-minute TTL — the TTL
+*is* the correction window). Three retraction actions read it back inside `executeAction`
+(`undo_last`, `delete_note`, `delete_event`), plus a declined `destructive_action` confirmation.
+A hit is written to `classifier_corrections` and exported locally by `npm run eval:import` as a
+negative case — `{rejected: [...], accept: null}` — which the eval asserts as "must not classify
+as X" with no labelling effort. Detection lives inside `executeAction` because there are eight
+call sites and `undo_last` runs down the classifier path, not Path A; hooking the Path A dispatch
+would have recorded nothing while every detector test still passed.
+
+Two exclusions are deliberate and pinned in `test/corrections.test.js`: `complete_todo` on a
+just-added todo (finishing a task you added ten minutes ago is ordinary use, and it is the most
+frequent plausible signal, so including it would swamp the dataset) and a declined note-merge
+prompt (it shares the `pending_clarification:` key and the word "no" with the destructive-action
+confirmation, but means "save it separately" — a storage preference, not a misroute).
+
+This is instrumentation, not learning: no runtime prompt changes, no auto-promotion past the
+`reviewed` gate, no LLM judge. Nothing alters classification; `npm run eval` still reports 22/22.
+New files: `src/agent/corrections.js` (pure detector), `src/eval/import_corrections.js`.
+Migration: step 11b, created before the OWNED loop because that loop ALTERs every owned table.
+174 -> 199 tests.
+
+**Open:** recall is unmeasured. If corrections are usually expressed by rephrasing rather than
+undo/delete, this captures very little. Count rows in `classifier_corrections` after a few weeks
+of real use — a low count is the argument for the LLM-judge tier (Approach B in the spec).
+Design: `docs/superpowers/specs/2026-09-17-correction-capture-design.md`.
+Plan: `docs/superpowers/plans/2026-09-17-correction-capture.md`.
 
 ### Ops
 - Vercel `GITHUB_TOKEN` is a fine-grained PAT without access to the private

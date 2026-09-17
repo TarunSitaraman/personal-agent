@@ -2,6 +2,7 @@ const axios = require("axios");
 const memory = require("./memory");
 const { getOpenPRs, getOpenPRsDetailed, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { extractGithubSnapshot, diffSnapshot, shouldSurface } = require("./itemTracking");
+const { detectFromAction, detectFromClarification } = require("./corrections");
 const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
 const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
@@ -867,6 +868,20 @@ async function handleIncoming(userMessage, replyTo = null) {
           await memory.saveMessage('model', finalReply, PROMPT_VERSION, 0, Math.ceil(finalReply.length / 4));
           return finalReply;
         } else {
+          // Declining a destructive_action means the classifier proposed the wrong routing — a
+          // misroute worth capturing. The note-merge clarification above shares this state key
+          // and the same "no", but means "save it separately", so detectFromClarification gates
+          // on the type rather than this branch capturing everything that reaches it.
+          const declined = detectFromClarification({
+            type: clarification.type,
+            action: clarification.data?.action,
+            msg: clarification.msg,
+            answeredNo: true,
+          });
+          if (declined?.message) {
+            await memory.recordCorrection(declined)
+              .catch(err => console.error('[Corrections] record failed:', err.message));
+          }
           await memory.deleteState(`pending_clarification:${replyTo}`);
           const replyText = `Action cancelled.`;
           await memory.saveMessage('user', userMessage, PROMPT_VERSION, Math.ceil(userMessage.length / 4), 0);
@@ -1061,6 +1076,9 @@ ${summaryBlock}`;
     if (replyTo && synthConfidence < 0.8 && ['complete_todo', 'delete_event'].includes(synthAction)) {
       await memory.saveState(`pending_clarification:${replyTo}`, {
         type: 'destructive_action',
+        // Carried so that declining this confirmation can be captured as a misroute against the
+        // message that caused it — see src/agent/corrections.js.
+        msg: userMessage,
         data: { action: synthAction, data: synthData,  defaultReply: parsed.reply }
       });
 
@@ -1118,6 +1136,9 @@ ${summaryBlock}`;
     if (replyTo && confidence < 0.8 && ['complete_todo', 'delete_event'].includes(primaryAction)) {
       await memory.saveState(`pending_clarification:${replyTo}`, {
         type: 'destructive_action',
+        // Carried so that declining this confirmation can be captured as a misroute against the
+        // message that caused it — see src/agent/corrections.js.
+        msg: userMessage,
         data: { action: primaryAction, data: primaryData,  defaultReply: `Marked "${primaryData?.content || primaryData?.title || ''}" as completed.` }
       });
 
@@ -1325,8 +1346,46 @@ ${insightsBlock}`;
   return reply;
 }
 
+// Correction capture. Only three actions can retract a previous turn, so the breadcrumb is read
+// for those and nothing else — an ordinary message costs no extra query. Both hooks live inside
+// executeAction rather than at a call site because there are eight call sites and undo_last runs
+// down the classifier path, not Path A.
+// See docs/superpowers/specs/2026-09-17-correction-capture-design.md.
+const CORRECTION_TRIGGERS = ['undo_last', 'delete_note', 'delete_event'];
+const CRUMB_ITEM_TYPE = {
+  add_todo: 'todo', set_reminder: 'todo', add_note: 'note', add_event: 'event',
+};
+
 async function executeAction(action, data, defaultReply, replyTo = null) {
   const tags = data?.tags || [];
+
+  // Read the previous turn's breadcrumb before this turn overwrites it.
+  if (CORRECTION_TRIGGERS.includes(action)) {
+    const lastCapture = await memory.getState('last_capture').catch(() => null);
+    const correction = detectFromAction({ action, lastCapture });
+    if (correction) {
+      // Awaited, not fire-and-forget: on Vercel the function can freeze once the response is
+      // sent, so a dangling promise may never complete — the write would be lost in exactly the
+      // environment this ships to. The catch keeps a failure from breaking the reply.
+      await memory.recordCorrection(correction)
+        .catch(err => console.error('[Corrections] record failed:', err.message));
+    }
+  }
+
+  // Breadcrumb for the next turn: if it retracts what this action creates, that is evidence the
+  // classifier misrouted. The 10-minute TTL on the state row is the correction window.
+  // Fire-and-forget — instrumentation must never break the reply the user is waiting for.
+  if (CRUMB_ITEM_TYPE[action]) {
+    const crumbMsg = data?.content || data?.title || '';
+    if (crumbMsg) {
+      // Awaited for the same reason as recordCorrection above: an un-awaited write is not
+      // guaranteed to survive a serverless freeze, and a breadcrumb that never lands makes the
+      // whole feature silently capture nothing in production.
+      await memory.saveState('last_capture', { action, itemType: CRUMB_ITEM_TYPE[action], msg: crumbMsg }, 10)
+        .catch(err => console.error('[Corrections] breadcrumb failed:', err.message));
+    }
+  }
+
   try {
     switch (action) {
       case "set_goal":
