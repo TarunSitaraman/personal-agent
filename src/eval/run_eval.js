@@ -20,7 +20,7 @@ require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
 const { CLASSIFIER_PROMPT, callLLM, extractFirstJSON } = require('../agent/brain');
-const { actionsFrom, scoreCase } = require('./scoring');
+const { actionsFrom, scoreCase, describeExpectation } = require('./scoring');
 
 const ROOT = path.join(__dirname, '..', '..');
 const CASES = path.join(ROOT, 'eval', 'cases.json');
@@ -105,7 +105,7 @@ async function assertAll() {
         continue;
       }
     }
-    const pass = scoreCase(actual, c.accept);
+    const pass = scoreCase(actual, c.accept, c.rejected);
     if (!pass) failures.push({ ...c, actual });
     console.log(`  ${pass ? 'PASS ' : 'FAIL '} ${(actual.join(' + ') || '(none)').padEnd(28)} ${c.msg.slice(0, 60)}`);
   }
@@ -114,7 +114,7 @@ async function assertAll() {
   console.log(`\n${scored - failures.length}/${scored} passed` +
     (errors.length ? `, ${errors.length} not scored (all LLMs unavailable — re-run later)` : '') + '.');
   for (const f of failures) {
-    console.log(`  FAIL "${f.msg}"\n       got ${f.actual.join(' + ') || '(none)'}, accepted ${f.accept.map(a => a.join(' + ')).join(' | ')}`);
+    console.log(`  FAIL "${f.msg}"\n       got ${f.actual.join(' + ') || '(none)'}, expected ${describeExpectation(f)}`);
   }
   process.exitCode = failures.length || errors.length ? 1 : 0;
 }

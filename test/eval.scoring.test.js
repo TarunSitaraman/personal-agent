@@ -91,3 +91,17 @@ test('a case with neither accept nor rejected does not silently pass', () => {
   // must not be the thing that hides them.
   assert.strictEqual(scoreCase(['add_todo'], null, []), false);
 });
+
+// run_eval prints accepted values on failure. A correction case has accept: null, so the printout
+// must not be the thing that crashes the run that found the regression.
+const { describeExpectation } = require('../src/eval/scoring');
+
+test('a rejected-only case describes its expectation without an accept list', () => {
+  assert.match(describeExpectation({ accept: null, rejected: ['add_todo'] }), /not add_todo/);
+});
+
+test('a labeled case describes its accepted sets', () => {
+  assert.match(
+    describeExpectation({ accept: [['add_todo'], ['set_reminder']] }),
+    /add_todo \| set_reminder/);
+});

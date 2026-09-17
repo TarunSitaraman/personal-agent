@@ -29,4 +29,16 @@ function scoreCase(actual, accept, rejected) {
   return false;
 }
 
-module.exports = { actionsFrom, scoreCase };
+// How a case's expectation reads in the failure printout. A correction case has no accept list,
+// so the raw `accept.map(...)` in run_eval would throw on exactly the cases this feature adds.
+function describeExpectation(c) {
+  if (Array.isArray(c.accept) && c.accept.length) {
+    return c.accept.map(a => a.join(' + ')).join(' | ');
+  }
+  if (Array.isArray(c.rejected) && c.rejected.length) {
+    return `anything not ${c.rejected.join(' or ')}`;
+  }
+  return '(nothing asserted)';
+}
+
+module.exports = { actionsFrom, scoreCase, describeExpectation };
