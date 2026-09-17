@@ -158,7 +158,7 @@ router.post('/chat', async (req, res) => {
 });
 
 // Live health check — tests all configured LLM providers.
-// Shared with the Vercel function api/llm-health.js, which is the one production actually serves.
+// Shared with api/health.js?llm=1, which is the one production actually serves.
 router.get('/llm-health', async (req, res) => {
   const { probeAllProviders } = require('../agent/llmHealth');
   const { results, anyOk } = await probeAllProviders();
