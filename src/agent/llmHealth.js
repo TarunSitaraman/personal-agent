@@ -1,5 +1,5 @@
 // Live probe of every configured LLM provider. Shared by the Express route (/api/llm-health) and
-// the Vercel function (api/llm-health.js) — on Vercel the Express router is not deployed, so the
+// the Vercel function (api/health.js?llm=1) — on Vercel the Express router is not deployed, so the
 // route existed locally and 404'd in production.
 const axios = require('axios');
 const { MODEL_LADDERS } = require('./brain');
