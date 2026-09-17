@@ -879,7 +879,7 @@ async function handleIncoming(userMessage, replyTo = null) {
             answeredNo: true,
           });
           if (declined?.message) {
-            memory.recordCorrection(declined)
+            await memory.recordCorrection(declined)
               .catch(err => console.error('[Corrections] record failed:', err.message));
           }
           await memory.deleteState(`pending_clarification:${replyTo}`);
@@ -1364,7 +1364,10 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
     const lastCapture = await memory.getState('last_capture').catch(() => null);
     const correction = detectFromAction({ action, lastCapture });
     if (correction) {
-      memory.recordCorrection(correction)
+      // Awaited, not fire-and-forget: on Vercel the function can freeze once the response is
+      // sent, so a dangling promise may never complete — the write would be lost in exactly the
+      // environment this ships to. The catch keeps a failure from breaking the reply.
+      await memory.recordCorrection(correction)
         .catch(err => console.error('[Corrections] record failed:', err.message));
     }
   }
@@ -1375,7 +1378,10 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
   if (CRUMB_ITEM_TYPE[action]) {
     const crumbMsg = data?.content || data?.title || '';
     if (crumbMsg) {
-      memory.saveState('last_capture', { action, itemType: CRUMB_ITEM_TYPE[action], msg: crumbMsg }, 10)
+      // Awaited for the same reason as recordCorrection above: an un-awaited write is not
+      // guaranteed to survive a serverless freeze, and a breadcrumb that never lands makes the
+      // whole feature silently capture nothing in production.
+      await memory.saveState('last_capture', { action, itemType: CRUMB_ITEM_TYPE[action], msg: crumbMsg }, 10)
         .catch(err => console.error('[Corrections] breadcrumb failed:', err.message));
     }
   }
