@@ -15,9 +15,18 @@ function actionsFrom(parsed) {
 const key = list => [...new Set(list)].sort().join('+');
 
 // `accept` is a list of acceptable action sets, e.g. [["list_todos"], ["none"]].
-function scoreCase(actual, accept) {
-  const got = key(actual);
-  return accept.some(alt => key(alt) === got);
+// `rejected` is a list of action names the classifier must NOT produce. It comes from a captured
+// correction, where the user's own undo or delete told us the routing was wrong but not what was
+// right. `accept` wins when both are present: a hand-supplied label beats an inferred negative.
+function scoreCase(actual, accept, rejected) {
+  if (Array.isArray(accept) && accept.length) {
+    const got = key(actual);
+    return accept.some(alt => key(alt) === got);
+  }
+  if (Array.isArray(rejected) && rejected.length) {
+    return !rejected.some(name => actual.includes(name));
+  }
+  return false;
 }
 
 module.exports = { actionsFrom, scoreCase };
