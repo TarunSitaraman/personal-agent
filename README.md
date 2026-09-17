@@ -479,6 +479,31 @@ asserted after you correct each `accept` list and set `"reviewed": true`. Run `n
 before changing `CLASSIFIER_PROMPT` or `CLASSIFIER_MODEL`. It calls the free LLM ladder, which
 rate-limits — a skipped or errored case is a quota problem, not necessarily a model problem.
 
+### Correction capture
+
+Misroutes are detected and recorded automatically. When a turn retracts what the previous one
+created — `undo_last`, or deleting a note/event that was just added — or when you decline a
+low-confidence "are you sure?", that is evidence the classifier routed the message wrong. The pair
+is written to `classifier_corrections` in Postgres, because Vercel's filesystem is read-only and a
+file cannot be written there.
+
+```bash
+npm run eval:import                 # pull captured corrections into eval/captured.json
+```
+
+A correction lands as a **negative** case — `{"rejected": ["add_todo"], "accept": null}` — which
+asserts only "must not classify as this". That needs no labeling from you: unlike a `--capture`
+case, which is labeled with whatever the classifier did, a correction carries evidence the
+classifier was wrong. Filling in `accept` upgrades it to an ordinary positive case, and `accept`
+then takes precedence.
+
+Like captured cases, corrections stay `"reviewed": false` and assert nothing until you set that
+to `true`. The export is idempotent — a message already in the file is never overwritten.
+
+Deliberately **not** treated as corrections: completing a todo you added minutes ago (ordinary
+use, and the most frequent plausible signal), and declining a note-merge prompt (that means "save
+it separately", not "wrong action"). Both exclusions are pinned in `test/corrections.test.js`.
+
 ### Troubleshooting
 
 **WhatsApp replies with "exceeded the compute time quota"**
