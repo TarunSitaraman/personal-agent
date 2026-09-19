@@ -1,17 +1,10 @@
 require('dotenv').config();
-const { asOwner } = require('../src/agent/context');
 const memory = require('../src/agent/memory');
+const { withDashboardUser } = require('../src/agent/dashboardAuth');
 
-function auth(req) {
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  return token === process.env.DASHBOARD_TOKEN;
-}
-
-module.exports = async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
-  // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
-  return asOwner(run)(req, res);
-};
+// Per-user token auth; the handler runs inside the token holder's scope, so an unauthenticated
+// request never reaches the DB. `run` is referenced lazily because it is defined below.
+module.exports = withDashboardUser((req, res) => run(req, res));
 
 const run = async (req, res) => {
 

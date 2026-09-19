@@ -1,17 +1,12 @@
 require('dotenv').config();
-const { asOwner } = require('../src/agent/context');
-const { handleIncoming } = require('../src/agent/brain');
+// Called through the module object rather than destructured, so tests can substitute it — the
+// same convention as src/whatsapp/buttons.js.
+const brain = require('../src/agent/brain');
+const { withDashboardUser } = require('../src/agent/dashboardAuth');
 
-function auth(req) {
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  return token === process.env.DASHBOARD_TOKEN;
-}
-
-module.exports = async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ error: 'Unauthorized' });
-  // Scope is entered only after auth, so an unauthenticated request never reaches the DB.
-  return asOwner(run)(req, res);
-};
+// Per-user token auth; the agent runs as the token holder. This endpoint executes arbitrary agent
+// actions, so it must never be reachable anonymously. `run` is referenced lazily (defined below).
+module.exports = withDashboardUser((req, res) => run(req, res));
 
 const run = async (req, res) => {
   if (req.method !== 'POST') return res.sendStatus(405);
@@ -20,7 +15,7 @@ const run = async (req, res) => {
   if (!message?.trim()) return res.status(400).json({ error: 'message required' });
 
   try {
-    const reply = await handleIncoming(message.trim());
+    const reply = await brain.handleIncoming(message.trim());
     res.json({ reply });
   } catch (err) {
     res.status(500).json({ error: err.message });
