@@ -91,3 +91,28 @@ test('an error inside the scope propagates and still unwinds it', async () => {
   );
   assert.throws(() => currentUserId(), /No user in scope/);
 });
+
+// ── The raw incoming message ─────────────────────────────────────────────────
+//
+// Correction capture records the message that was misrouted, and the eval replays it against the
+// classifier. It has to be what the user actually sent: executeAction only sees what the
+// classifier extracted, so "remind me to call the bank" arrived there as "call the bank".
+
+const { withIncomingMessage, currentIncomingMessage } = require('../src/agent/context');
+
+test('the incoming message is readable inside its scope and absent outside it', async () => {
+  assert.strictEqual(currentIncomingMessage(), null);
+  await withIncomingMessage('remind me to call the bank', async () => {
+    assert.strictEqual(currentIncomingMessage(), 'remind me to call the bank');
+  });
+  assert.strictEqual(currentIncomingMessage(), null);
+});
+
+test('entering the message scope keeps the user scope it was entered from', async () => {
+  // A new store replaces the old one for the inner call chain, so this would silently drop the
+  // user if the user were not carried across — and every query inside would then throw.
+  await runAsUser(ALICE, () => withIncomingMessage('hi', async () => {
+    assert.strictEqual(currentUserId(), ALICE.id);
+    assert.strictEqual(currentIncomingMessage(), 'hi');
+  }));
+});

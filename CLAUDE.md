@@ -234,6 +234,15 @@ of real use — a low count is the argument for the LLM-judge tier (Approach B i
 Design: `docs/superpowers/specs/2026-09-17-correction-capture-design.md`.
 Plan: `docs/superpowers/plans/2026-09-17-correction-capture.md`.
 
+**2026-09-19:** first real production capture — a stray voice note ("This video is sponsored by
+Biscuiti...") filed as `add_note`, then undone. Labelled `accept: [["none"]]`, reviewed; eval 23/23.
+It passes locally although production misrouted it: the ladder is non-deterministic and prod had
+conversation history, so a green run guards regressions but does not prove the misroute fixed.
+Fixed while reviewing it: the breadcrumb stored the *extracted* content ("remind me to call the
+bank" became "call the bank"), so the eval replayed text that was never sent. `handleIncoming`
+and `handleIncomingStream` now enter `withIncomingMessage` (context.js) and the breadcrumb reads
+`currentIncomingMessage()` first. 199 -> 202 tests.
+
 ### Ops
 - Vercel `GITHUB_TOKEN` is a fine-grained PAT without access to the private
   SmartResQ-dev repo — production logs `403 Resource not accessible by personal
