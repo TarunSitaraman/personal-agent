@@ -57,4 +57,22 @@ async function main() {
   process.exit(0);
 }
 
-main().catch(err => { console.error('Export failed:', err.message); process.exit(1); });
+// pg surfaces a connection failure as an AggregateError — one inner error per resolved address of
+// the pooler — whose own .message is empty. Printing err.message alone showed "Export failed:"
+// with nothing after it, hiding an ETIMEDOUT that was the whole story.
+function describeError(err) {
+  const inner = Array.isArray(err?.errors) ? err.errors : [];
+  if (inner.length) {
+    return inner.map(e => `${e.code || e.name}: ${e.message}`).join('\n  ');
+  }
+  return err?.message || err?.code || String(err);
+}
+
+main().catch(err => {
+  console.error(`Export failed:\n  ${describeError(err)}`);
+  if (err?.code === 'ETIMEDOUT' || err?.errors?.some(e => e.code === 'ETIMEDOUT')) {
+    console.error('The database did not answer. If other sites load, the network you are on is ' +
+      'probably blocking outbound ports 5432/6543 — try another network or a hotspot.');
+  }
+  process.exit(1);
+});
