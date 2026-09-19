@@ -3,6 +3,7 @@ const memory = require("./memory");
 const { getOpenPRs, getOpenPRsDetailed, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { extractGithubSnapshot, diffSnapshot, shouldSurface } = require("./itemTracking");
 const { detectFromAction, detectFromClarification } = require("./corrections");
+const { withIncomingMessage, currentIncomingMessage } = require("./context");
 const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
 const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
@@ -821,7 +822,13 @@ function validateJsonSchema(parsed) {
   return true;
 }
 
-async function handleIncoming(userMessage, replyTo = null) {
+// Entry point. Puts the raw message in scope so correction capture records what the user actually
+// sent, not what the classifier extracted from it — see withIncomingMessage in context.js.
+function handleIncoming(userMessage, replyTo = null) {
+  return withIncomingMessage(userMessage, () => handleIncomingInScope(userMessage, replyTo));
+}
+
+async function handleIncomingInScope(userMessage, replyTo = null) {
   // Check for active multi-turn clarifications (Items 12, 16, 17)
   if (replyTo) {
     const clarification = await memory.getState(`pending_clarification:${replyTo}`);
@@ -1258,7 +1265,12 @@ async function refreshContextSummary() {
 }
 
 // Streaming version — streams reply tokens, executes action after full response
-async function handleIncomingStream(userMessage, onToken) {
+// Same scope as handleIncoming, for the streaming dashboard chat path.
+function handleIncomingStream(userMessage, onToken) {
+  return withIncomingMessage(userMessage, () => handleIncomingStreamInScope(userMessage, onToken));
+}
+
+async function handleIncomingStreamInScope(userMessage, onToken) {
   // The embedding rides along in the same batch, so ranking knowledge properly costs no extra
   // wall-clock time before the first streamed token.
   const [history, stats, openPRs, openIssues, insights, knowledge, upcomingEvents, msgCount, learnedSkills, msgEmbedding] = await Promise.all([
@@ -1376,7 +1388,10 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
   // classifier misrouted. The 10-minute TTL on the state row is the correction window.
   // Fire-and-forget — instrumentation must never break the reply the user is waiting for.
   if (CRUMB_ITEM_TYPE[action]) {
-    const crumbMsg = data?.content || data?.title || '';
+    // The raw message when an entry point put one in scope: the eval replays this against the
+    // classifier, so it must be the input that was misrouted, not the extracted content.
+    // Falls back to the extracted text for callers with no incoming message, such as tests.
+    const crumbMsg = (currentIncomingMessage() || data?.content || data?.title || '').trim();
     if (crumbMsg) {
       // Awaited for the same reason as recordCorrection above: an un-awaited write is not
       // guaranteed to survive a serverless freeze, and a breadcrumb that never lands makes the

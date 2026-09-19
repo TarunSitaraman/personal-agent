@@ -55,6 +55,22 @@ function currentNumber() {
   return user.wa_number;
 }
 
+// The raw message currently being handled, for instrumentation that needs what the user actually
+// sent rather than what the classifier extracted from it. Correction capture replays the recorded
+// message against the classifier, and executeAction only ever sees extracted data — the prefilter
+// turns "remind me to call the bank" into content "call the bank", which is not the input that was
+// misrouted. Carried here for the same reason the user is: one scope entered at the entry point
+// beats threading a parameter through every executeAction call site.
+//
+// A new store for the inner call chain, copying the outer one, so the user scope survives.
+function withIncomingMessage(message, fn) {
+  return storage.run({ ...storage.getStore(), incomingMessage: message }, fn);
+}
+
+function currentIncomingMessage() {
+  return storage.getStore()?.incomingMessage || null;
+}
+
 // Runs fn once per active user, each inside its own scope. One user's failure is logged and
 // skipped rather than allowed to cancel everyone else's brief — a fan-out that stops at the
 // first error silently degrades to "only the first few users get anything".
@@ -102,4 +118,5 @@ function ownerMiddleware(req, res, next) {
 module.exports = {
   runAsUser, currentUser, currentUserId, currentTz, currentNumber,
   withOwner, asOwner, ownerMiddleware, forEachUser,
+  withIncomingMessage, currentIncomingMessage,
 };

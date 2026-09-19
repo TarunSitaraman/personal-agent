@@ -83,3 +83,21 @@ test('a failure to record a correction does not break the reply', async () => {
 
   assert.ok(typeof reply === 'string' && reply.length, 'the user still gets a reply');
 });
+
+test('the breadcrumb stores what the user sent, not what the classifier extracted', async () => {
+  // End to end through handleIncoming, via the prefilter so no LLM is called. The prefilter rule
+  // for "remind me to X" hands executeAction only X — the exact gap this pins. The first real
+  // production correction (a stray voice note saved as a note) happened to dodge it only because
+  // a note's content is the whole message.
+  const { handleIncoming } = require('../src/agent/brain');
+  const saved = [];
+  test.mock.method(memory, 'addTodo', async () => {});
+  test.mock.method(memory, 'saveMessage', async () => {});
+  test.mock.method(memory, 'saveState', async (key, value) => { saved.push({ key, value }); });
+
+  await handleIncoming('remind me to call the bank');
+
+  const crumb = saved.find(s => s.key === 'last_capture');
+  assert.ok(crumb, 'the prefiltered capture must leave a breadcrumb');
+  assert.strictEqual(crumb.value.msg, 'remind me to call the bank');
+});
