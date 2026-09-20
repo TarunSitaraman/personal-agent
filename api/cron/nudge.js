@@ -1,8 +1,7 @@
 require('dotenv').config();
-const { forEachUser, currentNumber } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const { generateProactiveNudge } = require('../../src/agent/brain');
-const { sendMessage } = require('../../src/whatsapp/send');
-const { sendNudgePush } = require('../../src/push/push');
+const { deliver } = require('../../src/scheduler/delivery');
 const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
@@ -32,7 +31,6 @@ const run = async (user, query) => {
   const nudge = await generateProactiveNudge();
   if (!nudge) return `${user.wa_number}: nothing worth nudging about`;
 
-  await sendMessage(currentNumber(), nudge);
-  await sendNudgePush(nudge.slice(0, 120));
-  return `${user.wa_number}: nudge sent`;
+  const channel = await deliver({ kind: 'nudge', text: nudge });
+  return `${user.wa_number}: nudge → ${channel}`;
 };

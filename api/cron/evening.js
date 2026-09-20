@@ -1,7 +1,7 @@
 require('dotenv').config();
-const { forEachUser, currentNumber } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const { generateStandup } = require('../../src/agent/brain');
-const { sendMessage, sendButtonMessage } = require('../../src/whatsapp/send');
+const { deliver } = require('../../src/scheduler/delivery');
 const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
@@ -28,13 +28,16 @@ const run = async (user, query) => {
   const skip = localTimeSkip(query, user, 18);
   if (skip) return skip;
 
-  const myNumber = currentNumber();
-
   const standup = await generateStandup('smartresq');
-  await sendMessage(myNumber, standup);
-  await sendButtonMessage(myNumber, "What's the *One Big Thing* you want to move tonight?", [
-    { id: 'obt_set', title: 'Set it now' },
-    { id: 'obt_skip', title: 'Skip tonight' },
-  ]);
-  return `${user.wa_number}: evening brief sent`;
+  const channel = await deliver({ kind: 'evening', text: standup });
+
+  const obt = "What's the *One Big Thing* you want to move tonight?";
+  await deliver({
+    kind: 'evening', title: 'One Big Thing', text: obt,
+    whatsapp: { text: obt, buttons: [
+      { id: 'obt_set', title: 'Set it now' },
+      { id: 'obt_skip', title: 'Skip tonight' },
+    ] },
+  });
+  return `${user.wa_number}: evening brief → ${channel}`;
 };

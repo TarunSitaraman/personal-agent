@@ -66,30 +66,4 @@ async function sendPush(title, body, data = {}) {
   return result;
 }
 
-// Convenience wrappers for common notification types
-function sendReminderPush(todoId, content) {
-  return sendPush('Reminder', content, {
-    type: 'todo_reminder',
-    todoId,
-    channelId: 'reminders',
-  });
-}
-
-function sendBriefPush(title, summary) {
-  return sendPush(title, summary, {
-    type: 'brief',
-    channelId: 'briefs',
-  });
-}
-
-function sendNudgePush(message) {
-  return sendPush('Blu', message, {
-    type: 'nudge',
-    channelId: 'nudges',
-  });
-}
-
-module.exports = {
-  sendPush, sendReminderPush, sendBriefPush, sendNudgePush,
-  isExpoPushToken, stripWhatsAppMarkup, toPushText,
-};
+module.exports = { sendPush, isExpoPushToken, stripWhatsAppMarkup, toPushText };
