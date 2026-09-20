@@ -1,7 +1,6 @@
 const express = require('express');
-const { runAsUser } = require('../agent/context');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, getUserByDashboardToken } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning } = require('../agent/memory');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
@@ -9,20 +8,12 @@ const { occurrencesBetween } = require('../agent/recurrence');
 
 const router = express.Router();
 
-// Resolve the authenticated user from the dashboard token query param.
-// Replaces the shared DASHBOARD_TOKEN — each user has their own token stored in the database.
-function tokenMiddleware(req, res, next) {
-   const token = req.query.token;
-   if (!token) return res.status(401).send('Unauthorized');
-   getUserByDashboardToken(token).then(user => {
-     if (!user) return res.status(401).send('Unauthorized');
-     req.user = user;
-     runAsUser(user, () => next());
-   }).catch(next);
-}
+// Per-user dashboard token, from the Authorization header (the app) or ?token= (the web
+// dashboard, which navigates by URL). One implementation, shared: src/agent/dashboardAuth.js.
+const { dashboardTokenMiddleware } = require('../agent/dashboardAuth');
 
 // Every route below reads or writes one person's data, so the whole router runs in scope.
-router.use(tokenMiddleware);
+router.use(dashboardTokenMiddleware);
 
 // Calendar expansion for a month view: day-of-month (1-31) → events on that day.
 //
