@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
@@ -7,6 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import Constants from 'expo-constants';
+import { createNavigationContainerRef } from '@react-navigation/native';
 
 enableScreens();
 
@@ -21,14 +23,24 @@ import { registerPushToken } from './api';
 import TokenScreen from './screens/TokenScreen';
 import { getToken, onSignedOut } from './auth';
 
-// Show notifications as banners even when the app is foregrounded
+// Show notifications as banners even when the app is foregrounded.
+// shouldShowBanner/shouldShowList replaced the deprecated shouldShowAlert (SDK 54).
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
+
+const navigationRef = createNavigationContainerRef();
+
+// Any notification tap opens the thread, where the full message is. The newest message is at the
+// bottom and Chat scrolls there on load, so a just-delivered one is what you land on.
+function openChat() {
+  if (navigationRef.isReady()) navigationRef.navigate('Chat');
+}
 
 async function setupPushNotifications() {
   if (!Device.isDevice) return; // push tokens only work on real devices
@@ -59,11 +71,19 @@ async function setupPushNotifications() {
     });
   }
 
-  const tokenData = await Notifications.getExpoPushTokenAsync().catch(() =>
-    Notifications.getDevicePushTokenAsync()
-  );
-  const token = tokenData?.data;
-  if (token) await registerPushToken(token).catch(e => console.warn('[Push] Register failed:', e.message));
+  // The Expo push service needs an Expo token, which needs the EAS project id. The old code
+  // called this without one and fell back to a raw FCM device token that Expo can never deliver to.
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+  if (!projectId) {
+    console.warn('[Push] No EAS projectId — run `eas init` in mobile/');
+    return;
+  }
+  try {
+    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+    await registerPushToken(token);
+  } catch (e) {
+    console.warn('[Push] Registration failed:', e.message);
+  }
 }
 
 const Tab = createBottomTabNavigator();
@@ -94,26 +114,19 @@ export default function App() {
     return onSignedOut(() => setAuthState('signedOut'));
   }, []);
 
-  const notifListener = useRef();
-  const responseListener = useRef();
+  // Register for push once signed in; re-registering on each launch is harmless (idempotent).
+  useEffect(() => {
+    if (authState === 'signedIn') setupPushNotifications();
+  }, [authState]);
 
   useEffect(() => {
-
-    // Log foreground notifications (screens can add their own handlers later)
-    notifListener.current = Notifications.addNotificationReceivedListener(n => {
-      console.log('[Push] Received:', n.request.content.title, n.request.content.body);
+    const received = Notifications.addNotificationReceivedListener(n => {
+      console.log('[Push] Received:', n.request.content.title);
     });
-
-    // Handle notification tap — navigate based on data.type when navigation is ready
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(r => {
-      const { type } = r.notification.request.content.data || {};
-      console.log('[Push] Tapped:', type);
-      // Navigation-based deep linking can be added here as screens are built out
-    });
-
+    const tapped = Notifications.addNotificationResponseReceivedListener(() => openChat());
     return () => {
-      Notifications.removeNotificationSubscription(notifListener.current);
-      Notifications.removeNotificationSubscription(responseListener.current);
+      received.remove();
+      tapped.remove();
     };
   }, []);
 
@@ -130,7 +143,16 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <NavigationContainer theme={NAV_THEME}>
+      <NavigationContainer
+        theme={NAV_THEME}
+        ref={navigationRef}
+        onReady={() => {
+          // A tap that launched the app from cold start is not delivered to the listener above.
+          Notifications.getLastNotificationResponseAsync()
+            .then(r => { if (r) openChat(); })
+            .catch(() => {});
+        }}
+      >
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
