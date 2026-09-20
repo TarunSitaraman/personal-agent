@@ -1,7 +1,7 @@
 require('dotenv').config();
-const { forEachUser, currentNumber } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const { generateWeeklyReview } = require('../../src/agent/brain');
-const { sendMessage } = require('../../src/whatsapp/send');
+const { deliver } = require('../../src/scheduler/delivery');
 const memory = require('../../src/agent/memory');
 const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
@@ -31,6 +31,6 @@ const run = async (user, query) => {
 
   await memory.trimConversations(200);
   const review = await generateWeeklyReview();
-  await sendMessage(currentNumber(), review);
-  return `${user.wa_number}: weekly review sent`;
+  const channel = await deliver({ kind: 'weekly', text: review });
+  return `${user.wa_number}: weekly review → ${channel}`;
 };
