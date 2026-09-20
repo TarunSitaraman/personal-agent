@@ -10,7 +10,7 @@
       "supportsTablet": true
     },
     "android": {
-      "package": "com.tarunsitaraman.blu",
+      "package": "com.tarunsitaraman.blumobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

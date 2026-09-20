@@ -64,7 +64,7 @@ Verified against production on 2026-09-19, not inferred from docs:
 | How is the app built? | EAS cloud builds | No Android toolchain on Windows; one-time setup |
 | How is the token held? | Entered on first launch, stored with `expo-secure-store` | An `EXPO_PUBLIC_*` token ships inside the APK |
 | Where are proactive messages stored? | New `inbox_messages` table, not `conversations` | The classifier reads the last 3 `conversations` rows; long briefs there would change how the next message is classified |
-| Android package name | `com.tarunsitaraman.blu` | Permanent once Firebase is configured |
+| Android package name | `com.tarunsitaraman.blumobile` | Permanent once Firebase is configured |
 
 ## Design
 
@@ -151,7 +151,7 @@ the existing `schema.scoping` and `schema.params` guards.
 ### 4. App (`mobile/`)
 
 - **Build.** `eas init` replaces the placeholder `projectId`. `app.json` gains
-  `android.package: "com.tarunsitaraman.blu"`. Add `eas.json` with a `development` profile
+  `android.package: "com.tarunsitaraman.blumobile"`. Add `eas.json` with a `development` profile
   (`expo-dev-client`, for iterating) and a `preview` profile (an installable APK for daily use).
 - **Auth.** On first launch, if no token is stored, show a token screen. Validate the token with
   `GET /dashboard/api/auth/verify` (exists), store it with `expo-secure-store`, and send it as
@@ -176,7 +176,7 @@ the existing `schema.scoping` and `schema.params` guards.
      browser flow cannot be driven from a non-interactive agent shell.
    - `eas init` — creates the EAS project and writes the real `projectId`.
    - Optional: `npm install -g eas-cli` first. The installed version works but is behind 24.3.0.
-2. Create a Firebase project, add an Android app with package `com.tarunsitaraman.blu`, and
+2. Create a Firebase project, add an Android app with package `com.tarunsitaraman.blumobile`, and
    upload the FCM V1 service-account key via `eas credentials`. Expo's push service delivers to
    Android through FCM.
 3. Install the `preview` APK and paste the dashboard token into the app's first screen.
