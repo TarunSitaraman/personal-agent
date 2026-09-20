@@ -1,31 +1,63 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { chat } from '../api';
+import { chat, getMessages } from '../api';
 import { C, FONT } from '../theme';
 
-const INITIAL = [{ id: '0', role: 'blu', text: "Hey, I'm Blu. What's on your mind?" }];
+const GREETING = { id: 'greeting', role: 'blu', kind: 'chat', text: "Hey, I'm Blu. What's on your mind?", created_at: null };
+
+// Labels for proactive messages, which render distinctly from replies.
+const KIND_LABEL = {
+  reminder: 'Reminder', event: 'Starting soon', brief: 'Morning brief', evening: 'Evening brief',
+  nudge: 'Nudge', goal: 'One Big Thing', pulse: 'Tech pulse', weekly: 'Weekly review',
+};
+
+// Server rows are newest-first; the list renders oldest-first like any chat.
+function toItems(rows) {
+  return rows.slice().reverse().map(r => ({
+    id: r.id,
+    role: r.from === 'me' ? 'user' : 'blu',
+    kind: r.kind,
+    text: r.text,
+    created_at: r.created_at,
+  }));
+}
 
 export default function ChatScreen() {
-  const [messages, setMessages] = useState(INITIAL);
+  const [messages, setMessages] = useState([GREETING]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const listRef = useRef(null);
+
+  // Reload on every focus: a notification tap lands here, and the message it announced must be
+  // in the list. The newest message is at the bottom, so scroll there once loaded.
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    getMessages()
+      .then(rows => {
+        if (!alive) return;
+        setMessages(rows.length ? toItems(rows) : [GREETING]);
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 50);
+      })
+      .catch(() => {}); // keep whatever is on screen; a transient failure should not blank it
+    return () => { alive = false; };
+  }, []));
 
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
     setInput('');
-    const userMsg = { id: Date.now().toString(), role: 'user', text };
+    const userMsg = { id: Date.now().toString(), role: 'user', kind: 'chat', text, created_at: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     try {
       const d = await chat(text);
-      const bluMsg = { id: (Date.now() + 1).toString(), role: 'blu', text: d.reply || '…' };
+      const bluMsg = { id: (Date.now() + 1).toString(), role: 'blu', kind: 'chat', text: d.reply || '…', created_at: new Date().toISOString() };
       setMessages(prev => [...prev, bluMsg]);
     } catch {
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'blu', text: 'Something went wrong. Try again.' }]);
@@ -37,14 +69,18 @@ export default function ChatScreen() {
 
   const renderItem = ({ item }) => {
     const isUser = item.role === 'user';
+    const proactive = !isUser && item.kind && item.kind !== 'chat';
+    // Each message's own time; the old code rendered new Date() for every message.
+    const time = item.created_at
+      ? new Date(item.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+      : '';
     return (
       <View style={[s.msgWrap, isUser ? s.msgRight : s.msgLeft]}>
-        <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBlu]}>
+        {proactive ? <Text style={s.kindLabel}>{KIND_LABEL[item.kind] || 'Update'}</Text> : null}
+        <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBlu, proactive && s.bubbleProactive]}>
           <Text style={[s.bubbleText, isUser && s.bubbleTextUser]}>{item.text}</Text>
         </View>
-        <Text style={[s.msgTime, isUser && { textAlign: 'right' }]}>
-          {new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-        </Text>
+        {time ? <Text style={[s.msgTime, isUser && { textAlign: 'right' }]}>{time}</Text> : null}
       </View>
     );
   };
@@ -130,6 +166,8 @@ const s = StyleSheet.create({
   bubbleText: { fontSize: 14, ...FONT.medium, color: C.t1, lineHeight: 20 },
   bubbleTextUser: { color: '#000' },
   msgTime: { fontSize: 10, color: C.t3, paddingHorizontal: 2 },
+  kindLabel: { fontSize: 10, ...FONT.bold, color: C.per, letterSpacing: 0.5, textTransform: 'uppercase', paddingHorizontal: 2 },
+  bubbleProactive: { borderColor: C.per },
   typingDots: { flexDirection: 'row', gap: 4, alignItems: 'center', paddingVertical: 4 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.t3 },
   inputBar: {
