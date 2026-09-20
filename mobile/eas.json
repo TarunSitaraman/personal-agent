@@ -1,4 +1,5 @@
 {
+  "cli": { "appVersionSource": "local" },
   "build": {
     "development": {
       "developmentClient": true,
