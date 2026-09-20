@@ -29,3 +29,7 @@ rewrite_docs.js
 .claude-flow/
 *.log
 eval/captured.json
+
+# Firebase config and the FCM service-account key — the repo is public (mobile foundation spec)
+mobile/google-services.json
+*firebase-adminsdk*.json

@@ -3,11 +3,6 @@
     "name": "blu-mobile",
     "slug": "blu-mobile",
     "version": "1.0.0",
-    "extra": {
-      "eas": {
-        "projectId": "blu-mobile-local"
-      }
-    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,6 +10,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.tarunsitaraman.blu",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -24,6 +20,9 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }
