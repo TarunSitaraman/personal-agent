@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { formatTodoReminder, formatEventReminder } = require('../src/scheduler/delivery');
+const { toPushText } = require('../src/push/push');
 
 test('todo reminder carries the content and both action buttons', () => {
   const { text, buttons } = formatTodoReminder({ id: 'abc-123', content: 'buy milk' });
@@ -51,11 +52,13 @@ test('push copy drops the WhatsApp bold markers', () => {
   const now = Date.now();
   const ev = { id: 'e4', title: 'Review', start_at: new Date(now + 10 * 60000).toISOString() };
 
-  const { text, pushText } = formatEventReminder(ev, now);
+  const { text } = formatEventReminder(ev, now);
 
   assert.ok(text.includes('*Review*'), 'WhatsApp copy keeps the emphasis');
-  assert.ok(!pushText.includes('*'), 'push notifications render asterisks literally');
-  assert.ok(pushText.includes('Review'));
+  // The push copy is derived by deliver() (toPushText) rather than carried by the formatter.
+  const pushed = toPushText(text);
+  assert.ok(!pushed.includes('*'), 'push notifications render asterisks literally');
+  assert.ok(pushed.includes('Review'));
 });
 
 test('event time is rendered in IST regardless of server timezone', () => {
