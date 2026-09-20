@@ -1,99 +1,81 @@
-// Never hardcode these. Both were previously literals committed to a public repository — a weak
-// shared token and a Render URL abandoned when the project moved to Vercel — so the credential
-// guarding every dashboard and /api route was readable by anyone, and the app had been pointing at
-// a host that no longer exists. The token has since been rotated.
-//
-// Expo inlines EXPO_PUBLIC_* at build time from mobile/.env, which is gitignored. Note that these
-// end up in the shipped bundle: that is acceptable for a single-user personal app, but it is the
-// reason the token must be rotatable and must never live in git.
-const BASE = process.env.EXPO_PUBLIC_API_BASE;
-const TOKEN = process.env.EXPO_PUBLIC_API_TOKEN;
+// Every request goes to the /dashboard router with the token in an Authorization header — never
+// in the URL, where access logs record it. The token comes from secure storage (./auth), not from
+// the build. EXPO_PUBLIC_API_BASE is only the server address, which is not a secret.
+import { getToken, clearToken } from './auth';
 
-if (!BASE || !TOKEN) {
-  // Fail loudly at import rather than sending unauthenticated requests that 401 one screen at a
-  // time and look like a server problem.
-  throw new Error(
-    'Missing EXPO_PUBLIC_API_BASE or EXPO_PUBLIC_API_TOKEN. Copy mobile/.env.example to ' +
-    'mobile/.env and fill both in, then restart the Expo dev server.'
-  );
+const BASE = process.env.EXPO_PUBLIC_API_BASE;
+
+if (!BASE) {
+  // Fail loudly at import rather than sending requests to "undefined/dashboard/..." that look
+  // like a server problem. Set it in mobile/.env locally; eas.json sets it for cloud builds.
+  throw new Error('Missing EXPO_PUBLIC_API_BASE. Set it in mobile/.env (see mobile/.env.example).');
 }
 
-// Dashboard endpoints (existing screens use these)
-const api = (path) => `${BASE}${path}?token=${TOKEN}`;
-// New /api/* endpoints use Bearer auth
-const authHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
+// `token` is passed explicitly only when checking a candidate on the token screen; then a 401
+// just means "wrong token" and must not sign anyone out.
+async function request(path, { method = 'GET', body, token } = {}) {
+  const t = token || await getToken();
+  const r = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(t ? { Authorization: `Bearer ${t}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401 && !token) {
+    await clearToken();
+    throw new Error('Signed out — the token was rejected');
+  }
+  if (!r.ok) throw new Error(`${method} ${path} failed (${r.status})`);
+  return r.json();
+}
+
+const withContext = (path, context) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
+
+export async function verifyToken(token) {
+  return request('/dashboard/api/auth/verify', { token });
+}
 
 export async function getStatus() {
-  const r = await fetch(api('/dashboard/api/status'));
-  if (!r.ok) throw new Error('Failed to fetch status');
-  return r.json();
+  return request('/dashboard/api/status');
 }
 
 export async function getTodos(context = null) {
-  const url = context
-    ? api('/dashboard/api/todos') + `&context=${context}`
-    : api('/dashboard/api/todos');
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Failed to fetch todos');
-  const d = await r.json();
-  if (Array.isArray(d)) return d;
-  return d.pending || [];
+  const d = await request(withContext('/dashboard/api/todos', context));
+  return Array.isArray(d) ? d : (d.pending || []);
 }
 
 export async function completeTodo(content) {
-  const r = await fetch(api('/dashboard/api/complete-todo'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  if (!r.ok) throw new Error('Failed to complete todo');
-  return r.json();
+  return request('/dashboard/api/complete-todo', { method: 'POST', body: { content } });
 }
 
 export async function getEvents(context = null) {
-  const url = context
-    ? api('/dashboard/api/events') + `&context=${context}`
-    : api('/dashboard/api/events');
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Failed to fetch events');
-  return r.json();
+  return request(withContext('/dashboard/api/events', context));
 }
 
 export async function getNotes(context = null) {
-  const url = context
-    ? api('/dashboard/api/notes') + `&context=${context}`
-    : api('/dashboard/api/notes');
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Failed to fetch notes');
-  return r.json();
+  return request(withContext('/dashboard/api/notes', context));
 }
 
 export async function getLearnings() {
-  const r = await fetch(api('/dashboard/api/learnings'));
-  if (!r.ok) throw new Error('Failed to fetch learnings');
-  return r.json();
+  return request('/dashboard/api/learnings');
 }
 
-// Chat via the new /api/chat endpoint
 export async function chat(message) {
-  const r = await fetch(`${BASE}/api/chat`, {
-    method: 'POST',
-    headers: authHeaders,
-    body: JSON.stringify({ message }),
-  });
-  if (!r.ok) throw new Error('Failed to send message');
-  return r.json();
+  return request('/dashboard/chat', { method: 'POST', body: { message } });
 }
 
-// Register this device's Expo push token with the server
+// The chat thread, newest first: conversation plus proactive messages (briefs, reminders…).
+export async function getMessages(before = null) {
+  const d = await request(before
+    ? `/dashboard/api/messages?before=${encodeURIComponent(before)}`
+    : '/dashboard/api/messages');
+  return d.messages || [];
+}
+
 export async function registerPushToken(token) {
-  const r = await fetch(`${BASE}/api/push/register`, {
-    method: 'POST',
-    headers: authHeaders,
-    body: JSON.stringify({ token }),
-  });
-  if (!r.ok) throw new Error('Failed to register push token');
-  return r.json();
+  return request('/dashboard/api/push/register', { method: 'POST', body: { token } });
 }
 
 export const CTX_COLOR = {

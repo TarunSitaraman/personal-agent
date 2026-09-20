@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
@@ -18,6 +18,8 @@ import NotesScreen from './screens/NotesScreen';
 import PetScreen from './screens/PetScreen';
 import { C } from './theme';
 import { registerPushToken } from './api';
+import TokenScreen from './screens/TokenScreen';
+import { getToken, onSignedOut } from './auth';
 
 // Show notifications as banners even when the app is foregrounded
 Notifications.setNotificationHandler({
@@ -84,11 +86,18 @@ function TabIcon({ label, focused }) {
 }
 
 export default function App() {
+  // 'loading' until secure storage is read; the token screen until a valid token is stored.
+  const [authState, setAuthState] = useState('loading');
+
+  useEffect(() => {
+    getToken().then(t => setAuthState(t ? 'signedIn' : 'signedOut'));
+    return onSignedOut(() => setAuthState('signedOut'));
+  }, []);
+
   const notifListener = useRef();
   const responseListener = useRef();
 
   useEffect(() => {
-    setupPushNotifications();
 
     // Log foreground notifications (screens can add their own handlers later)
     notifListener.current = Notifications.addNotificationReceivedListener(n => {
@@ -107,6 +116,16 @@ export default function App() {
       Notifications.removeNotificationSubscription(responseListener.current);
     };
   }, []);
+
+  if (authState === 'loading') return null;
+  if (authState === 'signedOut') {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <TokenScreen onSignedIn={() => setAuthState('signedIn')} />
+      </SafeAreaProvider>
+    );
+  }
 
   return (
     <SafeAreaProvider>
