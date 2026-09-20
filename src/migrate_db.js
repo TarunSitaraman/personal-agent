@@ -201,10 +201,29 @@ const { rows: seeded } = await pool.query(
     `);
     console.log('✔ classifier_corrections table and index created/verified');
 
+    // 11c. Proactive messages as delivered — briefs, reminders, nudges — so the app can show them
+    // in its chat thread whichever channel carried them. Created before the OWNED loop for the same
+    // reason as 11b: that loop ALTERs every owned table. Kept out of `conversations` on purpose:
+    // the classifier reads the last three rows there, and a long brief in that window would change
+    // how the next message is classified.
+    // See docs/superpowers/specs/2026-09-19-mobile-foundation-design.md.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS inbox_messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        kind TEXT NOT NULL,
+        title TEXT,
+        body TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_inbox_created ON inbox_messages (created_at DESC);
+    `);
+    console.log('✔ inbox_messages table and index created/verified');
+
      const OWNED = ['todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
                    'conversations', 'state', 'skills', 'user_insights',
                    'pending_messages', 'entity_links', 'reminders',
-                   'classifier_corrections'];
+                   'classifier_corrections', 'inbox_messages'];
 
     for (const table of OWNED) {
       await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES users(id)`);

@@ -23,6 +23,7 @@ const OWNED = [
   'todos', 'notes', 'events', 'learnings', 'knowledge', 'goals',
   'conversations', 'state', 'skills', 'user_insights',
   'pending_messages', 'entity_links', 'reminders', 'classifier_corrections',
+  'inbox_messages',
 ];
 
 // Pulls the SQL-looking string literals out of the source: backtick templates, single-quoted and
