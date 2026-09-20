@@ -23,6 +23,12 @@
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c8781f24-c2b4-4d05-8ffa-11077893c4cc"
+      }
+    },
+    "owner": "tarunsitaraman"
   }
 }
