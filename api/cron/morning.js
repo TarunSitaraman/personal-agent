@@ -1,8 +1,7 @@
 require('dotenv').config();
-const { forEachUser, currentNumber } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const { generateStandup, generateStaleAlert } = require('../../src/agent/brain');
-const { sendMessage, sendButtonMessage } = require('../../src/whatsapp/send');
-const { sendBriefPush } = require('../../src/push/push');
+const { deliver } = require('../../src/scheduler/delivery');
 const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
@@ -29,14 +28,12 @@ const run = async (user, query) => {
   const skip = localTimeSkip(query, user, 9, { weekdaysOnly: true });
   if (skip) return skip;
 
-  const myNumber = currentNumber();
   const results = [];
 
   try {
     const standup = await generateStandup("generic");
-    await sendMessage(myNumber, standup);
-    await sendBriefPush('Morning Brief', 'Your day starts now. Tap to see context.');
-    results.push(`${user.wa_number}: morning brief sent`);
+    const channel = await deliver({ kind: 'brief', text: standup });
+    results.push(`${user.wa_number}: morning brief → ${channel}`);
   } catch (err) {
     console.error('Morning brief error:', err.message);
     results.push(`${user.wa_number}: morning brief failed: ${err.message}`);
@@ -45,11 +42,14 @@ const run = async (user, query) => {
   try {
     const alert = await generateStaleAlert();
     if (alert) {
-      await sendButtonMessage(myNumber, alert, [
-        { id: 'stale_snooze', title: 'Snooze 2 days' },
-        { id: 'stale_dismiss', title: 'Dismiss' },
-      ]);
-      results.push(`${user.wa_number}: stale alert sent`);
+      const channel = await deliver({
+        kind: 'nudge', title: 'Stale todos', text: alert,
+        whatsapp: { text: alert, buttons: [
+          { id: 'stale_snooze', title: 'Snooze 2 days' },
+          { id: 'stale_dismiss', title: 'Dismiss' },
+        ] },
+      });
+      results.push(`${user.wa_number}: stale alert → ${channel}`);
     }
   } catch (err) {
     console.error('Stale alert error:', err.message);

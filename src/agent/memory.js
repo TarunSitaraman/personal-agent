@@ -1148,6 +1148,37 @@ async function markCorrectionsExported(ids) {
   );
 }
 
+// Proactive messages from the agent, as delivered. The app's chat thread reads these alongside
+// `conversations`. See migrate_db.js step 11c for why they are not in `conversations`.
+async function saveInboxMessage({ kind, title = null, body, channel }) {
+  await pool.query(
+    `INSERT INTO inbox_messages (kind, title, body, channel, user_id) VALUES ($1, $2, $3, $4, $5)`,
+    [kind, title, body, channel, currentUserId()]
+  );
+}
+
+// The chat thread, newest first: the user's messages and the agent's replies, plus proactive
+// messages. `before` (ISO string or null) pages backwards; the caller clamps `limit`
+// (src/agent/thread.js). "sender", not "from": FROM is reserved in SQL.
+async function getThread(before, limit) {
+  const { rows } = await pool.query(
+    `SELECT id, sender, kind, text, created_at FROM (
+       SELECT id, CASE WHEN role = 'user' THEN 'me' ELSE 'agent' END AS sender,
+              'chat' AS kind, content AS text, created_at
+         FROM conversations
+        WHERE user_id = $1 AND ($2::timestamptz IS NULL OR created_at < $2::timestamptz)
+       UNION ALL
+       SELECT id, 'agent' AS sender, kind, body AS text, created_at
+         FROM inbox_messages
+        WHERE user_id = $1 AND ($2::timestamptz IS NULL OR created_at < $2::timestamptz)
+     ) thread
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [currentUserId(), before, limit]
+  );
+  return rows.map(r => ({ id: r.id, from: r.sender, kind: r.kind, text: r.text, created_at: r.created_at }));
+}
+
 // Escape hatch for one-off maintenance scripts. Not for application code — use a named
 // function so the query lives next to the schema it depends on.
 async function rawQuery(text, params = []) {
@@ -1322,6 +1353,7 @@ async function recordItemEvent(itemId, eventType, snapshot, diffSummary) {
   reviewLearning, getDueLearnings,
   updateNoteContent, saveState, getState, deleteState,
   recordCorrection, getUnexportedCorrections, markCorrectionsExported,
+  saveInboxMessage, getThread,
   getOldNotes, getConversationsLastWeek,
   rawQuery,
 

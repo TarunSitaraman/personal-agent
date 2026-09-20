@@ -1,7 +1,7 @@
 require('dotenv').config();
-const { forEachUser, currentNumber } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const { generateTechPulse } = require('../../src/agent/brain');
-const { sendMessage } = require('../../src/whatsapp/send');
+const { deliver } = require('../../src/scheduler/delivery');
 const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
@@ -31,6 +31,6 @@ const run = async (user, query) => {
   const pulse = await generateTechPulse();
   if (!pulse) return `${user.wa_number}: no pulse today`;
 
-  await sendMessage(currentNumber(), pulse);
-  return `${user.wa_number}: pulse sent`;
+  const channel = await deliver({ kind: 'pulse', text: pulse });
+  return `${user.wa_number}: pulse → ${channel}`;
 };

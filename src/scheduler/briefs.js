@@ -1,11 +1,10 @@
 const cron = require('node-cron');
 const { generateStandup, generateProactiveNudge, generateStaleAlert, generateWeeklyReview, generateTechPulse } = require('../agent/brain');
-const { sendMessage, sendButtonMessage, sendListMessage } = require('../whatsapp/send');
-const { sendBriefPush, sendNudgePush } = require('../push/push');
+const { sendListMessage } = require('../whatsapp/send');
 const memory = require('../agent/memory');
 const timers = require('./timers');
-const { sweepDueReminders } = require('./delivery');
-const { withOwner, forEachUser, currentNumber } = require('../agent/context');
+const { sweepDueReminders, deliver } = require('./delivery');
+const { withOwner, forEachUser } = require('../agent/context');
 
 // Two registration helpers, because the jobs split into two kinds.
 //
@@ -28,8 +27,7 @@ function startScheduler() {
   scheduleForEachUser('0 9 * * 1-5', async () => {
     try {
       const standup = await generateStandup("generic");
-      await sendMessage(currentNumber(), standup);
-      await sendBriefPush('Morning Brief', 'Your day starts now. Tap to see context.');
+      await deliver({ kind: 'brief', text: standup });
     } catch (err) {
       console.error('Morning brief error:', err.message);
     }
@@ -39,14 +37,15 @@ function startScheduler() {
   scheduleForEachUser('0 18 * * *', async () => {
     try {
       const standup = await generateStandup("generic");
-      await sendMessage(currentNumber(), standup);
-      // Follow up with a goal-setting nudge after the brief arrives
-      setTimeout(async () => {
-        await sendButtonMessage(currentNumber(), "What's the *One Big Thing* you want to move tonight?", [
+      await deliver({ kind: 'evening', text: standup });
+      const obt = "What's the *One Big Thing* you want to move tonight?";
+      await deliver({
+        kind: 'evening', title: 'One Big Thing', text: obt,
+        whatsapp: { text: obt, buttons: [
           { id: 'obt_set', title: "Set it now" },
           { id: 'obt_skip', title: "Skip tonight" },
-        ]);
-      }, 1500);
+        ] },
+      });
     } catch (err) {
       console.error('Evening brief error:', err.message);
     }
@@ -104,10 +103,13 @@ function startScheduler() {
     try {
       const alert = await generateStaleAlert();
       if (alert) {
-        await sendButtonMessage(currentNumber(), alert, [
-          { id: 'stale_snooze', title: 'Snooze 2 days' },
-          { id: 'stale_dismiss', title: 'Dismiss' },
-        ]);
+        await deliver({
+          kind: 'nudge', title: 'Stale todos', text: alert,
+          whatsapp: { text: alert, buttons: [
+            { id: 'stale_snooze', title: 'Snooze 2 days' },
+            { id: 'stale_dismiss', title: 'Dismiss' },
+          ] },
+        });
       }
     } catch (err) {
       console.error('Stale alert error:', err.message);
@@ -119,7 +121,7 @@ function startScheduler() {
     try {
       await memory.trimConversations(200);
       const review = await generateWeeklyReview();
-      await sendMessage(currentNumber(), review);
+      await deliver({ kind: 'weekly', text: review });
     } catch (err) {
       console.error('Weekly review error:', err.message);
     }
@@ -130,9 +132,7 @@ function startScheduler() {
     try {
       const nudge = await generateProactiveNudge();
       if (nudge) {
-        await sendMessage(currentNumber(), nudge);
-        // Push a short version (notifications have limited space)
-        await sendNudgePush(nudge.slice(0, 120));
+        await deliver({ kind: 'nudge', text: nudge });
       }
     } catch (err) {
       console.error('Proactive nudge error:', err.message);
@@ -143,7 +143,7 @@ function startScheduler() {
   scheduleForEachUser('0 10 * * 0', async () => {
     try {
       const pulse = await generateTechPulse();
-      if (pulse) await sendMessage(currentNumber(), pulse);
+      if (pulse) await deliver({ kind: 'pulse', text: pulse });
     } catch (err) {
       console.error('Tech Pulse error:', err.message);
     }
@@ -154,7 +154,7 @@ function startScheduler() {
     try {
       const pendingGoal = await memory.getPendingGoal();
       if (pendingGoal) {
-        await sendMessage(currentNumber(), `Hermes checking in: How's progress on the **One Big Thing**? (*${pendingGoal.content}*). Almost there?`);
+        await deliver({ kind: 'goal', text: `Hermes checking in: How's progress on the **One Big Thing**? (*${pendingGoal.content}*). Almost there?` });
       }
     } catch (err) {
       console.error('Goal nudge error:', err.message);

@@ -1,7 +1,8 @@
 const express = require('express');
-const { runAsUser } = require('../agent/context');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, getUserByDashboardToken } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, savePushToken, getThread } = require('../agent/memory');
+const { isExpoPushToken, sendPush } = require('../push/push');
+const { parseThreadQuery } = require('../agent/thread');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
@@ -9,20 +10,12 @@ const { occurrencesBetween } = require('../agent/recurrence');
 
 const router = express.Router();
 
-// Resolve the authenticated user from the dashboard token query param.
-// Replaces the shared DASHBOARD_TOKEN — each user has their own token stored in the database.
-function tokenMiddleware(req, res, next) {
-   const token = req.query.token;
-   if (!token) return res.status(401).send('Unauthorized');
-   getUserByDashboardToken(token).then(user => {
-     if (!user) return res.status(401).send('Unauthorized');
-     req.user = user;
-     runAsUser(user, () => next());
-   }).catch(next);
-}
+// Per-user dashboard token, from the Authorization header (the app) or ?token= (the web
+// dashboard, which navigates by URL). One implementation, shared: src/agent/dashboardAuth.js.
+const { dashboardTokenMiddleware } = require('../agent/dashboardAuth');
 
 // Every route below reads or writes one person's data, so the whole router runs in scope.
-router.use(tokenMiddleware);
+router.use(dashboardTokenMiddleware);
 
 // Calendar expansion for a month view: day-of-month (1-31) → events on that day.
 //
@@ -194,6 +187,47 @@ router.get('/api/auth/verify', (req, res) => {
     return res.json({ ok: true, name: 'Tarun' });
   }
   res.status(401).json({ ok: false });
+});
+
+// ── The mobile app ───────────────────────────────────────────────────────────
+// These live on this router, not under api/, because Vercel serves this Express app as one
+// function: routes here cost no slot under the 12-function cap. Auth is the router-wide
+// dashboardTokenMiddleware. See docs/superpowers/specs/2026-09-19-mobile-foundation-design.md.
+
+// Registers this device for push. Only Expo tokens are accepted: a raw FCM token can never be
+// delivered through Expo's push service, which is what the app used to fall back to.
+router.post('/api/push/register', express.json(), async (req, res) => {
+  const token = req.body?.token;
+  if (!isExpoPushToken(token)) return res.status(400).json({ error: 'An Expo push token is required' });
+  try {
+    await savePushToken(token);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Push register error:', err.message);
+    res.status(500).json({ error: 'Failed to register' });
+  }
+});
+
+// Sends a test notification to the caller's devices and reports the outcome. Deliberately not
+// via deliver(): a setup check must not quietly fall back to WhatsApp.
+router.post('/api/push/test', async (req, res) => {
+  try {
+    res.json(await sendPush('Blu', 'Push notifications are working.', { type: 'test' }));
+  } catch (err) {
+    console.error('Push test error:', err.message);
+    res.status(500).json({ error: 'Failed to send' });
+  }
+});
+
+// The chat thread: conversation plus proactive messages, newest first.
+router.get('/api/messages', async (req, res) => {
+  const { before, limit } = parseThreadQuery(req.query);
+  try {
+    res.json({ messages: await getThread(before, limit) });
+  } catch (err) {
+    console.error('Thread error:', err.message);
+    res.status(500).json({ error: 'Failed to load messages' });
+  }
 });
 
 // Chat — image upload (base64)

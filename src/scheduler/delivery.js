@@ -14,9 +14,67 @@
 // and a sweep racing the same row still send once.
 
 const memory = require('../agent/memory');
-const { sendButtonMessage } = require('../whatsapp/send');
-const { sendReminderPush, sendNudgePush } = require('../push/push');
+// Module objects, not destructured, so tests can substitute them (see src/whatsapp/buttons.js).
+const send = require('../whatsapp/send');
+const push = require('../push/push');
 const { currentNumber } = require('../agent/context');
+
+// The app creates these Android channels (mobile/App.js); a missing one falls back to 'default'.
+const PUSH_CHANNEL = {
+  reminder: 'reminders', event: 'reminders',
+  brief: 'briefs', evening: 'briefs', pulse: 'briefs', weekly: 'briefs',
+  nudge: 'nudges', goal: 'nudges',
+};
+const PUSH_TITLE = {
+  reminder: 'Reminder', event: 'Starting soon', brief: 'Morning brief', evening: 'Evening brief',
+  nudge: 'Blu', goal: 'One Big Thing', pulse: 'Tech pulse', weekly: 'Weekly review',
+};
+
+// Push when a registered device accepted it, otherwise WhatsApp. `attempted` is how many valid
+// tokens the user had; zero accepted covers every token being dead as well as a failed request.
+function chooseChannel(pushResult) {
+  if (!pushResult || !pushResult.attempted) return 'whatsapp';
+  if (pushResult.failed || pushResult.accepted === 0) return 'whatsapp';
+  return 'push';
+}
+
+// Every proactive message goes through here: the app first, WhatsApp as the fallback, and the
+// inbox always — written after sending, so it records the channel that actually delivered and a
+// failed write can never delay a notification. Runs inside a user scope.
+// See docs/superpowers/specs/2026-09-19-mobile-foundation-design.md.
+async function deliver({ kind, title = null, text, whatsapp = null }) {
+  const pushTitle = title || PUSH_TITLE[kind] || 'Blu';
+
+  const pushResult = await push.sendPush(pushTitle, push.toPushText(text), {
+    type: kind,
+    channelId: PUSH_CHANNEL[kind] || 'default',
+  }).catch(err => {
+    console.error(`[Deliver] ${kind}: push threw:`, err.message);
+    return { attempted: 0, accepted: 0, deadTokens: [], failed: true };
+  });
+
+  for (const token of pushResult.deadTokens) {
+    await memory.removePushToken(token)
+      .catch(err => console.error('[Deliver] token prune failed:', err.message));
+  }
+
+  let channel = chooseChannel(pushResult);
+  if (channel === 'whatsapp') {
+    const wa = whatsapp || { text };
+    try {
+      if (wa.buttons?.length) await send.sendButtonMessage(currentNumber(), wa.text, wa.buttons);
+      else await send.sendMessage(currentNumber(), wa.text);
+    } catch (err) {
+      console.error(`[Deliver] ${kind}: no push and WhatsApp failed:`, err.message);
+      channel = 'failed';
+    }
+  }
+
+  await memory.saveInboxMessage({ kind, title: pushTitle, body: push.stripWhatsAppMarkup(text), channel })
+    .catch(err => console.error('[Deliver] inbox write failed:', err.message));
+
+  return channel;
+}
 
 // Formatting is kept pure and separate from sending so it can be asserted on directly.
 function formatTodoReminder(todo) {
@@ -34,8 +92,6 @@ function formatEventReminder(ev, now = Date.now()) {
   const minsAway = Math.max(1, Math.round((new Date(ev.start_at) - now) / 60000));
   return {
     text: `Starting in ${minsAway} min: *${ev.title}* at ${timeStr}`,
-    // The push copy drops the WhatsApp bold markers, which would render literally.
-    pushText: `Starting in ${minsAway} min: ${ev.title} at ${timeStr}`,
     buttons: [
       { id: `evnoted_${ev.id}`, title: 'Noted' },
       { id: `evsnooze_${ev.id}`, title: '+15 min' },
@@ -45,14 +101,12 @@ function formatEventReminder(ev, now = Date.now()) {
 
 async function deliverTodoReminder(todo) {
   const { text, buttons } = formatTodoReminder(todo);
-  await sendButtonMessage(currentNumber(), text, buttons);
-  await sendReminderPush(todo.id, todo.content);
+  return deliver({ kind: 'reminder', text, whatsapp: { text, buttons } });
 }
 
 async function deliverEventReminder(ev) {
-  const { text, pushText, buttons } = formatEventReminder(ev);
-  await sendButtonMessage(currentNumber(), text, buttons);
-  await sendNudgePush(pushText);
+  const { text, buttons } = formatEventReminder(ev);
+  return deliver({ kind: 'event', text, whatsapp: { text, buttons } });
 }
 
 // Catch-up path: delivers anything already overdue — reminders whose moment passed while the
@@ -93,4 +147,6 @@ module.exports = {
   deliverTodoReminder,
   deliverEventReminder,
   sweepDueReminders,
+  deliver,
+  chooseChannel,
 };

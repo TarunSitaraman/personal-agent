@@ -1,7 +1,7 @@
 require('dotenv').config();
-const { forEachUser, currentNumber } = require('../../src/agent/context');
+const { forEachUser } = require('../../src/agent/context');
 const memory = require('../../src/agent/memory');
-const { sendMessage } = require('../../src/whatsapp/send');
+const { deliver } = require('../../src/scheduler/delivery');
 const { localTimeSkip } = require('../../src/scheduler/briefTiming');
 
 function auth(req) {
@@ -31,9 +31,9 @@ const run = async (user, query) => {
   const pendingGoal = await memory.getPendingGoal();
   if (!pendingGoal) return `${user.wa_number}: no goal pending`;
 
-  await sendMessage(
-    currentNumber(),
-    `Hermes checking in: How's progress on the *One Big Thing*? (*${pendingGoal.content}*). Almost there?`
-  );
-  return `${user.wa_number}: goal nudge sent`;
+  const channel = await deliver({
+    kind: 'goal',
+    text: `Hermes checking in: How's progress on the *One Big Thing*? (*${pendingGoal.content}*). Almost there?`,
+  });
+  return `${user.wa_number}: goal nudge → ${channel}`;
 };
