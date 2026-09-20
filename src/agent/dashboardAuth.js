@@ -38,4 +38,19 @@ function withDashboardUser(handler) {
   };
 }
 
-module.exports = { withDashboardUser, tokenFrom };
+// Express middleware for the /dashboard router, using the same token rules as withDashboardUser.
+// One implementation of "which token is this request carrying", so the router and the handlers
+// cannot drift apart the way api/todos.js and api/chat.js did from it. Answers with the router's
+// existing plain-text 401, and calls next() inside the user's scope so every downstream handler
+// inherits it. Returns the promise so tests can await it; Express ignores the return value.
+function dashboardTokenMiddleware(req, res, next) {
+  const token = tokenFrom(req);
+  if (!token) return res.status(401).send('Unauthorized');
+  return memory.getUserByDashboardToken(token).then(user => {
+    if (!user) return res.status(401).send('Unauthorized');
+    req.user = user;
+    return runAsUser(user, () => next());
+  }).catch(next);
+}
+
+module.exports = { withDashboardUser, tokenFrom, dashboardTokenMiddleware };
