@@ -4,6 +4,7 @@ const { getOpenPRs, getOpenPRsDetailed, getRecentCommits, getOpenIssues } = requ
 const { extractGithubSnapshot, diffSnapshot, shouldSurface } = require("./itemTracking");
 const { detectFromAction, detectFromClarification } = require("./corrections");
 const { withIncomingMessage, currentIncomingMessage } = require("./context");
+const { cleanNudge } = require("./nudgeText");
 const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
 const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
@@ -2000,23 +2001,29 @@ async function generateProactiveNudge() {
     memory.getPendingGoal(),
   ]);
 
-  const prompt = `You are Blu, Tarun's Hermes Agent. Analyze his current state and decide if a proactive nudge is needed.
+  const todos = (stats.pendingTodos || []).map(t => t.content);
+  // No numbered checklist here: given one, the model walks through it out loud ("No One Big Thing
+  // pending, so skip that.") and that narration went out as the message. cleanNudge() strips any
+  // that still slips through.
+  const prompt = `You are Blu, Tarun's personal agent. It is evening. You may send him ONE short nudge, or nothing.
 
-Priority 1 (Goal Check): If there is a pending "One Big Thing", nudge him about it if it's late evening.
-Priority 2 (Automation): Look at his behavioural insights and recent tasks. Suggest ONE specific thing he could automate or a tool/skill I could learn to help him.
-Priority 3 (General): Only if the above aren't urgent, mention a blocker or a stale item.
+Send a nudge only if one of these is true, in this order of importance:
+- He has an unfinished One Big Thing for today.
+- A specific todo or PR below has clearly stalled and a concrete next step would help.
+- The insights show a task he repeats by hand that a specific automation would remove. Name the task. Never suggest an automation that isn't tied to something he actually does.
 
-Data:
-- Pending "One Big Thing": ${pendingGoal ? pendingGoal.content : 'none'}
-- Recent Insights: ${insights.join(', ') || 'none'}
+What you know:
+- One Big Thing: ${pendingGoal ? pendingGoal.content : 'none'}
+- Open todos (${todos.length}): ${todos.join('; ') || 'none'}
 - Open PRs: ${openPRs.join(', ') || 'none'}
-- Stats: ${(stats.pendingTodos || []).length} tasks pending.
+- Behavioural insights: ${insights.join(', ') || 'none'}
 
-If nothing truly valuable to say, reply SKIP.
-Tone: Guardian-like, efficiency-obsessed, direct. Under 5 lines. No markdown except *bold*.`;
+If none of those is true, reply with exactly SKIP.
+Otherwise reply with only the message to Tarun — no headings, no labels, no explanation of why you chose it, and never mention what is absent.
+Direct and specific. At most 3 short lines. No markdown except *bold*.`;
 
   const result = await callLLM([{ role: "user", content: prompt }], false, 'background');
-  return result.trim() === 'SKIP' ? null : result;
+  return cleanNudge(result);
 }
 
 async function generateStandup(type) {
