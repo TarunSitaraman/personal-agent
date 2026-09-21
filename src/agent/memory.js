@@ -1070,8 +1070,8 @@ async function reviewLearning(id, gotRight = true) {
      SET reviewed = true,
          last_reviewed_at = NOW(),
          review_count = $2 + 1,
-         interval_days = $3,
-         next_review_at = NOW() + ($3 || ' days')::interval
+         interval_days = $3::int,
+         next_review_at = NOW() + make_interval(days => $3::int)
      WHERE id = $1 AND user_id = $4`,
     [id, currentCount, nextInterval, currentUserId()]
   );
