@@ -1,10 +1,13 @@
 // Time phrasing for the Now screen. Device-local time; the phone is where you are.
 const pad = n => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const LONG_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export function clock(d) {
   const h = d.getHours() % 12 || 12;
-  return `${h}:${pad(d.getMinutes())} ${d.getHours() < 12 ? 'am' : 'pm'}`;
+  return `${h}:${pad(d.getMinutes())} ${d.getHours() < 12 ? 'AM' : 'PM'}`;
 }
 
 function dayDiff(a, b) {
@@ -13,14 +16,14 @@ function dayDiff(a, b) {
   return Math.round((db - da) / 86400000);
 }
 
-// "6:30 pm", "Tomorrow 9:00 am", "Wed 24 · 9:00 am"
+// "6:30 PM", "Tomorrow, 9:00 AM", "Wed 24 Sep, 9:00 AM"
 export function when(iso, now = new Date()) {
   const d = new Date(iso);
   const diff = dayDiff(now, d);
   if (diff === 0) return clock(d);
-  if (diff === 1) return `Tomorrow ${clock(d)}`;
-  if (diff === -1) return `Yesterday ${clock(d)}`;
-  return `${DAYS[d.getDay()]} ${d.getDate()} · ${clock(d)}`;
+  if (diff === 1) return `Tomorrow, ${clock(d)}`;
+  if (diff === -1) return `Yesterday, ${clock(d)}`;
+  return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${clock(d)}`;
 }
 
 // "in 40 min", "in 2 h", "now", "20 min ago" — only for the next few hours, else null.
@@ -58,4 +61,18 @@ export function restates(a = '', b = '') {
   let shared = 0;
   A.forEach(w => { if (B.has(w)) shared += 1; });
   return shared / A.size >= 0.6;
+}
+
+// "Tuesday, 23 September" — the date line above the large title.
+export function longDate(d) {
+  return `${LONG_DAYS[d.getDay()]}, ${d.getDate()} ${LONG_MONTHS[d.getMonth()]}`;
+}
+
+// Section title for a day in a list: "Today", "Tomorrow", "Wednesday, 24 September".
+export function dayTitle(iso, now = new Date()) {
+  const d = new Date(iso);
+  const diff = dayDiff(now, d);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  return longDate(d);
 }

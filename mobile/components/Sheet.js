@@ -1,17 +1,17 @@
-// Bottom sheet over the sky: springs up, drag the handle down (or tap outside, or Back) to close.
-// Rendered in the root view rather than a Modal, so the live sky stays visible behind it.
+// An iOS-style page sheet: rises over a dimmed screen, grabber on top, drag down (or tap outside,
+// or Back) to close. Rendered in the root view rather than a Modal so the sky stays behind it.
 import React, { useEffect, useState } from 'react';
 import { View, Pressable, StyleSheet, useWindowDimensions, BackHandler } from 'react-native';
 import Animated, {
   useSharedValue, useAnimatedStyle, withSpring, withTiming, interpolate, runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Glass from './Glass';
-import { C } from '../theme';
+import { SheetHeader } from './ui';
+import { C, RADIUS } from '../theme';
 
-const SPRING = { damping: 24, stiffness: 240, mass: 0.9 };
+const SPRING = { damping: 26, stiffness: 260, mass: 0.9 };
 
-export default function Sheet({ open, onClose, heightRatio = 0.88, children }) {
+export default function Sheet({ open, onClose, title, heightRatio = 0.9, children }) {
   const { height: H } = useWindowDimensions();
   const h = Math.round(H * heightRatio);
   const y = useSharedValue(h);
@@ -22,7 +22,7 @@ export default function Sheet({ open, onClose, heightRatio = 0.88, children }) {
       setMounted(true);
       y.value = withSpring(0, SPRING);
     } else {
-      y.value = withTiming(h, { duration: 220 }, done => { if (done) runOnJS(setMounted)(false); });
+      y.value = withTiming(h, { duration: 230 }, done => { if (done) runOnJS(setMounted)(false); });
     }
   }, [open, h]);
 
@@ -35,7 +35,7 @@ export default function Sheet({ open, onClose, heightRatio = 0.88, children }) {
   const drag = Gesture.Pan()
     .onUpdate(e => { y.value = Math.max(0, e.translationY); })
     .onEnd(e => {
-      if (e.translationY > h * 0.22 || e.velocityY > 900) runOnJS(onClose)();
+      if (e.translationY > h * 0.2 || e.velocityY > 900) runOnJS(onClose)();
       else y.value = withSpring(0, SPRING);
     });
 
@@ -49,9 +49,11 @@ export default function Sheet({ open, onClose, heightRatio = 0.88, children }) {
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View style={[s.sheet, { height: h }, sheetStyle]}>
-        <Glass radius={30} tint={C.glassStrong} style={StyleSheet.absoluteFill} />
         <GestureDetector gesture={drag}>
-          <View style={s.handleZone}><View style={s.handle} /></View>
+          <View>
+            <View style={s.grabberZone}><View style={s.grabber} /></View>
+            {title ? <SheetHeader title={title} onDone={onClose} /> : null}
+          </View>
         </GestureDetector>
         <View style={{ flex: 1 }}>{children}</View>
       </Animated.View>
@@ -60,8 +62,11 @@ export default function Sheet({ open, onClose, heightRatio = 0.88, children }) {
 }
 
 const s = StyleSheet.create({
-  backdrop: { backgroundColor: 'rgba(2,4,12,0.45)' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 30, borderTopRightRadius: 30, overflow: 'hidden' },
-  handleZone: { alignItems: 'center', paddingTop: 10, paddingBottom: 8 },
-  handle: { width: 38, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.28)' },
+  backdrop: { backgroundColor: 'rgba(0,0,0,0.45)' },
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: C.sheet,
+    borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, overflow: 'hidden',
+  },
+  grabberZone: { alignItems: 'center', paddingTop: 6, paddingBottom: 2 },
+  grabber: { width: 36, height: 5, borderRadius: 3, backgroundColor: 'rgba(235,235,245,0.3)' },
 });

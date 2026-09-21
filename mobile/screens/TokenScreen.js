@@ -1,21 +1,21 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, StyleSheet, ActivityIndicator } from 'react-native';
 import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Glass from '../components/Glass';
+import { Button } from '../components/ui';
 import { verifyToken } from '../api';
 import { setToken } from '../auth';
-import { C, F } from '../theme';
+import { C, T, RADIUS } from '../theme';
 
-// First launch, and whenever the server rejects the stored token. The token is checked against
-// the server before it is stored, so a typo never gets saved.
+// First launch, and whenever the server rejects the stored key. The key is checked against the
+// server before it is stored, so a typo never gets saved.
 export default function TokenScreen({ onSignedIn }) {
   const insets = useSafeAreaInsets();
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const keyboard = useAnimatedKeyboard();
-  const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(keyboard.height.value, insets.bottom) + 24 }));
+  const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(keyboard.height.value, insets.bottom) + 20 }));
 
   const connect = async () => {
     const token = value.trim();
@@ -33,42 +33,42 @@ export default function TokenScreen({ onSignedIn }) {
     }
   };
 
-  const ready = value.trim() && !busy;
   return (
-    <Animated.View style={[s.root, { paddingTop: insets.top + 80 }, lift]}>
+    <Animated.View style={[s.root, { paddingTop: insets.top + 72 }, lift]}>
       <View>
-        <Text style={s.title}>Blu</Text>
-        <Text style={s.hint}>Paste your key to connect. It stays encrypted on this phone.</Text>
+        <Text style={T.largeTitle}>Welcome to Blu</Text>
+        <Text style={[T.body, { color: C.label2, marginTop: 10 }]}>
+          Enter your key to connect this phone. It's stored encrypted on the device.
+        </Text>
       </View>
-      <View style={{ gap: 12 }}>
-        <Glass radius={20} blur={false}>
+      <View>
+        <View style={s.field}>
           <TextInput
             style={s.input}
             value={value}
             onChangeText={setValue}
             placeholder="Key"
-            placeholderTextColor={C.text3}
+            placeholderTextColor={C.label3}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
             onSubmitEditing={connect}
           />
-        </Glass>
-        {error ? <Text style={s.error}>{error}</Text> : null}
-        <Pressable onPress={connect} disabled={!ready} style={[s.btn, !ready && { opacity: 0.4 }]}>
-          {busy ? <ActivityIndicator color={C.ink} /> : <Text style={s.btnText}>Connect</Text>}
-        </Pressable>
+        </View>
+        {error ? <Text style={[T.footnote, { color: C.red, marginTop: 8, paddingHorizontal: 4 }]}>{error}</Text> : null}
+        <View style={{ marginTop: 16 }}>
+          {busy
+            ? <View style={s.busy}><ActivityIndicator color="#fff" /></View>
+            : <Button title="Continue" size="large" onPress={connect} disabled={!value.trim()} />}
+        </View>
       </View>
     </Animated.View>
   );
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, paddingHorizontal: 24, justifyContent: 'space-between' },
-  title: { ...F.bold, fontSize: 56, color: C.text, letterSpacing: -2 },
-  hint: { ...F.bold, fontSize: 17, lineHeight: 24, color: C.text2, marginTop: 12, maxWidth: 300 },
-  input: { paddingHorizontal: 20, paddingVertical: 17, color: C.text, fontSize: 16, ...F.bold },
-  error: { ...F.bold, fontSize: 14, color: C.danger },
-  btn: { backgroundColor: C.accent, borderRadius: 20, paddingVertical: 17, alignItems: 'center' },
-  btnText: { ...F.bold, fontSize: 16, color: C.ink },
+  root: { flex: 1, paddingHorizontal: 20, justifyContent: 'space-between' },
+  field: { backgroundColor: C.cell, borderRadius: RADIUS.cell },
+  input: { height: 50, paddingHorizontal: 16, color: C.label, fontSize: 17, fontFamily: 'Heros-Regular' },
+  busy: { height: 50, borderRadius: RADIUS.button, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center', opacity: 0.7 },
 });

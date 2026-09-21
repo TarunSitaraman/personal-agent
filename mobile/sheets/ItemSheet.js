@@ -1,60 +1,48 @@
-// One todo, event or note, with the actions that make sense for it.
+// One reminder, event or note: the text, its details as a grouped list, then actions as rows —
+// the way iOS presents an item and what you can do with it.
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
+import { Group, Row } from '../components/ui';
 import { when, ago } from '../format';
-import { C, F } from '../theme';
+import { C, T } from '../theme';
 
 export default function ItemSheet({ entry, onDone, onSnooze, onAsk }) {
-  if (!entry) return null;
+  if (!entry || !entry.item) return null;
   const { kind, item } = entry;
   const title = kind === 'event' ? item.title : item.content;
-  const meta = kind === 'event'
-    ? when(item.start_at)
-    : kind === 'todo'
-      ? (item.remind_at ? `Reminder ${when(item.remind_at)}` : `Added ${ago(item.created_at)}`)
-      : `Saved ${ago(item.created_at)}`;
   const tags = Array.isArray(item.tags) ? item.tags.filter(Boolean) : [];
+  const overdue = kind === 'todo' && item.remind_at && new Date(item.remind_at) < new Date();
 
   return (
-    <View style={s.body}>
-      <Text style={s.kind}>{kind === 'todo' ? 'Todo' : kind === 'event' ? 'Event' : 'Note'}</Text>
-      <Text style={[s.title, kind === 'note' && s.noteTitle]}>{title}</Text>
-      <Text style={s.meta}>{meta}</Text>
-      {tags.length ? <Text style={s.tags}>{tags.join('  ·  ')}</Text> : null}
+    <ScrollView contentContainerStyle={s.body}>
+      <Text style={kind === 'note' ? [T.body, { fontSize: 19, lineHeight: 26 }] : T.title2}>{title}</Text>
 
-      <View style={s.actions}>
-        {kind === 'todo' ? (
-          <>
-            <Action label="Done" primary onPress={() => onDone(item)} />
-            <Action label="In 1 hour" onPress={() => onSnooze(item, 'in 1 hour')} />
-            <Action label="Tonight 9pm" onPress={() => onSnooze(item, 'tonight at 9pm')} />
-            <Action label="Tomorrow 8am" onPress={() => onSnooze(item, 'tomorrow at 8am')} />
-          </>
-        ) : null}
-        <Action label="Ask Blu about this" onPress={() => onAsk(title)} />
-      </View>
-    </View>
-  );
-}
+      <Group style={s.group}>
+        {kind === 'event' ? <Row title="Starts" value={when(item.start_at)} /> : null}
+        {kind === 'todo' ? <Row title="Reminder" value={item.remind_at ? when(item.remind_at) : 'None'} /> : null}
+        {kind === 'todo' && overdue ? <Row title="Status" value="Overdue" /> : null}
+        {kind !== 'event' ? <Row title={kind === 'note' ? 'Saved' : 'Added'} value={ago(item.created_at)} /> : null}
+        {tags.length ? <Row title="Tags" value={tags.join(', ')} /> : null}
+      </Group>
 
-function Action({ label, primary, onPress }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [s.action, primary && s.primary, pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] }]}>
-      <Text style={[s.actionText, primary && s.primaryText]}>{label}</Text>
-    </Pressable>
+      {kind === 'todo' ? (
+        <Group style={s.group}>
+          <Row title="Mark as Done" tint onPress={() => onDone(item)} />
+          <Row title="Remind Me in 1 Hour" tint onPress={() => onSnooze(item, 'in 1 hour')} />
+          <Row title="Tonight at 9 PM" tint onPress={() => onSnooze(item, 'tonight at 9pm')} />
+          <Row title="Tomorrow at 8 AM" tint onPress={() => onSnooze(item, 'tomorrow at 8am')} />
+        </Group>
+      ) : null}
+
+      <Group style={s.group}>
+        <Row title="Ask Blu About This" tint onPress={() => onAsk(title)} />
+      </Group>
+    </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
-  body: { paddingHorizontal: 24, paddingTop: 6 },
-  kind: { ...F.bold, fontSize: 13, color: C.accent, marginBottom: 10 },
-  title: { ...F.bold, fontSize: 30, lineHeight: 35, color: C.text, letterSpacing: -0.5 },
-  noteTitle: { ...F.regular, fontSize: 19, lineHeight: 27, letterSpacing: 0 },
-  meta: { ...F.bold, fontSize: 15, color: C.text2, marginTop: 12 },
-  tags: { ...F.bold, fontSize: 13, color: C.text3, marginTop: 8 },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 30 },
-  action: { paddingHorizontal: 18, paddingVertical: 13, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.08)' },
-  primary: { backgroundColor: C.accent },
-  actionText: { ...F.bold, fontSize: 15, color: C.text },
-  primaryText: { color: C.ink },
+  body: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 40 },
+  group: { marginTop: 22 },
 });

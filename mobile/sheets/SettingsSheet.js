@@ -1,15 +1,17 @@
-// Settings: where the sky is, how alive it is, notifications, sign out.
+// Settings, laid out like the iOS Settings app: grouped rows, a checkmark for the chosen place,
+// green switches, footers that explain, the version at the bottom.
 import React, { useState } from 'react';
-import { View, Text, Pressable, Switch, StyleSheet } from 'react-native';
+import { View, Text, Switch, StyleSheet } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { ScrollView } from 'react-native-gesture-handler';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Group, Row, SectionHeader } from '../components/ui';
 import { useSettings, CHENNAI } from '../settings';
 import { sendTestPush } from '../api';
 import { clearToken } from '../auth';
-import { C, F } from '../theme';
+import { C, T } from '../theme';
 
 export default function SettingsSheet({ onToast }) {
   const { settings, update } = useSettings();
@@ -21,10 +23,9 @@ export default function SettingsSheet({ onToast }) {
     setLocating(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') { onToast('Location permission was not given'); return; }
+      if (status !== 'granted') { onToast('Location access was not allowed'); return; }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
       update({ place: { name: 'Current location', lat: +pos.coords.latitude.toFixed(2), lon: +pos.coords.longitude.toFixed(2) } });
-      onToast('Sky follows your location');
     } catch {
       onToast("Couldn't get your location");
     } finally {
@@ -37,75 +38,64 @@ export default function SettingsSheet({ onToast }) {
     catch { onToast("Couldn't send a test notification"); }
   };
 
-  const version = [Constants.expoConfig?.version, Updates.updateId ? `update ${Updates.updateId.slice(0, 8)}` : 'built-in']
-    .filter(Boolean).join(' · ');
+  const version = [Constants.expoConfig?.version, Updates.updateId ? `(${Updates.updateId.slice(0, 8)})` : null].filter(Boolean).join(' ');
 
   return (
-    <ScrollView contentContainerStyle={[s.body, { paddingBottom: insets.bottom + 30 }]}>
-      <Text style={s.title}>Settings</Text>
+    <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 40 }}>
+      <SectionHeader title="Sky Location" small />
+      <Group>
+        <Row title="Chennai" check={!usingGps} onPress={() => update({ place: CHENNAI })} />
+        <Row
+          title={locating ? 'Locating…' : 'Current Location'}
+          subtitle={usingGps ? `${settings.place.lat}°, ${settings.place.lon}°` : null}
+          check={usingGps}
+          onPress={useMyLocation}
+        />
+      </Group>
+      <Footer text="Sunrise, sunset and weather are calculated for this place." />
 
-      <Text style={s.group}>Sky</Text>
-      <Row label="Location" value={usingGps ? `${settings.place.lat}°, ${settings.place.lon}°` : 'Chennai'} />
-      <View style={s.chips}>
-        <Chip label="Chennai" on={!usingGps} onPress={() => update({ place: CHENNAI })} />
-        <Chip label={locating ? 'Locating…' : 'Use my location'} on={usingGps} onPress={useMyLocation} />
-      </View>
-      <Toggle label="Live weather" value={settings.liveWeather} onChange={v => update({ liveWeather: v })} />
-      <Toggle label="Sky follows the sun" value={settings.followSun} onChange={v => update({ followSun: v })} />
-      <Toggle label="Reduce motion" value={settings.reduceMotion} onChange={v => update({ reduceMotion: v })} />
+      <SectionHeader title="Appearance" small />
+      <Group>
+        <Toggle title="Live Weather" value={settings.liveWeather} onChange={v => update({ liveWeather: v })} />
+        <Toggle title="Sky Follows the Sun" value={settings.followSun} onChange={v => update({ followSun: v })} />
+        <Toggle title="Reduce Motion" value={settings.reduceMotion} onChange={v => update({ reduceMotion: v })} />
+      </Group>
+      <Footer text="With Sky Follows the Sun off, the background stays at blue hour." />
 
-      <Text style={s.group}>Notifications</Text>
-      <Pressable onPress={testPush}><Row label="Send a test notification" accent /></Pressable>
+      <SectionHeader title="Notifications" small />
+      <Group>
+        <Row title="Send Test Notification" tint onPress={testPush} />
+      </Group>
 
-      <Text style={s.group}>Account</Text>
-      <Pressable onPress={() => clearToken()}><Row label="Sign out" danger /></Pressable>
+      <Group style={{ marginTop: 32 }}>
+        <Row title="Sign Out" destructive onPress={() => clearToken()} />
+      </Group>
 
-      <Text style={s.version}>Blu {version}</Text>
+      <Text style={[T.footnote, s.version]}>Blu {version}</Text>
     </ScrollView>
   );
 }
 
-function Row({ label, value, accent, danger }) {
+function Toggle({ title, value, onChange, last }) {
   return (
-    <View style={s.row}>
-      <Text style={[s.label, accent && { color: C.accent }, danger && { color: C.danger }]}>{label}</Text>
-      {value ? <Text style={s.value}>{value}</Text> : null}
-    </View>
+    <Row title={title} last={last}>
+      <View style={s.toggleRow}>
+        <Text style={T.body}>{title}</Text>
+        <Switch
+          value={value}
+          onValueChange={onChange}
+          trackColor={{ false: 'rgba(120,120,128,0.32)', true: C.green }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+    </Row>
   );
 }
 
-function Toggle({ label, value, onChange }) {
-  return (
-    <View style={s.row}>
-      <Text style={s.label}>{label}</Text>
-      <Switch
-        value={value}
-        onValueChange={onChange}
-        trackColor={{ false: 'rgba(255,255,255,0.14)', true: 'rgba(130,169,255,0.6)' }}
-        thumbColor={value ? C.accent : '#c9d3ea'}
-      />
-    </View>
-  );
-}
-
-function Chip({ label, on, onPress }) {
-  return (
-    <Pressable onPress={onPress} style={[s.chip, on && s.chipOn]}>
-      <Text style={[s.chipText, on && { color: C.text }]}>{label}</Text>
-    </Pressable>
-  );
-}
+const Footer = ({ text }) => <Text style={[T.footnote, s.footer]}>{text}</Text>;
 
 const s = StyleSheet.create({
-  body: { paddingHorizontal: 24 },
-  title: { ...F.bold, fontSize: 26, color: C.text, marginBottom: 8 },
-  group: { ...F.bold, fontSize: 13, color: C.text3, marginTop: 24, marginBottom: 2 },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  label: { ...F.bold, fontSize: 16, color: C.text },
-  value: { ...F.bold, fontSize: 15, color: C.text2 },
-  chips: { flexDirection: 'row', gap: 10, paddingVertical: 12 },
-  chip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)' },
-  chipOn: { backgroundColor: 'rgba(130,169,255,0.22)' },
-  chipText: { ...F.bold, fontSize: 14, color: C.text2 },
-  version: { ...F.regular, fontSize: 12, color: C.text3, marginTop: 28 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  footer: { paddingHorizontal: 16, marginTop: 8, marginBottom: 28 },
+  version: { textAlign: 'center', marginTop: 28, color: C.label3 },
 });

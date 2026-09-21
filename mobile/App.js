@@ -63,6 +63,8 @@ async function setupPushNotifications() {
   }
 }
 
+const ITEM_TITLE = { todo: 'Reminder', event: 'Event', note: 'Note' };
+
 function Home({ sky }) {
   const insets = useSafeAreaInsets();
   const board = useBoard();
@@ -82,7 +84,7 @@ function Home({ sky }) {
 
   const onReview = useCallback((item, gotRight) => {
     board.review(item, gotRight)
-      .then(() => showToast(gotRight ? 'Nice. See you in a few days.' : "Back tomorrow."))
+      .then(() => showToast(gotRight ? 'Next review in a few days' : 'Back tomorrow'))
       .catch(() => showToast("Couldn't save that review"));
   }, [board, showToast]);
   const openLibrary = useCallback(tab => { setLibraryTab(tab); setSheet('library'); }, []);
@@ -91,7 +93,7 @@ function Home({ sky }) {
   const onDone = useCallback(todo => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     const undo = board.complete(todo, () => showToast("Couldn't mark that done"));
-    showToast(`Done · ${todo.content}`, undo);
+    showToast(`Completed “${todo.content}”`, undo);
     setSheet(s => (s === 'item' ? null : s));
   }, [board, showToast]);
 
@@ -99,7 +101,7 @@ function Home({ sky }) {
     setSheet(s => (s === 'item' ? null : s));
     showToast('Snoozing…');
     snoozeTodo(todo.content, phrase)
-      .then(() => { showToast(`Snoozed · ${phrase.replace(/^in /, '')}`); board.refresh(); })
+      .then(() => { showToast(phrase.startsWith('in ') ? `Snoozed for ${phrase.slice(3)}` : `Reminder set for ${phrase}`); board.refresh(); })
       .catch(() => showToast("Couldn't snooze that"));
   }, [board, showToast]);
 
@@ -126,14 +128,15 @@ function Home({ sky }) {
         onReview={onReview}
         onDone={onDone}
         onSnooze={onSnooze}
+        hideSuggestions={!!toast}
       />
       <AssistantBar onPress={openAssistant} bottom={barBottom} />
       <Toast toast={sheet ? null : toast} onDismiss={dismissToast} bottom={barBottom + BAR_HEIGHT + 12} />
 
-      <Sheet open={sheet === 'library'} onClose={close} heightRatio={0.84}>
+      <Sheet open={sheet === 'library'} onClose={close} title="Library" heightRatio={0.92}>
         <LibrarySheet tab={libraryTab} onTab={setLibraryTab} board={board} onOpenItem={openItem} onDone={onDone} onSnooze={onSnooze} />
       </Sheet>
-      <Sheet open={sheet === 'item'} onClose={close} heightRatio={0.56}>
+      <Sheet open={sheet === 'item'} onClose={close} title={ITEM_TITLE[entry?.kind] || ''} heightRatio={0.7}>
         <ItemSheet
           entry={entry}
           onDone={onDone}
@@ -141,10 +144,10 @@ function Home({ sky }) {
           onAsk={title => onSuggest({ text: `About "${title}": ` })}
         />
       </Sheet>
-      <Sheet open={sheet === 'settings'} onClose={close} heightRatio={0.84}>
+      <Sheet open={sheet === 'settings'} onClose={close} title="Settings" heightRatio={0.92}>
         <SettingsSheet onToast={showToast} />
       </Sheet>
-      <Sheet open={sheet === 'assistant'} onClose={close} heightRatio={0.93}>
+      <Sheet open={sheet === 'assistant'} onClose={close} title="Blu" heightRatio={0.94}>
         <AssistantSheet open={sheet === 'assistant'} seed={seed} onChanged={board.refresh} />
       </Sheet>
     </View>

@@ -1,51 +1,51 @@
-// The one screen. The headline is what's next — not a greeting. Below it, what's open, what's
-// coming, something worth remembering, and the last thing Blu said. Content sits in the lower
-// part of the screen, in thumb reach, with the sky above; everything else lives in sheets.
+// Today: a summary page in the manner of Apple's own apps — date line and large title, an Up Next
+// card, then grouped sections for reminders, what's coming, something to remember, and Blu's
+// latest message. Everything deeper opens as a sheet.
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, RefreshControl } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Glass from '../components/Glass';
 import Icon from '../components/Icon';
 import SwipeRow from '../components/SwipeRow';
-import { when, relative, ago, plain, clock, restates } from '../format';
-import { C, F } from '../theme';
+import { Group, Row, SectionHeader, Button } from '../components/ui';
+import { when, relative, ago, plain, restates, longDate } from '../format';
+import { C, T, RADIUS } from '../theme';
 
 const SHOWN_TODOS = 5;
 const SHOWN_EVENTS = 3;
-const CONDITION = { clear: 'Clear', cloudy: 'Cloudy', haze: 'Haze', rain: 'Rain', storm: 'Storm' };
+const CONDITION = { clear: 'Clear', cloudy: 'Cloudy', haze: 'Haze', rain: 'Rain', storm: 'Thunderstorms' };
 
 // Tapping one opens the assistant with the text in place; `send` ones go straight through.
 const SUGGESTIONS = [
-  { label: 'Remind me…', text: 'Remind me to ' },
-  { label: 'Note…', text: 'Note: ' },
-  { label: "What's on tomorrow?", text: "What's on tomorrow?", send: true },
+  { label: 'Remind Me', text: 'Remind me to ' },
+  { label: 'New Note', text: 'Note: ' },
+  { label: 'Tomorrow', text: "What's on tomorrow?", send: true },
 ];
 
-// The next event however far off, else the top todo. With nothing at all: what got done today,
-// or at night simply that it's quiet — never a bare "Nothing open." that says nothing new.
-function headline(events, todos, now, doneToday) {
+// The next event however far off, else the top reminder. With nothing at all: what got done
+// today, or simply that nothing is scheduled.
+function upNext(events, todos, now, doneToday) {
   const next = events[0];
   if (next) {
     const rel = relative(next.start_at, now);
-    return { title: next.title, sub: rel ? `${rel} · ${when(next.start_at, now)}` : when(next.start_at, now), usedEvent: true };
+    return { kind: 'event', item: next, title: next.title, sub: rel ? `${when(next.start_at, now)} · ${rel}` : when(next.start_at, now) };
   }
-  if (todos.length) return { title: todos[0].content, sub: 'Top of your list', usedEvent: false };
+  if (todos.length) return { kind: 'todo', item: todos[0], title: todos[0].content, sub: todos[0].remind_at ? when(todos[0].remind_at, now) : 'Top of your list' };
+  if (doneToday > 0) return { title: 'All Done', sub: `${doneToday} completed today` };
   const h = now.getHours();
-  if (doneToday > 0) return { title: `${doneToday} done today.`, sub: 'Nothing else open.', empty: true };
-  if (h >= 22 || h < 5) return { title: 'Quiet night.', sub: 'Nothing open. Rest up.', empty: true };
-  return { title: 'Nothing open.', sub: "Tell Blu what's next.", empty: true };
+  return { title: 'Nothing Scheduled', sub: h >= 22 || h < 5 ? 'Nothing open tonight.' : "Tell Blu what's next." };
 }
 
 export default function NowScreen({
-  board, sky, onOpenSettings, onOpenLibrary, onOpenItem, onOpenAssistant, onSuggest, onDone, onSnooze, onReview, bottomInset,
+  board, sky, hideSuggestions, onOpenSettings, onOpenLibrary, onOpenItem, onOpenAssistant, onSuggest, onDone, onSnooze, onReview, bottomInset,
 }) {
   const insets = useSafeAreaInsets();
   const [pulling, setPulling] = useState(false);
   const { todos, events, latest, learning, doneToday, loaded } = board;
   const now = sky.now;
-  const head = headline(events, todos, now, doneToday);
-  const later = (head?.usedEvent ? events.slice(1) : events).slice(0, SHOWN_EVENTS);
+  const next = upNext(events, todos, now, doneToday);
+  const later = (next.kind === 'event' ? events.slice(1) : events).slice(0, SHOWN_EVENTS);
+  const openTodos = next.kind === 'todo' ? todos.slice(1) : todos;
 
   const onRefresh = useCallback(async () => {
     setPulling(true);
@@ -53,152 +53,122 @@ export default function NowScreen({
     setPulling(false);
   }, [board]);
 
-  const status = [
-    clock(now), sky.label, sky.temp != null ? `${sky.temp}°` : null,
-    sky.condition !== 'clear' ? CONDITION[sky.condition] : null,
-  ].filter(Boolean).join(' · ');
+  const weather = [sky.temp != null ? `${sky.temp}°` : null, CONDITION[sky.condition]].filter(Boolean).join(' ');
 
   return (
     <ScrollView
       style={StyleSheet.absoluteFill}
-      contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + 14, paddingBottom: bottomInset + 20, paddingHorizontal: 24 }}
+      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: bottomInset + 28, paddingHorizontal: 16 }}
       showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={pulling} onRefresh={onRefresh} tintColor={C.accent} colors={[C.accent]} progressBackgroundColor={C.ink} />}
+      refreshControl={<RefreshControl refreshing={pulling} onRefresh={onRefresh} tintColor={C.label2} colors={[C.accent]} progressBackgroundColor={C.cell} />}
     >
-      <View style={s.topRow}>
-        <Text style={s.status}>{status}</Text>
-        <Pressable onPress={onOpenSettings} hitSlop={8} accessibilityLabel="Settings">
-          {({ pressed }) => (
-            <Glass radius={21} blur={false} style={[s.gear, pressed && { transform: [{ scale: 0.94 }] }]}>
-              <Icon name="sliders" size={18} />
-            </Glass>
-          )}
+      <View style={s.titleBar}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.date}>{longDate(now)}{weather ? `  ·  ${weather}` : ''}</Text>
+          <Text style={T.largeTitle}>Today</Text>
+        </View>
+        <Pressable onPress={onOpenSettings} hitSlop={8} accessibilityLabel="Settings" style={({ pressed }) => [s.circleBtn, pressed && { opacity: 0.6 }]}>
+          <Icon name="gear" size={19} color={C.label} stroke={1.9} />
         </Pressable>
       </View>
 
-      {/* Pushes everything below toward the thumb; collapses once content fills the screen. */}
-      <View style={s.spacer} />
+      {board.error && loaded ? <Text style={[T.footnote, { color: C.red, marginBottom: 12, paddingHorizontal: 4 }]}>Can't reach Blu. Pull down to try again.</Text> : null}
 
-      <View style={s.hero}>
-        {loaded ? (
-          <>
-            {head.empty ? null : <Text style={s.kicker}>{head.usedEvent ? 'Next' : 'Now'}</Text>}
-            <Text style={s.headline} numberOfLines={3}>{head.title}</Text>
-            <Text style={s.sub}>{head.sub}</Text>
-          </>
-        ) : null}
-        {board.error && loaded ? <Text style={s.error}>Can't reach Blu right now. Pull to retry.</Text> : null}
-      </View>
+      {loaded ? (
+        <Pressable
+          disabled={!next.kind}
+          onPress={() => onOpenItem({ kind: next.kind, item: next.item })}
+          style={({ pressed }) => [s.upNext, pressed && { opacity: 0.8 }]}
+        >
+          <View style={[s.accentBar, !next.kind && { backgroundColor: C.green }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={[s.upNextLabel, !next.kind && { color: C.green }]}>{next.kind === 'event' ? 'Up Next' : next.kind === 'todo' ? 'Top Reminder' : 'Today'}</Text>
+            <Text style={T.title2} numberOfLines={3}>{next.title}</Text>
+            <Text style={[T.subhead, { marginTop: 4 }]}>{next.sub}</Text>
+          </View>
+        </Pressable>
+      ) : <View style={s.upNextPlaceholder} />}
 
-      {todos.length ? (
+      {openTodos.length ? (
         <View style={s.section}>
-          <SectionHead label="Open" count={todos.length} onMore={() => onOpenLibrary('todos')} />
-          {todos.slice(0, SHOWN_TODOS).map(t => (
-            <SwipeRow
-              key={t.id}
-              title={t.content}
-              meta={t.remind_at ? when(t.remind_at, now) : null}
-              onPress={() => onOpenItem({ kind: 'todo', item: t })}
-              onDone={() => onDone(t)}
-              onSnooze={() => onSnooze(t)}
-            />
-          ))}
+          <SectionHeader title="Reminders" action={todos.length > 1 ? 'Show All' : null} onAction={() => onOpenLibrary('todos')} />
+          <Group>
+            {openTodos.slice(0, SHOWN_TODOS).map(t => (
+              <SwipeRow
+                key={t.id}
+                title={t.content}
+                meta={t.remind_at ? when(t.remind_at, now) : null}
+                overdue={!!t.remind_at && new Date(t.remind_at) < now}
+                onPress={() => onOpenItem({ kind: 'todo', item: t })}
+                onDone={() => onDone(t)}
+                onSnooze={() => onSnooze(t)}
+              />
+            ))}
+          </Group>
         </View>
       ) : null}
 
       {later.length ? (
         <View style={s.section}>
-          <SectionHead label="Coming up" onMore={() => onOpenLibrary('upcoming')} />
-          {later.map(e => (
-            <Pressable key={e.id} onPress={() => onOpenItem({ kind: 'event', item: e })} style={({ pressed }) => [s.eventRow, pressed && { opacity: 0.6 }]}>
-              <Text style={s.eventTime}>{when(e.start_at, now)}</Text>
-              <Text style={s.eventTitle} numberOfLines={1}>{e.title}</Text>
-            </Pressable>
-          ))}
+          <SectionHeader title="Coming Up" action="Show All" onAction={() => onOpenLibrary('upcoming')} />
+          <Group>
+            {later.map(e => (
+              <Row key={e.id} title={e.title} subtitle={when(e.start_at, now)} chevron numberOfLines={1} onPress={() => onOpenItem({ kind: 'event', item: e })} />
+            ))}
+          </Group>
         </View>
       ) : null}
 
       {learning ? (
         <View style={s.section}>
-          <SectionHead label="Worth remembering" />
-          <Glass radius={22} blur={false} style={s.learning}>
-            {learning.topic && !restates(learning.topic, learning.content) ? <Text style={s.learnTopic}>{learning.topic}</Text> : null}
-            <Text style={s.learnText} numberOfLines={5}>{learning.content}</Text>
-            <View style={s.learnActions}>
-              <Pill label="Got it" primary onPress={() => onReview(learning, true)} />
-              <Pill label="Again" onPress={() => onReview(learning, false)} />
+          <SectionHeader title="Worth Remembering" />
+          <View style={s.card}>
+            {learning.topic && !restates(learning.topic, learning.content) ? <Text style={[T.footnote, { marginBottom: 4 }]}>{learning.topic}</Text> : null}
+            <Text style={T.body} numberOfLines={6}>{learning.content}</Text>
+            <View style={s.cardActions}>
+              <Button title="Got It" onPress={() => onReview(learning, true)} />
+              <Button title="Review Again" kind="gray" onPress={() => onReview(learning, false)} />
             </View>
-          </Glass>
+          </View>
         </View>
       ) : null}
 
       {latest ? (
-        <Pressable onPress={onOpenAssistant} style={({ pressed }) => [s.section, pressed && { opacity: 0.6 }]}>
-          <SectionHead label={`From Blu · ${ago(latest.created_at, now)}`} />
-          <Text style={s.latest} numberOfLines={4}>{plain(latest.text)}</Text>
-        </Pressable>
+        <View style={s.section}>
+          <SectionHeader title="From Blu" />
+          <Pressable onPress={onOpenAssistant} style={({ pressed }) => [s.card, pressed && { opacity: 0.8 }]}>
+            <View style={s.cardTop}>
+              <Text style={T.footnote}>{ago(latest.created_at, now)}</Text>
+              <Icon name="chevronRight" size={14} color={C.label3} stroke={2.4} />
+            </View>
+            <Text style={T.callout} numberOfLines={4}>{plain(latest.text)}</Text>
+          </Pressable>
+        </View>
       ) : null}
 
-      {loaded && !todos.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipScroll} contentContainerStyle={s.chips}>
-          {SUGGESTIONS.map(sg => <Pill key={sg.label} label={sg.label} small onPress={() => onSuggest(sg)} />)}
-        </ScrollView>
+      {loaded && !todos.length && !hideSuggestions ? (
+        <View style={s.section}>
+          <SectionHeader title="Suggestions" />
+          <View style={s.suggestions}>
+            {SUGGESTIONS.map(sg => <Button key={sg.label} title={sg.label} kind="tinted" onPress={() => onSuggest(sg)} />)}
+          </View>
+        </View>
       ) : null}
     </ScrollView>
   );
 }
 
-function SectionHead({ label, count, onMore }) {
-  return (
-    <View style={s.sectionHead}>
-      <Text style={s.sectionLabel}>{label}{count != null ? `  ${count}` : ''}</Text>
-      {onMore ? (
-        <Pressable onPress={onMore} hitSlop={10} style={s.more}>
-          <Text style={s.moreText}>All</Text>
-          <Icon name="chevronRight" size={14} color={C.text2} stroke={2.4} />
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function Pill({ label, primary, small, onPress }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [s.pill, small && s.pillSmall, primary && s.pillPrimary, pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] }]}>
-      <Text style={[s.pillText, small && s.pillTextSmall, primary && { color: C.ink }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const s = StyleSheet.create({
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  status: { ...F.bold, fontSize: 14, color: C.text2 },
-  gear: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
-  spacer: { flexGrow: 1, minHeight: 48 },
-  hero: { marginBottom: 36 },
-  kicker: { ...F.bold, fontSize: 14, color: C.accent, marginBottom: 10 },
-  headline: { ...F.bold, fontSize: 36, lineHeight: 40, color: C.text, letterSpacing: -0.8 },
-  sub: { ...F.bold, fontSize: 17, color: C.text2, marginTop: 10 },
-  error: { ...F.bold, fontSize: 13, color: C.danger, marginTop: 14 },
-  section: { marginBottom: 30 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  sectionLabel: { ...F.bold, fontSize: 13, color: C.text3, letterSpacing: 0.2 },
-  more: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  moreText: { ...F.bold, fontSize: 13, color: C.text2 },
-  eventRow: { flexDirection: 'row', alignItems: 'baseline', paddingVertical: 13, gap: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  eventTime: { ...F.bold, fontSize: 14, color: C.accent, width: 118 },
-  eventTitle: { flex: 1, ...F.bold, fontSize: 17, color: C.text },
-  learning: { padding: 18, marginTop: 8 },
-  learnTopic: { ...F.bold, fontSize: 13, color: C.accent, marginBottom: 6 },
-  learnText: { ...F.bold, fontSize: 17, lineHeight: 23, color: C.text },
-  learnActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  latest: { ...F.regular, fontSize: 16, lineHeight: 23, color: C.text, marginTop: 8 },
-  // Bleeds to the screen edges so the row visibly scrolls rather than looking clipped.
-  chipScroll: { marginHorizontal: -24, flexGrow: 0 },
-  chips: { flexDirection: 'row', gap: 8, paddingHorizontal: 24 },
-  pill: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: StyleSheet.hairlineWidth, borderColor: C.rim },
-  pillPrimary: { backgroundColor: C.accent, borderColor: C.accent },
-  pillText: { ...F.bold, fontSize: 14, color: C.text },
-  pillSmall: { paddingHorizontal: 14, paddingVertical: 8 },
-  pillTextSmall: { fontSize: 13 },
+  titleBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 4, marginBottom: 18, marginTop: 8 },
+  date: { ...T.footnote, fontFamily: 'Heros-Bold', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 2 },
+  circleBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.fill, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  upNext: { flexDirection: 'row', gap: 12, backgroundColor: C.cell, borderRadius: RADIUS.card, padding: 16 },
+  upNextPlaceholder: { height: 108, borderRadius: RADIUS.card, backgroundColor: C.cell, opacity: 0.5 },
+  accentBar: { width: 4, borderRadius: 2, backgroundColor: C.accent },
+  upNextLabel: { ...T.footnote, fontFamily: 'Heros-Bold', color: C.accent, marginBottom: 4 },
+  section: { marginTop: 28 },
+  card: { backgroundColor: C.cell, borderRadius: RADIUS.cell, padding: 16 },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  cardActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 });

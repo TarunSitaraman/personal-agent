@@ -1,21 +1,30 @@
-// A todo row. Swipe right to finish, left to snooze an hour; tap for details. No box around it —
-// rows are separated by rhythm and a hairline, not cards.
-import React from 'react';
+// A todo, as a Reminders row: tap the circle to complete, tap the row for details, swipe right to
+// complete or left for "Later" (snooze an hour). Lives inside a Group, which passes `last`.
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import Animated, {
   useSharedValue, useAnimatedStyle, withSpring, withTiming, interpolate, runOnJS, Extrapolation,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
-import { C, F } from '../theme';
+import Icon from './Icon';
+import { C, T, HAIRLINE } from '../theme';
 
-const TRIGGER = 96;
+const TRIGGER = 90;
 
-export default function SwipeRow({ title, meta, onPress, onDone, onSnooze }) {
+export default function SwipeRow({ title, meta, overdue, onPress, onDone, onSnooze, last }) {
   const x = useSharedValue(0);
   const armed = useSharedValue(0);
+  const [ticked, setTicked] = useState(false);
 
   const tick = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
+  // Tapping the circle fills it first, so the completion is seen before the row leaves.
+  const tapCircle = () => {
+    if (ticked) return;
+    setTicked(true);
+    setTimeout(onDone, 260);
+  };
 
   const pan = Gesture.Pan()
     .activeOffsetX([-14, 14])
@@ -27,30 +36,39 @@ export default function SwipeRow({ title, meta, onPress, onDone, onSnooze }) {
     })
     .onEnd(e => {
       if (e.translationX > TRIGGER) {
-        x.value = withTiming(500, { duration: 180 }, () => runOnJS(onDone)());
+        x.value = withTiming(600, { duration: 200 }, () => runOnJS(onDone)());
       } else if (e.translationX < -TRIGGER) {
-        x.value = withSpring(0);
+        x.value = withSpring(0, { damping: 20 });
         runOnJS(onSnooze)();
       } else {
-        x.value = withSpring(0);
+        x.value = withSpring(0, { damping: 20 });
       }
       armed.value = 0;
     });
 
   const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
-  const doneStyle = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [10, TRIGGER], [0, 1], Extrapolation.CLAMP) }));
-  const snoozeStyle = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [-10, -TRIGGER], [0, 1], Extrapolation.CLAMP) }));
+  const doneStyle = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [0, 24], [0, 1], Extrapolation.CLAMP) }));
+  const laterStyle = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [0, -24], [0, 1], Extrapolation.CLAMP) }));
 
   return (
     <View style={s.wrap}>
-      <Animated.Text style={[s.under, s.left, doneStyle]}>Done</Animated.Text>
-      <Animated.Text style={[s.under, s.right, snoozeStyle]}>Snooze 1h</Animated.Text>
+      <Animated.View style={[StyleSheet.absoluteFill, s.under, { backgroundColor: C.accent, justifyContent: 'flex-start' }, doneStyle]}>
+        <Icon name="check" size={22} color="#fff" stroke={2.6} />
+      </Animated.View>
+      <Animated.View style={[StyleSheet.absoluteFill, s.under, { backgroundColor: C.orange, justifyContent: 'flex-end' }, laterStyle]}>
+        <Text style={[T.headline, { color: '#fff' }]}>Later</Text>
+      </Animated.View>
+
       <GestureDetector gesture={pan}>
-        <Animated.View style={rowStyle}>
-          <Pressable onPress={onPress} style={({ pressed }) => [s.row, pressed && { opacity: 0.6 }]}>
-            <View style={s.ring} />
-            <Text style={s.title} numberOfLines={2}>{title}</Text>
-            {meta ? <Text style={s.meta}>{meta}</Text> : null}
+        <Animated.View style={[s.row, rowStyle]}>
+          <Pressable onPress={tapCircle} hitSlop={10} style={s.circleHit} accessibilityRole="checkbox" accessibilityLabel={`Complete ${title}`}>
+            <View style={[s.circle, ticked && s.circleOn]}>
+              {ticked ? <Icon name="check" size={13} color="#fff" stroke={3} /> : null}
+            </View>
+          </Pressable>
+          <Pressable onPress={onPress} style={({ pressed }) => [s.main, !last && s.separator, pressed && { opacity: 0.6 }]}>
+            <Text style={[T.body, ticked && { color: C.label3 }]} numberOfLines={2}>{title}</Text>
+            {meta ? <Text style={[T.subhead, { marginTop: 2 }, overdue && { color: C.red }]}>{meta}</Text> : null}
           </Pressable>
         </Animated.View>
       </GestureDetector>
@@ -59,12 +77,12 @@ export default function SwipeRow({ title, meta, onPress, onDone, onSnooze }) {
 }
 
 const s = StyleSheet.create({
-  wrap: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 15, gap: 14 },
-  ring: { width: 16, height: 16, borderRadius: 8, borderWidth: 1.6, borderColor: 'rgba(228,236,255,0.5)' },
-  title: { flex: 1, ...F.bold, fontSize: 17, color: C.text, lineHeight: 22 },
-  meta: { ...F.bold, fontSize: 13, color: C.accent },
-  under: { position: 'absolute', top: 0, bottom: 0, textAlignVertical: 'center', ...F.bold, fontSize: 14 },
-  left: { left: 0, color: C.accent },
-  right: { right: 0, color: C.text2 },
+  wrap: { backgroundColor: C.cell },
+  under: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24 },
+  row: { flexDirection: 'row', backgroundColor: C.cell },
+  circleHit: { width: 52, alignItems: 'center', paddingTop: 13 },
+  circle: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: C.label3, alignItems: 'center', justifyContent: 'center' },
+  circleOn: { backgroundColor: C.accent, borderColor: C.accent },
+  main: { flex: 1, paddingVertical: 12, paddingRight: 16, minHeight: 50, justifyContent: 'center' },
+  separator: { borderBottomWidth: HAIRLINE, borderBottomColor: C.separator },
 });

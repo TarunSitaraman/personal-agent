@@ -1,9 +1,8 @@
-// One toast at a time, above the assistant bar, with an optional Undo.
+// One notice at a time, a compact capsule above the bar, with an optional Undo.
 import React, { useEffect } from 'react';
-import { Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
-import Glass from './Glass';
-import { C, F } from '../theme';
+import { C, T } from '../theme';
 
 export const TOAST_MS = 4000;
 
@@ -16,22 +15,24 @@ export default function Toast({ toast, onDismiss, bottom }) {
 
   if (!toast) return null;
   return (
-    <Animated.View key={toast.id} entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(160)} style={[s.wrap, { bottom }]}>
-      <Glass radius={18} tint={C.glassStrong} style={s.glass}>
-        <Text style={s.text} numberOfLines={1}>{toast.text}</Text>
+    <View style={[s.wrap, { bottom }]} pointerEvents="box-none">
+      <Animated.View key={toast.id} entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(160)} style={s.capsule}>
+        <Text style={[T.subhead, { color: C.label, flexShrink: 1 }]} numberOfLines={1}>{toast.text}</Text>
         {toast.onUndo ? (
-          <Pressable hitSlop={10} onPress={() => { toast.onUndo(); onDismiss(); }}>
-            <Text style={s.undo}>Undo</Text>
+          <Pressable hitSlop={12} onPress={() => { toast.onUndo(); onDismiss(); }}>
+            <Text style={[T.subhead, { color: C.accent, fontFamily: 'Heros-Bold' }]}>Undo</Text>
           </Pressable>
         ) : null}
-      </Glass>
-    </Animated.View>
+      </Animated.View>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
-  wrap: { position: 'absolute', left: 16, right: 16 },
-  glass: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, gap: 12 },
-  text: { flex: 1, ...F.bold, fontSize: 14, color: C.text },
-  undo: { ...F.bold, fontSize: 14, color: C.accent },
+  wrap: { position: 'absolute', left: 16, right: 16, alignItems: 'center' },
+  capsule: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, maxWidth: '100%',
+    paddingHorizontal: 18, height: 44, borderRadius: 22, backgroundColor: C.material,
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10,
+  },
 });
