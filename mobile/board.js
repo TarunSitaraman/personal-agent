@@ -3,7 +3,7 @@
 // to reach the server.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { getTodos, getUpcoming, getNotes, getMessages, getLearnings, completeTodo, reviewLearning } from './api';
+import { getTodos, getUpcoming, getNotes, getMessages, getLearnings, getDoneToday, completeTodo, reviewLearning } from './api';
 import { TOAST_MS } from './components/Toast';
 
 // A brief from last night is not "from Blu" at 4 am; past this age it stays in the thread only.
@@ -15,14 +15,16 @@ export function useBoard() {
   const [notes, setNotes] = useState([]);
   const [latest, setLatest] = useState(null);
   const [learning, setLearning] = useState(null);
+  const [doneToday, setDoneToday] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const hidden = useRef(new Set()); // ids completed locally, not yet sent
 
   const refresh = useCallback(async () => {
     try {
-      const [t, e, n, m, l] = await Promise.all([
-        getTodos(), getUpcoming(), getNotes(), getMessages(), getLearnings().catch(() => []),
+      const [t, e, n, m, l, d] = await Promise.all([
+        getTodos(), getUpcoming(), getNotes(), getMessages(),
+        getLearnings().catch(() => []), getDoneToday().catch(() => 0),
       ]);
       setTodos(t.filter(x => !hidden.current.has(x.id)));
       setEvents(e);
@@ -30,6 +32,7 @@ export function useBoard() {
       const cutoff = Date.now() - LATEST_MAX_AGE_MS;
       setLatest(m.find(x => x.from !== 'me' && new Date(x.created_at).getTime() >= cutoff) || null);
       setLearning(l[0] || null);
+      setDoneToday(d);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -71,5 +74,5 @@ export function useBoard() {
     try { await reviewLearning(item.id, gotRight); } finally { refresh(); }
   }, [refresh]);
 
-  return { todos, events, notes, latest, learning, loaded, error, refresh, complete, review };
+  return { todos, events, notes, latest, learning, doneToday, loaded, error, refresh, complete, review };
 }

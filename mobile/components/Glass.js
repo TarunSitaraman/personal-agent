@@ -1,13 +1,16 @@
-// The only material in the app: blurred, tinted, with a thin light rim on the top edge.
+// The only material in the app: tinted, with a thin light rim on the top edge, and blurred where
+// content moves behind it. Android's blur samples the element's own children too, which smears a
+// halo around text and buttons — so anything sitting in the page (over a smooth sky gradient,
+// where blur adds nothing) passes blur={false} and gets the tint alone.
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { C } from '../theme';
 
-export default function Glass({ style, radius = 24, tint = C.glass, children, ...rest }) {
+export default function Glass({ style, radius = 24, tint = C.glass, blur = true, children, ...rest }) {
   return (
     <View style={[{ borderRadius: radius, overflow: 'hidden' }, style]} {...rest}>
-      <BlurView intensity={40} tint="dark" experimentalBlurMethod="dimezisBlurView" style={StyleSheet.absoluteFill} />
+      {blur ? <BlurView intensity={40} tint="dark" experimentalBlurMethod="dimezisBlurView" style={StyleSheet.absoluteFill} /> : null}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} />
       <View
         pointerEvents="none"

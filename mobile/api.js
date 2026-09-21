@@ -101,3 +101,11 @@ export async function getUpcoming() {
 export async function reviewLearning(id, gotRight) {
   return request(`/dashboard/api/learnings/${encodeURIComponent(id)}/review`, { method: 'POST', body: { gotRight } });
 }
+
+// Todos finished since the phone's local midnight — "today" is your day, not the server's.
+export async function getDoneToday() {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const d = await request(`/dashboard/api/done?since=${encodeURIComponent(midnight.toISOString())}`);
+  return d.count || 0;
+}

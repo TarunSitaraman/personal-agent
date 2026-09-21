@@ -41,7 +41,7 @@ export default function TokenScreen({ onSignedIn }) {
         <Text style={s.hint}>Paste your key to connect. It stays encrypted on this phone.</Text>
       </View>
       <View style={{ gap: 12 }}>
-        <Glass radius={20}>
+        <Glass radius={20} blur={false}>
           <TextInput
             style={s.input}
             value={value}

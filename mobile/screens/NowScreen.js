@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Glass from '../components/Glass';
 import Icon from '../components/Icon';
 import SwipeRow from '../components/SwipeRow';
-import { when, relative, ago, plain, clock } from '../format';
+import { when, relative, ago, plain, clock, restates } from '../format';
 import { C, F } from '../theme';
 
 const SHOWN_TODOS = 5;
@@ -22,15 +22,19 @@ const SUGGESTIONS = [
   { label: "What's on tomorrow?", text: "What's on tomorrow?", send: true },
 ];
 
-// The next event however far off, else the top todo, else nothing.
-function headline(events, todos, now) {
+// The next event however far off, else the top todo. With nothing at all: what got done today,
+// or at night simply that it's quiet — never a bare "Nothing open." that says nothing new.
+function headline(events, todos, now, doneToday) {
   const next = events[0];
   if (next) {
     const rel = relative(next.start_at, now);
     return { title: next.title, sub: rel ? `${rel} · ${when(next.start_at, now)}` : when(next.start_at, now), usedEvent: true };
   }
   if (todos.length) return { title: todos[0].content, sub: 'Top of your list', usedEvent: false };
-  return null;
+  const h = now.getHours();
+  if (doneToday > 0) return { title: `${doneToday} done today.`, sub: 'Nothing else open.', empty: true };
+  if (h >= 22 || h < 5) return { title: 'Quiet night.', sub: 'Nothing open. Rest up.', empty: true };
+  return { title: 'Nothing open.', sub: "Tell Blu what's next.", empty: true };
 }
 
 export default function NowScreen({
@@ -38,9 +42,9 @@ export default function NowScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [pulling, setPulling] = useState(false);
-  const { todos, events, latest, learning, loaded } = board;
+  const { todos, events, latest, learning, doneToday, loaded } = board;
   const now = sky.now;
-  const head = headline(events, todos, now);
+  const head = headline(events, todos, now, doneToday);
   const later = (head?.usedEvent ? events.slice(1) : events).slice(0, SHOWN_EVENTS);
 
   const onRefresh = useCallback(async () => {
@@ -65,7 +69,7 @@ export default function NowScreen({
         <Text style={s.status}>{status}</Text>
         <Pressable onPress={onOpenSettings} hitSlop={8} accessibilityLabel="Settings">
           {({ pressed }) => (
-            <Glass radius={21} style={[s.gear, pressed && { transform: [{ scale: 0.94 }] }]}>
+            <Glass radius={21} blur={false} style={[s.gear, pressed && { transform: [{ scale: 0.94 }] }]}>
               <Icon name="sliders" size={18} />
             </Glass>
           )}
@@ -76,18 +80,13 @@ export default function NowScreen({
       <View style={s.spacer} />
 
       <View style={s.hero}>
-        {!loaded ? null : head ? (
+        {loaded ? (
           <>
-            <Text style={s.kicker}>{head.usedEvent ? 'Next' : 'Now'}</Text>
+            {head.empty ? null : <Text style={s.kicker}>{head.usedEvent ? 'Next' : 'Now'}</Text>}
             <Text style={s.headline} numberOfLines={3}>{head.title}</Text>
             <Text style={s.sub}>{head.sub}</Text>
           </>
-        ) : (
-          <>
-            <Text style={s.headline}>Nothing open.</Text>
-            <Text style={s.sub}>Tell Blu what's next.</Text>
-          </>
-        )}
+        ) : null}
         {board.error && loaded ? <Text style={s.error}>Can't reach Blu right now. Pull to retry.</Text> : null}
       </View>
 
@@ -122,8 +121,8 @@ export default function NowScreen({
       {learning ? (
         <View style={s.section}>
           <SectionHead label="Worth remembering" />
-          <Glass radius={22} style={s.learning}>
-            {learning.topic ? <Text style={s.learnTopic}>{learning.topic}</Text> : null}
+          <Glass radius={22} blur={false} style={s.learning}>
+            {learning.topic && !restates(learning.topic, learning.content) ? <Text style={s.learnTopic}>{learning.topic}</Text> : null}
             <Text style={s.learnText} numberOfLines={5}>{learning.content}</Text>
             <View style={s.learnActions}>
               <Pill label="Got it" primary onPress={() => onReview(learning, true)} />
@@ -141,9 +140,9 @@ export default function NowScreen({
       ) : null}
 
       {loaded && !todos.length ? (
-        <View style={s.chips}>
-          {SUGGESTIONS.map(sg => <Pill key={sg.label} label={sg.label} onPress={() => onSuggest(sg)} />)}
-        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipScroll} contentContainerStyle={s.chips}>
+          {SUGGESTIONS.map(sg => <Pill key={sg.label} label={sg.label} small onPress={() => onSuggest(sg)} />)}
+        </ScrollView>
       ) : null}
     </ScrollView>
   );
@@ -163,10 +162,10 @@ function SectionHead({ label, count, onMore }) {
   );
 }
 
-function Pill({ label, primary, onPress }) {
+function Pill({ label, primary, small, onPress }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [s.pill, primary && s.pillPrimary, pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] }]}>
-      <Text style={[s.pillText, primary && { color: C.ink }]}>{label}</Text>
+    <Pressable onPress={onPress} style={({ pressed }) => [s.pill, small && s.pillSmall, primary && s.pillPrimary, pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] }]}>
+      <Text style={[s.pillText, small && s.pillTextSmall, primary && { color: C.ink }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -194,8 +193,12 @@ const s = StyleSheet.create({
   learnText: { ...F.bold, fontSize: 17, lineHeight: 23, color: C.text },
   learnActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   latest: { ...F.regular, fontSize: 16, lineHeight: 23, color: C.text, marginTop: 8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  // Bleeds to the screen edges so the row visibly scrolls rather than looking clipped.
+  chipScroll: { marginHorizontal: -24, flexGrow: 0 },
+  chips: { flexDirection: 'row', gap: 8, paddingHorizontal: 24 },
   pill: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: StyleSheet.hairlineWidth, borderColor: C.rim },
   pillPrimary: { backgroundColor: C.accent, borderColor: C.accent },
   pillText: { ...F.bold, fontSize: 14, color: C.text },
+  pillSmall: { paddingHorizontal: 14, paddingVertical: 8 },
+  pillTextSmall: { fontSize: 13 },
 });

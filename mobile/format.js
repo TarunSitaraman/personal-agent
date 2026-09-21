@@ -47,3 +47,15 @@ export function ago(iso, now = new Date()) {
 export function plain(text = '') {
   return text.replace(/\*([^*\n]+)\*/g, '$1').replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1$2');
 }
+
+// True when `a` mostly restates `b` — e.g. a learning's topic that repeats its content. Compares
+// word stems (first five letters), so "improvement" and "improve" count as the same word.
+const STOP = new Set(['the', 'and', 'of', 'in', 'to', 'a', 'an', 'for', 'on', 'terms', 'with', 'is']);
+const stems = s => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(w => w && !STOP.has(w)).map(w => w.slice(0, 5)));
+export function restates(a = '', b = '') {
+  const A = stems(a), B = stems(b);
+  if (A.size < 2) return false; // a one-word topic is a label, worth keeping
+  let shared = 0;
+  A.forEach(w => { if (B.has(w)) shared += 1; });
+  return shared / A.size >= 0.6;
+}
