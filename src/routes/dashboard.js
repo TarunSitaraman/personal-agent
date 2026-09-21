@@ -1,8 +1,9 @@
 const express = require('express');
 const axios = require('axios');
-const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, savePushToken, getThread } = require('../agent/memory');
+const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnreviewedLearnings, getWeekEvents, getRecentHistory, completeTodoByContent, listEvents, getSummaryStats, getDueLearnings, reviewLearning, savePushToken, getThread, countCompletedSince } = require('../agent/memory');
 const { isExpoPushToken, sendPush } = require('../push/push');
 const { parseThreadQuery } = require('../agent/thread');
+const { parseSince } = require('../agent/doneToday');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
@@ -216,6 +217,19 @@ router.post('/api/push/test', async (req, res) => {
   } catch (err) {
     console.error('Push test error:', err.message);
     res.status(500).json({ error: 'Failed to send' });
+  }
+});
+
+// GET /dashboard/api/done?since=<local midnight ISO> — todos finished today, for the Now screen
+router.get('/api/done', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const since = parseSince(req.query);
+  if (!since) return res.status(400).json({ error: 'since must be a time within the last 48 hours' });
+  try {
+    res.json({ count: await countCompletedSince(since) });
+  } catch (err) {
+    console.error('Done count error:', err.message);
+    res.status(500).json({ error: 'Failed to count' });
   }
 });
 

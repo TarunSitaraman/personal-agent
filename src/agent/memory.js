@@ -742,6 +742,15 @@ async function searchMemory(query, embedding = null) {
 
 // --- Standup data ---
 
+// Todos finished since `since` (an ISO timestamp — the phone's local midnight).
+async function countCompletedSince(since) {
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM todos WHERE done = true AND user_id = $1 AND completed_at >= $2',
+    [currentUserId(), since]
+  );
+  return rows[0].n;
+}
+
 async function getYesterdayActivity() {
   const uid = currentUserId();
   const [completed, notes] = await Promise.all([
@@ -1353,7 +1362,7 @@ async function recordItemEvent(itemId, eventType, snapshot, diffSummary) {
   reviewLearning, getDueLearnings,
   updateNoteContent, saveState, getState, deleteState,
   recordCorrection, getUnexportedCorrections, markCorrectionsExported,
-  saveInboxMessage, getThread,
+  saveInboxMessage, getThread, countCompletedSince,
   getOldNotes, getConversationsLastWeek,
   rawQuery,
 
