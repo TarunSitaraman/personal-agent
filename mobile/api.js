@@ -97,3 +97,7 @@ export async function getUpcoming() {
     .filter(r => r.type === 'event' && r.start_at && new Date(r.start_at).getTime() >= cutoff)
     .sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
 }
+
+export async function reviewLearning(id, gotRight) {
+  return request(`/dashboard/api/learnings/${encodeURIComponent(id)}/review`, { method: 'POST', body: { gotRight } });
+}

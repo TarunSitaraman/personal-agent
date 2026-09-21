@@ -16,7 +16,8 @@ const KIND_LABEL = {
 // Server rows are newest-first, which is what an inverted list wants.
 const toItems = rows => rows.map(r => ({ id: String(r.id), mine: r.from === 'me', kind: r.kind, text: r.text, at: r.created_at }));
 
-export default function AssistantSheet({ open, onChanged }) {
+// `seed` comes from a suggestion chip: its text is placed in the box, or sent when seed.send.
+export default function AssistantSheet({ open, seed, onChanged }) {
   const insets = useSafeAreaInsets();
   const [items, setItems] = useState([]);
   const [input, setInput] = useState('');
@@ -25,15 +26,8 @@ export default function AssistantSheet({ open, onChanged }) {
   const keyboard = useAnimatedKeyboard();
   const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(keyboard.height.value, insets.bottom) + 10 }));
 
-  useEffect(() => {
-    if (!open) return;
-    getMessages().then(rows => setItems(toItems(rows))).catch(() => {});
-    const id = setTimeout(() => inputRef.current?.focus(), 350);
-    return () => clearTimeout(id);
-  }, [open]);
-
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const sendText = useCallback(async raw => {
+    const text = raw.trim();
     if (!text || busy) return;
     setInput('');
     const at = new Date().toISOString();
@@ -48,7 +42,22 @@ export default function AssistantSheet({ open, onChanged }) {
     } finally {
       setBusy(false);
     }
-  }, [input, busy, onChanged]);
+  }, [busy, onChanged]);
+
+  const send = useCallback(() => sendText(input), [sendText, input]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    // Send only after the thread loads, or the load would overwrite the message just sent.
+    getMessages()
+      .then(rows => setItems(toItems(rows)))
+      .catch(() => {})
+      .finally(() => { if (seed?.send) sendText(seed.text); });
+    if (seed?.send) return undefined;
+    if (seed) setInput(seed.text);
+    const id = setTimeout(() => inputRef.current?.focus(), 350);
+    return () => clearTimeout(id);
+  }, [open, seed]);
 
   const render = ({ item }) => {
     const proactive = !item.mine && item.kind && item.kind !== 'chat' && item.kind !== 'error';

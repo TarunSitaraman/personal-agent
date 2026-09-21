@@ -70,13 +70,21 @@ function Home({ sky }) {
   const [libraryTab, setLibraryTab] = useState('todos');
   const [entry, setEntry] = useState(null);
   const [toast, setToast] = useState(null);
+  const [seed, setSeed] = useState(null);
 
   const barBottom = insets.bottom + 12;
   const close = useCallback(() => setSheet(null), []);
   const showToast = useCallback((text, onUndo) => setToast({ id: Date.now(), text, onUndo }), []);
   const dismissToast = useCallback(() => setToast(null), []);
 
-  const openAssistant = useCallback(() => setSheet('assistant'), []);
+  const openAssistant = useCallback(() => { setSeed(null); setSheet('assistant'); }, []);
+  const onSuggest = useCallback(sg => { setSeed(sg); setSheet('assistant'); }, []);
+
+  const onReview = useCallback((item, gotRight) => {
+    board.review(item, gotRight)
+      .then(() => showToast(gotRight ? 'Nice. See you in a few days.' : "Back tomorrow."))
+      .catch(() => showToast("Couldn't save that review"));
+  }, [board, showToast]);
   const openLibrary = useCallback(tab => { setLibraryTab(tab); setSheet('library'); }, []);
   const openItem = useCallback(e => { setEntry(e); setSheet('item'); }, []);
 
@@ -99,7 +107,7 @@ function Home({ sky }) {
   useEffect(() => {
     setupPushNotifications();
     Notifications.getLastNotificationResponseAsync().then(r => { if (r) setSheet('assistant'); }).catch(() => {});
-    const tapped = Notifications.addNotificationResponseReceivedListener(() => setSheet('assistant'));
+    const tapped = Notifications.addNotificationResponseReceivedListener(() => openAssistant());
     const received = Notifications.addNotificationReceivedListener(() => board.refresh());
     return () => { tapped.remove(); received.remove(); };
   }, []);
@@ -114,6 +122,8 @@ function Home({ sky }) {
         onOpenLibrary={openLibrary}
         onOpenItem={openItem}
         onOpenAssistant={openAssistant}
+        onSuggest={onSuggest}
+        onReview={onReview}
         onDone={onDone}
         onSnooze={onSnooze}
       />
@@ -128,14 +138,14 @@ function Home({ sky }) {
           entry={entry}
           onDone={onDone}
           onSnooze={onSnooze}
-          onAsk={() => setSheet('assistant')}
+          onAsk={title => onSuggest({ text: `About "${title}": ` })}
         />
       </Sheet>
       <Sheet open={sheet === 'settings'} onClose={close} heightRatio={0.84}>
         <SettingsSheet onToast={showToast} />
       </Sheet>
       <Sheet open={sheet === 'assistant'} onClose={close} heightRatio={0.93}>
-        <AssistantSheet open={sheet === 'assistant'} onChanged={board.refresh} />
+        <AssistantSheet open={sheet === 'assistant'} seed={seed} onChanged={board.refresh} />
       </Sheet>
     </View>
   );

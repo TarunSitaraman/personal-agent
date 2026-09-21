@@ -3,25 +3,33 @@
 // to reach the server.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { getTodos, getUpcoming, getNotes, getMessages, completeTodo } from './api';
+import { getTodos, getUpcoming, getNotes, getMessages, getLearnings, completeTodo, reviewLearning } from './api';
 import { TOAST_MS } from './components/Toast';
+
+// A brief from last night is not "from Blu" at 4 am; past this age it stays in the thread only.
+const LATEST_MAX_AGE_MS = 6 * 3600 * 1000;
 
 export function useBoard() {
   const [todos, setTodos] = useState([]);
   const [events, setEvents] = useState([]);
   const [notes, setNotes] = useState([]);
   const [latest, setLatest] = useState(null);
+  const [learning, setLearning] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const hidden = useRef(new Set()); // ids completed locally, not yet sent
 
   const refresh = useCallback(async () => {
     try {
-      const [t, e, n, m] = await Promise.all([getTodos(), getUpcoming(), getNotes(), getMessages()]);
+      const [t, e, n, m, l] = await Promise.all([
+        getTodos(), getUpcoming(), getNotes(), getMessages(), getLearnings().catch(() => []),
+      ]);
       setTodos(t.filter(x => !hidden.current.has(x.id)));
       setEvents(e);
       setNotes(n);
-      setLatest(m.find(x => x.from !== 'me') || null);
+      const cutoff = Date.now() - LATEST_MAX_AGE_MS;
+      setLatest(m.find(x => x.from !== 'me' && new Date(x.created_at).getTime() >= cutoff) || null);
+      setLearning(l[0] || null);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -57,5 +65,11 @@ export function useBoard() {
     };
   }, [refresh]);
 
-  return { todos, events, notes, latest, loaded, error, refresh, complete };
+  // Spaced repetition: the server schedules the next review from the answer.
+  const review = useCallback(async (item, gotRight) => {
+    setLearning(null);
+    try { await reviewLearning(item.id, gotRight); } finally { refresh(); }
+  }, [refresh]);
+
+  return { todos, events, notes, latest, learning, loaded, error, refresh, complete, review };
 }
