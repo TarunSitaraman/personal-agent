@@ -1,21 +1,22 @@
+// Blu design tokens. One accent, glass as the only material, Helvetica (TeX Gyre Heros) everywhere.
+// Heros ships only Regular and Bold, embedded at build time by the expo-font plugin; on Android the
+// family name is the file name. Never combine these with fontWeight — Android would synthesise a
+// fake bold on top of the real one.
 export const C = {
-  bg:   '#09090b',
-  s1:   '#111115',
-  s2:   '#18181d',
-  line: '#27272f',
-  t1:   '#fafafa',
-  t2:   '#71717a',
-  t3:   '#3f3f46',
-  hex:  '#4f8ef7',
-  srq:  '#34d399',
-  per:  '#a78bfa',
-  red:  '#ef4444',
+  bg: '#04060f',
+  ink: '#050d2c',
+  accent: '#82a9ff',
+  text: '#f4f7ff',
+  text2: 'rgba(228,236,255,0.66)',
+  text3: 'rgba(228,236,255,0.40)',
+  line: 'rgba(255,255,255,0.10)',
+  glass: 'rgba(20,32,70,0.38)',
+  glassStrong: 'rgba(10,18,44,0.82)',
+  rim: 'rgba(255,255,255,0.16)',
+  danger: '#ff8f8f',
 };
 
-export const FONT = {
-  black:     { fontFamily: 'System', fontWeight: '900' },
-  bold:      { fontFamily: 'System', fontWeight: '700' },
-  semibold:  { fontFamily: 'System', fontWeight: '600' },
-  medium:    { fontFamily: 'System', fontWeight: '500' },
-  regular:   { fontFamily: 'System', fontWeight: '400' },
+export const F = {
+  regular: { fontFamily: 'Heros-Regular' },
+  bold: { fontFamily: 'Heros-Bold' },
 };

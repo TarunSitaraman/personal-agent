@@ -78,27 +78,22 @@ export async function registerPushToken(token) {
   return request('/dashboard/api/push/register', { method: 'POST', body: { token } });
 }
 
-export const CTX_COLOR = {
-  default: '#4f8ef7',
-  fallback: '#4f8ef7',
-  personal: '#a78bfa',
-};
-
-export function fmtTime(iso) {
-  return new Date(iso).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
+// Snoozing goes through the assistant: "remind me about X …" matches the existing todo and moves
+// its reminder (set_reminder looks up by content before inserting), so there is no second row.
+export async function snoozeTodo(content, when = 'in 1 hour') {
+  return chat(`remind me about "${content}" ${when}`);
 }
 
-export function relTime(iso) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const h = Math.floor(diff / 3.6e6);
-  const d = Math.floor(diff / 8.64e7);
-  if (d > 6) return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-  if (d >= 1) return d === 1 ? 'yesterday' : `${d}d ago`;
-  if (h >= 1) return `${h}h ago`;
-  return 'just now';
+export async function sendTestPush() {
+  return request('/dashboard/api/push/test', { method: 'POST' });
+}
+
+// Calendar events from now on. The server list also includes past events and todo reminders,
+// so filter here: events only, anything that started in the last half hour still counts as "now".
+export async function getUpcoming() {
+  const rows = await request('/dashboard/api/events?limit=50');
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  return rows
+    .filter(r => r.type === 'event' && r.start_at && new Date(r.start_at).getTime() >= cutoff)
+    .sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
 }

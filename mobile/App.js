@@ -1,29 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { enableScreens } from 'react-native-screens';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
-import { createNavigationContainerRef } from '@react-navigation/native';
 
-enableScreens();
-
-import HomeScreen from './screens/HomeScreen';
-import ChatScreen from './screens/ChatScreen';
-import TodosScreen from './screens/TodosScreen';
-import CalendarScreen from './screens/CalendarScreen';
-import NotesScreen from './screens/NotesScreen';
-import { C } from './theme';
-import { registerPushToken } from './api';
-import TokenScreen from './screens/TokenScreen';
+import Sky from './sky/Sky';
+import { useSky } from './sky/useSky';
+import { SettingsProvider, useSettings } from './settings';
+import { useBoard } from './board';
+import { registerPushToken, snoozeTodo } from './api';
 import { getToken, onSignedOut } from './auth';
+import NowScreen from './screens/NowScreen';
+import TokenScreen from './screens/TokenScreen';
+import AssistantBar, { BAR_HEIGHT } from './components/AssistantBar';
+import Sheet from './components/Sheet';
+import Toast from './components/Toast';
+import AssistantSheet from './sheets/AssistantSheet';
+import LibrarySheet from './sheets/LibrarySheet';
+import ItemSheet from './sheets/ItemSheet';
+import SettingsSheet from './sheets/SettingsSheet';
+import { C } from './theme';
 
 // Show notifications as banners even when the app is foregrounded.
-// shouldShowBanner/shouldShowList replaced the deprecated shouldShowAlert (SDK 54).
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -32,14 +34,6 @@ Notifications.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
-
-const navigationRef = createNavigationContainerRef();
-
-// Any notification tap opens the thread, where the full message is. The newest message is at the
-// bottom and Chat scrolls there on load, so a just-delivered one is what you land on.
-function openChat() {
-  if (navigationRef.isReady()) navigationRef.navigate('Chat');
-}
 
 async function setupPushNotifications() {
   if (!Device.isDevice) return; // push tokens only work on real devices
@@ -50,61 +44,106 @@ async function setupPushNotifications() {
   if (status !== 'granted') return;
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'General',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
+    await Notifications.setNotificationChannelAsync('default', { name: 'General', importance: Notifications.AndroidImportance.DEFAULT });
     await Notifications.setNotificationChannelAsync('reminders', {
-      name: 'Todo Reminders',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
-      vibrationPattern: [0, 250, 250, 250],
+      name: 'Todo Reminders', importance: Notifications.AndroidImportance.HIGH, sound: 'default', vibrationPattern: [0, 250, 250, 250],
     });
-    await Notifications.setNotificationChannelAsync('briefs', {
-      name: 'Daily Briefs',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
-    await Notifications.setNotificationChannelAsync('nudges', {
-      name: 'Nudges',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
+    await Notifications.setNotificationChannelAsync('briefs', { name: 'Daily Briefs', importance: Notifications.AndroidImportance.DEFAULT });
+    await Notifications.setNotificationChannelAsync('nudges', { name: 'Nudges', importance: Notifications.AndroidImportance.DEFAULT });
   }
 
-  // The Expo push service needs an Expo token, which needs the EAS project id. The old code
-  // called this without one and fell back to a raw FCM device token that Expo can never deliver to.
+  // The Expo push service needs an Expo token, which needs the EAS project id.
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-  if (!projectId) {
-    console.warn('[Push] No EAS projectId — run `eas init` in mobile/');
-    return;
-  }
+  if (!projectId) return;
   try {
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
     await registerPushToken(token);
-  } catch (e) {
-    console.warn('[Push] Registration failed:', e.message);
+  } catch {
+    // Registration retries on every launch; WhatsApp stays the fallback meanwhile.
   }
 }
 
-const Tab = createBottomTabNavigator();
+function Home({ sky }) {
+  const insets = useSafeAreaInsets();
+  const board = useBoard();
+  const [sheet, setSheet] = useState(null); // 'assistant' | 'library' | 'item' | 'settings'
+  const [libraryTab, setLibraryTab] = useState('todos');
+  const [entry, setEntry] = useState(null);
+  const [toast, setToast] = useState(null);
 
-const NAV_THEME = {
-  ...DefaultTheme,
-  colors: { ...DefaultTheme.colors, background: C.bg, card: C.s1, border: C.line, text: C.t1 },
-};
+  const barBottom = insets.bottom + 12;
+  const close = useCallback(() => setSheet(null), []);
+  const showToast = useCallback((text, onUndo) => setToast({ id: Date.now(), text, onUndo }), []);
+  const dismissToast = useCallback(() => setToast(null), []);
 
-function TabIcon({ label, focused }) {
-  const icons = { Home: '🏠', Chat: '💬', Todos: '☑️', Calendar: '📅', Notes: '📝' };
-  const accs = { Home: C.hex, Chat: C.srq, Todos: C.hex, Calendar: C.per, Notes: C.per };
-  const acc = accs[label] || C.hex;
+  const openAssistant = useCallback(() => setSheet('assistant'), []);
+  const openLibrary = useCallback(tab => { setLibraryTab(tab); setSheet('library'); }, []);
+  const openItem = useCallback(e => { setEntry(e); setSheet('item'); }, []);
+
+  const onDone = useCallback(todo => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    const undo = board.complete(todo, () => showToast("Couldn't mark that done"));
+    showToast(`Done · ${todo.content}`, undo);
+    setSheet(s => (s === 'item' ? null : s));
+  }, [board, showToast]);
+
+  const onSnooze = useCallback((todo, phrase = 'in 1 hour') => {
+    setSheet(s => (s === 'item' ? null : s));
+    showToast('Snoozing…');
+    snoozeTodo(todo.content, phrase)
+      .then(() => { showToast(`Snoozed · ${phrase.replace(/^in /, '')}`); board.refresh(); })
+      .catch(() => showToast("Couldn't snooze that"));
+  }, [board, showToast]);
+
+  // Any notification tap opens the conversation, where the full message is.
+  useEffect(() => {
+    setupPushNotifications();
+    Notifications.getLastNotificationResponseAsync().then(r => { if (r) setSheet('assistant'); }).catch(() => {});
+    const tapped = Notifications.addNotificationResponseReceivedListener(() => setSheet('assistant'));
+    const received = Notifications.addNotificationReceivedListener(() => board.refresh());
+    return () => { tapped.remove(); received.remove(); };
+  }, []);
+
   return (
-    <View style={[s.iconWrap, focused && { borderTopColor: acc }]}>
-      <Text style={s.iconEmoji}>{icons[label]}</Text>
-      <Text style={[s.iconLabel, { color: focused ? acc : C.t2 }]}>{label}</Text>
+    <View style={{ flex: 1 }}>
+      <NowScreen
+        board={board}
+        sky={sky}
+        bottomInset={barBottom + BAR_HEIGHT}
+        onOpenSettings={() => setSheet('settings')}
+        onOpenLibrary={openLibrary}
+        onOpenItem={openItem}
+        onOpenAssistant={openAssistant}
+        onDone={onDone}
+        onSnooze={onSnooze}
+      />
+      <AssistantBar onPress={openAssistant} bottom={barBottom} />
+      <Toast toast={sheet ? null : toast} onDismiss={dismissToast} bottom={barBottom + BAR_HEIGHT + 12} />
+
+      <Sheet open={sheet === 'library'} onClose={close} heightRatio={0.84}>
+        <LibrarySheet tab={libraryTab} onTab={setLibraryTab} board={board} onOpenItem={openItem} onDone={onDone} onSnooze={onSnooze} />
+      </Sheet>
+      <Sheet open={sheet === 'item'} onClose={close} heightRatio={0.56}>
+        <ItemSheet
+          entry={entry}
+          onDone={onDone}
+          onSnooze={onSnooze}
+          onAsk={() => setSheet('assistant')}
+        />
+      </Sheet>
+      <Sheet open={sheet === 'settings'} onClose={close} heightRatio={0.84}>
+        <SettingsSheet onToast={showToast} />
+      </Sheet>
+      <Sheet open={sheet === 'assistant'} onClose={close} heightRatio={0.93}>
+        <AssistantSheet open={sheet === 'assistant'} onChanged={board.refresh} />
+      </Sheet>
     </View>
   );
 }
 
-export default function App() {
+function Root() {
+  const { settings } = useSettings();
+  const sky = useSky(settings);
   // 'loading' until secure storage is read; the token screen until a valid token is stored.
   const [authState, setAuthState] = useState('loading');
 
@@ -113,80 +152,24 @@ export default function App() {
     return onSignedOut(() => setAuthState('signedOut'));
   }, []);
 
-  // Register for push once signed in; re-registering on each launch is harmless (idempotent).
-  useEffect(() => {
-    if (authState === 'signedIn') setupPushNotifications();
-  }, [authState]);
-
-  useEffect(() => {
-    const received = Notifications.addNotificationReceivedListener(n => {
-      console.log('[Push] Received:', n.request.content.title);
-    });
-    const tapped = Notifications.addNotificationResponseReceivedListener(() => openChat());
-    return () => {
-      received.remove();
-      tapped.remove();
-    };
-  }, []);
-
-  if (authState === 'loading') return null;
-  if (authState === 'signedOut') {
-    return (
-      <SafeAreaProvider>
-        <StatusBar style="light" />
-        <TokenScreen onSignedIn={() => setAuthState('signedIn')} />
-      </SafeAreaProvider>
-    );
-  }
-
   return (
-    <SafeAreaProvider>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar style="light" />
-      <NavigationContainer
-        theme={NAV_THEME}
-        ref={navigationRef}
-        onReady={() => {
-          // A tap that launched the app from cold start is not delivered to the listener above.
-          Notifications.getLastNotificationResponseAsync()
-            .then(r => { if (r) openChat(); })
-            .catch(() => {});
-        }}
-      >
-        <Tab.Navigator
-          screenOptions={({ route }) => ({
-            headerShown: false,
-            tabBarStyle: {
-              backgroundColor: C.s1,
-              borderTopColor: C.line,
-              borderTopWidth: 1,
-              height: 72,
-              paddingBottom: 0,
-              paddingTop: 0,
-            },
-            tabBarShowLabel: false,
-            tabBarIcon: ({ focused }) => <TabIcon label={route.name} focused={focused} />,
-          })}
-        >
-          <Tab.Screen name="Home"     component={HomeScreen} />
-          <Tab.Screen name="Chat"     component={ChatScreen} />
-          <Tab.Screen name="Todos"    component={TodosScreen} />
-          <Tab.Screen name="Calendar" component={CalendarScreen} />
-          <Tab.Screen name="Notes"    component={NotesScreen} />
-        </Tab.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+      <Sky palette={sky.palette} sunX={sky.sunX} reduceMotion={sky.reduceMotion} />
+      {authState === 'signedIn' ? <Home sky={sky} /> : null}
+      {authState === 'signedOut' ? <TokenScreen onSignedIn={() => setAuthState('signedIn')} /> : null}
+    </View>
   );
 }
 
-const s = StyleSheet.create({
-  iconWrap: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingHorizontal: 6,
-    borderTopWidth: 2,
-    borderTopColor: 'transparent',
-    width: 64,
-  },
-  iconEmoji: { fontSize: 18, lineHeight: 22 },
-  iconLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5, marginTop: 3, textTransform: 'uppercase' },
-});
+export default function App() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <SettingsProvider>
+          <Root />
+        </SettingsProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
