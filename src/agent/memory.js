@@ -1228,6 +1228,49 @@ async function getUserByNumber(waNumber) {
 
 // First contact. ON CONFLICT rather than INSERT so two messages arriving together — WhatsApp
 // retries aggressively — cannot create the same person twice.
+// The PIN columns (migrate_db.js step 15) are also ensured here, once per process, because the
+// migration has to be run from a network that can reach the database and a missed run would
+// otherwise turn every PIN request into a 500. Idempotent: ADD COLUMN IF NOT EXISTS.
+let pinColumnsReady = null;
+function ensurePinColumns() {
+  if (!pinColumnsReady) {
+    pinColumnsReady = pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_failures INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMPTZ;
+    `).catch(err => { pinColumnsReady = null; throw err; }); // retry on the next request
+  }
+  return pinColumnsReady;
+}
+
+// PIN sign-in. Looked up by number, not by the current user: this runs before anyone is signed in.
+async function getUserAuthByNumber(waNumber) {
+  await ensurePinColumns();
+  const { rows } = await pool.query(
+    `SELECT id, wa_number, name, tz, active, dashboard_token, pin_hash, pin_failures, pin_locked_until
+       FROM users WHERE wa_number = $1`,
+    [waNumber]
+  );
+  return rows[0] || null;
+}
+
+// A new PIN also clears any failure count and lock, so setting one is a clean start.
+async function setUserPinHash(userId, pinHash) {
+  await ensurePinColumns();
+  await pool.query(
+    'UPDATE users SET pin_hash = $1, pin_failures = 0, pin_locked_until = NULL WHERE id = $2',
+    [pinHash, userId]
+  );
+}
+
+async function recordPinAttempt(userId, failures, lockedUntil) {
+  await ensurePinColumns();
+  await pool.query(
+    'UPDATE users SET pin_failures = $1, pin_locked_until = $2 WHERE id = $3',
+    [failures, lockedUntil, userId]
+  );
+}
+
 async function createUser(waNumber, name = null) {
    const token = crypto.randomUUID();
    const { rows } = await pool.query(
@@ -1363,6 +1406,7 @@ async function recordItemEvent(itemId, eventType, snapshot, diffSummary) {
   updateNoteContent, saveState, getState, deleteState,
   recordCorrection, getUnexportedCorrections, markCorrectionsExported,
   saveInboxMessage, getThread, countCompletedSince,
+  getUserAuthByNumber, setUserPinHash, recordPinAttempt,
   getOldNotes, getConversationsLastWeek,
   rawQuery,
 
