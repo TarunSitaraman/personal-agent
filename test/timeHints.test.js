@@ -40,6 +40,12 @@ test('weekdays mean the next one, never today', () => {
   assert.strictEqual(at('dentist tuesday 3pm'), ist('2026-09-29T15:00:00')); // today is Tuesday
 });
 
+test('spoken forms from voice notes: "10 in the morning", "6 in the evening"', () => {
+  assert.strictEqual(at('Remind me to call the bank tomorrow at 10 in the morning.'), ist('2026-09-23T10:00:00'));
+  assert.strictEqual(at('pick up the parcel at 6 in the evening'), ist('2026-09-22T18:00:00'));
+  assert.strictEqual(at('call amma at 8 at night'), ist('2026-09-22T20:00:00'));
+});
+
 test('relative offsets', () => {
   assert.strictEqual(at('check the oven in 20 minutes'), ist('2026-09-22T10:56:00'));
   assert.strictEqual(at('follow up in 2 hours'), ist('2026-09-22T12:36:00'));

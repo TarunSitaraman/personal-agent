@@ -17,13 +17,13 @@ async function downloadWhatsAppAudio(mediaId) {
   return { buffer: Buffer.from(audioBuffer), mimeType: meta.mime_type };
 }
 
-async function transcribeAudio(mediaId) {
+// Transcribes audio bytes with Groq Whisper. Shared by WhatsApp voice notes and the app's
+// voice button (POST /dashboard/chat/voice). Returns the text, or null on any failure.
+async function transcribeBuffer(buffer, mimeType, filename) {
   try {
-    const { buffer, mimeType } = await downloadWhatsAppAudio(mediaId);
-
     const ext = mimeType.includes('ogg') ? 'ogg' : 'mp4';
     const form = new FormData();
-    form.append('file', buffer, { filename: `audio.${ext}`, contentType: mimeType });
+    form.append('file', buffer, { filename: filename || `audio.${ext}`, contentType: mimeType });
     form.append('model', 'whisper-large-v3');
     form.append('language', 'en');
 
@@ -38,11 +38,21 @@ async function transcribeAudio(mediaId) {
       }
     );
 
-    return data.text;
+    return data.text?.trim() || null;
   } catch (err) {
     console.error('Whisper transcription error:', err.response?.data || err.message);
     return null;
   }
 }
 
-module.exports = { transcribeAudio };
+async function transcribeAudio(mediaId) {
+  try {
+    const { buffer, mimeType } = await downloadWhatsAppAudio(mediaId);
+    return await transcribeBuffer(buffer, mimeType);
+  } catch (err) {
+    console.error('WhatsApp audio download error:', err.response?.data || err.message);
+    return null;
+  }
+}
+
+module.exports = { transcribeAudio, transcribeBuffer };

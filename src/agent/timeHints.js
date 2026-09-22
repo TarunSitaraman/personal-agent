@@ -1,8 +1,9 @@
 // Reads a reminder time out of the words of a message: "today around 6pm", "tonight",
-// "tomorrow morning", "friday at 10:30am", "in 20 minutes". Deterministic, so a todo that
-// plainly carries a time gets a reminder even when the classifier returns add_todo without one —
-// which is what happened to "order groceries today after college around 6pm" (2026-09-22).
-// Returns a Date, or null when the text names no time, or names one that has already passed today.
+// "tomorrow morning", "friday at 10:30am", "in 20 minutes", "10 in the morning". Deterministic,
+// so a todo that plainly carries a time gets a reminder even when the classifier returns add_todo
+// without one — which is what happened to "order groceries today after college around 6pm"
+// (2026-09-22). Returns a Date, or null when the text names no time, or names one that has
+// already passed on a day that was said explicitly.
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 // Day parts without a clock time. Evening/tonight match the Tonight 9pm button's spirit.
@@ -38,6 +39,12 @@ function clockTime(t) {
     let h = +m[1] % 12;
     if (m[3] === 'pm') h += 12;
     return { h, mi: m[2] ? +m[2] : 0 };
+  }
+  // Spoken: "10 in the morning", "6 in the evening", "8 at night" — what voice notes transcribe to.
+  m = t.match(/\b(\d{1,2})(?::(\d{2}))?\s+(?:in the (morning|afternoon|evening)|at night)\b/);
+  if (m && +m[1] >= 1 && +m[1] <= 12) {
+    const pm = m[3] ? m[3] !== 'morning' : true; // "at night" leaves m[3] empty
+    return { h: (+m[1] % 12) + (pm ? 12 : 0), mi: m[2] ? +m[2] : 0 };
   }
   // "17:45", "at 9:30" — 24-hour with a colon.
   m = t.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);

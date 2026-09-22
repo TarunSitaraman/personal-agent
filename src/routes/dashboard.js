@@ -4,6 +4,8 @@ const { getAnalytics, getAllKnowledge, getPendingTodos, getRecentNotes, getUnrev
 const { isExpoPushToken, sendPush } = require('../push/push');
 const { parseThreadQuery } = require('../agent/thread');
 const { parseSince } = require('../agent/doneToday');
+const { parseVoiceBody } = require('../agent/voice');
+const { transcribeBuffer } = require('../integrations/whisper');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
 const hub = require('../events/hub');
@@ -241,6 +243,25 @@ router.get('/api/messages', async (req, res) => {
   } catch (err) {
     console.error('Thread error:', err.message);
     res.status(500).json({ error: 'Failed to load messages' });
+  }
+});
+
+// Chat — voice note (base64). Transcribed by the same Whisper path as WhatsApp voice notes, then
+// handled exactly as if the words had been typed. Returns the transcript so the app can show
+// what it heard.
+router.post('/chat/voice', express.json({ limit: '12mb' }), async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const voice = parseVoiceBody(req.body);
+  if (!voice.ok) return res.status(400).json({ error: voice.error });
+  try {
+    const transcript = await transcribeBuffer(voice.buffer, voice.mime, voice.filename);
+    if (!transcript) return res.status(422).json({ error: "Couldn't make out any words" });
+    const reply = await handleIncoming(transcript);
+    hub.notify();
+    res.json({ transcript, reply });
+  } catch (err) {
+    console.error('Dashboard voice error:', err.message);
+    res.status(500).json({ error: 'Failed to process voice note' });
   }
 });
 
