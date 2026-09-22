@@ -5,10 +5,11 @@ const { router: webhookRouter } = require('./whatsapp/webhook');
 const { startScheduler } = require('./scheduler/briefs');
 const dashboardRouter = require('./routes/dashboard');
 const apiRouter = require('./routes/api');
+const { jsonExceptUploads } = require('./jsonBody');
 
 const app = express();
 app.use(express.static('public'));
-app.use(express.json());
+app.use(jsonExceptUploads()); // voice and image uploads bring their own larger limit
 app.use('/webhook', webhookRouter);
 app.use('/dashboard', dashboardRouter);
 app.use('/api', apiRouter);
