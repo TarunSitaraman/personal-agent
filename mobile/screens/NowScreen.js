@@ -16,7 +16,7 @@ import { pickNext, countdown } from '../nextUp';
 import { when, clock, ago, plain, restates } from '../format';
 import { C, T } from '../theme';
 
-const SHOWN_TODOS = 5;
+const SHOWN_TODOS = 8;
 const SHOWN_EVENTS = 3;
 const ORB_SIZE = 58;
 const LONG_BRIEF = 150; // characters; about what three lines hold at this size
@@ -46,7 +46,7 @@ export default function NowScreen({
   const insets = useSafeAreaInsets();
   const [pulling, setPulling] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
-  const { todos, events, latest, learning, doneToday, loaded } = board;
+  const { todos, events, notes, latest, learning, doneToday, loaded } = board;
   const now = sky.now;
   const next = pickNext(events, todos, now);
   const openTodos = next?.kind === 'todo' ? todos.slice(1) : todos;
@@ -151,6 +151,20 @@ export default function NowScreen({
             </Animated.View>
           ))}
         </View>
+      ) : null}
+
+      {board.notes.length ? (
+        <Animated.View entering={FadeInDown.duration(380)} style={s.section}>
+          <Label>Your notes</Label>
+          <Glass radius={18} style={s.card}>
+            {board.notes.slice(0, 3).map((n, i) => (
+              <Pressable key={n.id} onPress={() => onOpenItem({ kind: 'note', item: n })} style={{ padding: 8, gap: 6 }}>
+                <Text style={[T.headline, { flex: 1, fontSize: 16 }]} numberOfLines={2}>{n.content}</Text>
+              </Pressable>
+            ))}
+            {board.notes.length > 3 ? <Text style={[T.sub, { color: 'rgba(255,255,255,0.5)', marginTop: 4 }]}>{board.notes.length - 3} more</Text> : null}
+          </Glass>
+        </Animated.View>
       ) : null}
 
       {learning ? (
