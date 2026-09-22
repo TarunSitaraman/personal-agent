@@ -304,6 +304,15 @@ const { rows: seeded } = await pool.query(
     `);
     console.log('✔ item_events table and index created/verified');
 
+    // 15. PIN sign-in for the app (src/agent/pin.js, src/routes/auth.js). Only a salted scrypt
+    // hash is stored. pin_failures / pin_locked_until drive the five-tries, fifteen-minute lock.
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_failures INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMPTZ;
+    `);
+    console.log('✔ users PIN columns added/verified');
+
     console.log('Migrations completed successfully!');
   } catch (err) {
     console.error('Migration error:', err);

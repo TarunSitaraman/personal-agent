@@ -6,11 +6,18 @@ const { startScheduler } = require('./scheduler/briefs');
 const dashboardRouter = require('./routes/dashboard');
 const apiRouter = require('./routes/api');
 const { jsonExceptUploads } = require('./jsonBody');
+const { makeAuthRouter } = require('./routes/auth');
+const memory = require('./agent/memory');
+const { isAllowed } = require('./agent/registration');
+const { runAsUser } = require('./agent/context');
+const { deliver } = require('./scheduler/delivery');
 
 const app = express();
 app.use(express.static('public'));
 app.use(jsonExceptUploads()); // voice and image uploads bring their own larger limit
 app.use('/webhook', webhookRouter);
+// Sign-in with number + PIN: outside /dashboard, whose every route requires the token this returns.
+app.use('/auth', makeAuthRouter({ memory, isAllowed, runAsUser, deliver }));
 app.use('/dashboard', dashboardRouter);
 app.use('/api', apiRouter);
 

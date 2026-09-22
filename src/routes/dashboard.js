@@ -5,6 +5,8 @@ const { isExpoPushToken, sendPush } = require('../push/push');
 const { parseThreadQuery } = require('../agent/thread');
 const { parseSince } = require('../agent/doneToday');
 const { parseVoiceBody } = require('../agent/voice');
+const { checkPin, hashPin } = require('../agent/pin');
+const { getUserAuthByNumber, setUserPinHash } = require('../agent/memory');
 const { transcribeBuffer } = require('../integrations/whisper');
 const { getOpenPRs, getOpenIssues, getRecentCommits } = require('../integrations/github');
 const { handleIncoming, handleIncomingStream } = require('../agent/brain');
@@ -219,6 +221,32 @@ router.post('/api/push/test', async (req, res) => {
   } catch (err) {
     console.error('Push test error:', err.message);
     res.status(500).json({ error: 'Failed to send' });
+  }
+});
+
+// PIN for app sign-in (see src/routes/auth.js). Setting one needs only the signed-in token; that
+// token is the credential the PIN stands in for.
+router.get('/api/pin', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const u = await getUserAuthByNumber(req.user.wa_number);
+    res.json({ hasPin: !!u?.pin_hash, number: req.user.wa_number });
+  } catch (err) {
+    console.error('PIN status error:', err.message);
+    res.status(500).json({ error: 'Failed to read PIN status' });
+  }
+});
+
+router.post('/api/pin', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const valid = checkPin(req.body?.pin);
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    await setUserPinHash(req.user.id, await hashPin(req.body.pin));
+    res.json({ ok: true, number: req.user.wa_number });
+  } catch (err) {
+    console.error('Set PIN error:', err.message);
+    res.status(500).json({ error: 'Failed to set PIN' });
   }
 });
 
