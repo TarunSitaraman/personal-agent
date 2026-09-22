@@ -22,6 +22,10 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-22 | **Voice notes, WhatsApp-style.** The bar's right button is a mic (home and chat); with text typed it becomes send. Recording shows the mockup's Voice panel: live waveform from the mic level, timer, Cancel, white Stop. Blu replies in text — no speech synthesis. | Voice was a key part of the WhatsApp experience; the mic in the mockups never reached the app. |
+| 2026-09-22 | **"Todo added" replies offer Tonight 9pm / Tomorrow 8am chips** when no reminder was set. | Parity with WhatsApp's "Want a reminder for this?" follow-up. The server now also reads times from the message itself. |
+| 2026-09-22 | **Sheets are opaque** (`#0a1024` under the glass). | At 94% the Now screen's big headline showed through and competed with the sheet. |
+| 2026-09-22 | Chat's empty state renders **outside** the inverted list. | Android flips an inverted list's empty component on both axes, which mirrored the text. |
 | 2026-09-22 | **Orb replaces the gear.** Blu's orb (shader port of the GradientOrb reference) sits top-right: tap to talk, long-press for Settings; tapping the date line also opens Settings. The orb is also the empty state and the "thinking" indicator. | The glass gear circle "looked very off". One living symbol for Blu is better than a utility button. |
 | 2026-09-22 | **With no event, the top todo is the headline** ("Next up"). | Otherwise the top half of the screen is empty and the most important todo sits in a list. |
 | 2026-09-22 | **"From Blu" shows only proactive messages** (briefs, nudges, reminders), never replies to your own messages. | A reply repeats what you just did ("Todo added: …"), which the list already shows. |
@@ -57,13 +61,14 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 | SwipeRow | `components/SwipeRow.js` | Tap circle → spring fill + tick; swipe right Done, left Later (snooze 1h). |
 | Sheet | `components/Sheet.js` | Glass, inset 6px, springs up, drag/tap-outside/Back to close. |
 | Toast | `components/Toast.js` | Glass capsule; accent bar drains over the 4s Undo window. |
+| VoicePanel | `components/VoicePanel.js` | `useVoiceNote()` owns the mic (expo-audio, AAC/m4a, metering on); the panel shows 32 level bars, timer, Cancel, Stop. Auto-stops at 3 minutes; under 0.7 s is ignored as a mis-tap. |
 
 ## Screens
 
 - **Now** — date + weather (tap → Settings) and the orb; NEXT (event, else top todo) with rolling
   countdown; OPEN todos; Coming up; Worth remembering (glass card, Got it / Again); latest proactive
   message (tap to expand); suggestion chips when nothing is open (hidden while a toast shows).
-- **Assistant** — white bubbles for you; replies as cards with a glowing accent edge; proactive
+- **Assistant** — mic when the box is empty (voice notes show as "Voice note · 0:07", then the transcript once heard); white bubbles for you; replies as cards with a glowing accent edge; proactive
   messages as dashed cards; Undo / Tell me more chips under the newest reply; quick questions above
   the input; the orb spins while Blu thinks; timestamps only after a 30-minute gap.
 - **Library** — segmented Todos / Upcoming / Notes; upcoming grouped under day labels.
@@ -83,4 +88,4 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 ## Open
 
 - Widgets (Now, Quick add, Todos) — need a native build; see the widgets plan when started.
-- Voice notes and image upload in the assistant.
+- Image upload in the assistant (the server route exists and now accepts large bodies).

@@ -109,3 +109,9 @@ export async function getDoneToday() {
   const d = await request(`/dashboard/api/done?since=${encodeURIComponent(midnight.toISOString())}`);
   return d.count || 0;
 }
+
+// A voice note: the server transcribes it (Whisper, as for WhatsApp) and replies as if typed.
+// Resolves to { transcript, reply }.
+export async function sendVoice(base64, mime) {
+  return request('/dashboard/chat/voice', { method: 'POST', body: { audio: base64, mime } });
+}

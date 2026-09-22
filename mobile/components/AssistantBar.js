@@ -1,4 +1,5 @@
-// The pinned glass bar: the one way in to talk to Blu or add something.
+// The pinned glass bar: the one way in to talk to Blu or add something. Tap the words to type;
+// tap the mic to start a voice note straight away.
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Glass from './Glass';
@@ -8,13 +9,15 @@ import { C } from '../theme';
 
 export const BAR_HEIGHT = 56;
 
-export default function AssistantBar({ onPress, bottom }) {
+export default function AssistantBar({ onPress, onVoice, bottom }) {
   return (
     <View style={[s.wrap, { bottom }]} pointerEvents="box-none">
       <Press onPress={onPress} scaleTo={0.97} accessibilityRole="button" accessibilityLabel="Ask Blu">
         <Glass radius={BAR_HEIGHT / 2} base="rgba(8,13,32,0.55)" style={s.bar}>
           <Text style={s.placeholder}>Remind, note, ask…</Text>
-          <View style={s.go}><Icon name="arrowUp" size={17} color={C.ink} stroke={2.8} /></View>
+          <Press onPress={onVoice} scaleTo={0.88} hitSlop={8} style={s.go} accessibilityLabel="Record a voice note">
+            <Icon name="mic" size={18} color={C.ink} stroke={2.4} />
+          </Press>
         </Glass>
       </Press>
     </View>

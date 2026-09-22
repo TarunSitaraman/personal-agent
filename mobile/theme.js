@@ -21,7 +21,7 @@ export const C = {
   glassBottom: 'rgba(255,255,255,0.04)',
   glassRim: 'rgba(255,255,255,0.17)',
   glassEdge: 'rgba(255,255,255,0.32)',
-  sheet: 'rgba(8,13,32,0.94)', // under a sheet's glass, so text stays readable over the sky
+  sheet: '#0a1024', // opaque under a sheet's glass: the screen behind must not show through
   chip: 'rgba(255,255,255,0.07)',
   chipRim: 'rgba(255,255,255,0.15)',
 };

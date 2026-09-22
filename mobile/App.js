@@ -128,7 +128,7 @@ function Home({ sky }) {
         onSnooze={onSnooze}
         hideSuggestions={!!toast}
       />
-      <AssistantBar onPress={openAssistant} bottom={barBottom} />
+      <AssistantBar onPress={openAssistant} onVoice={() => onSuggest({ voice: true })} bottom={barBottom} />
       <Toast toast={sheet ? null : toast} onDismiss={dismissToast} bottom={barBottom + BAR_HEIGHT + 12} />
 
       <Sheet open={sheet === 'library'} onClose={close} title="Library" heightRatio={0.92}>
