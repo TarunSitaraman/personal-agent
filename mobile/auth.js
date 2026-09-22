@@ -9,7 +9,13 @@ let cached;                    // undefined = not read yet; '' = none stored
 const signedOutListeners = new Set();
 
 export async function getToken() {
-  if (cached === undefined) cached = (await SecureStore.getItemAsync(KEY)) || '';
+  if (cached === undefined) {
+    try {
+      cached = await SecureStore.getItemAsync(KEY) || '';
+    } catch {
+      cached = '';
+    }
+  }
   return cached || null;
 }
 
