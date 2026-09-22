@@ -3,8 +3,9 @@ const memory = require("./memory");
 const { getOpenPRs, getOpenPRsDetailed, getRecentCommits, getOpenIssues } = require("../integrations/github");
 const { extractGithubSnapshot, diffSnapshot, shouldSurface } = require("./itemTracking");
 const { detectFromAction, detectFromClarification } = require("./corrections");
-const { withIncomingMessage, currentIncomingMessage } = require("./context");
+const { withIncomingMessage, currentIncomingMessage, currentTz } = require("./context");
 const { cleanNudge } = require("./nudgeText");
+const { reminderFromText } = require("./timeHints");
 const { findConnections } = require("../integrations/connections");
 const { webSearch } = require("../integrations/search");
 const { sendButtonMessage, sendListMessage } = require("../whatsapp/send");
@@ -213,7 +214,7 @@ Data fields:
 - source: source if mentioned
 - tags: array of 0-2 short lowercase tags, e.g. ["smartresq"]. Omit or use [] when nothing fits. Never shown to Tarun.
 - title: event title
-- datetime: ISO datetime in IST (e.g. 2026-06-05T21:00:00+05:30) — use for add_event AND set_reminder when time is specific
+- datetime: ISO datetime in IST (e.g. 2026-06-05T21:00:00+05:30) — use for add_event, set_reminder AND add_todo whenever the message names a time ("tonight", "around 6pm", "tomorrow")
 - minutes: minutes from now — use for set_reminder only when no specific clock time given
 - duration: event duration in minutes (default 60)
 - recurrence: none | daily | weekdays | weekly
@@ -228,8 +229,8 @@ Data fields:
 - gotRight: true/false for review_learning
 
 ## FEW-SHOT EXAMPLES
-User: remember to buy groceries tonight
-{"reply": "Got it, groceries are on your list for tonight.", "action": "add_todo", "data": {"content": "buy groceries", "tags": []}, "confidence": 1.0}
+User (on 5 June): remember to buy groceries tonight
+{"reply": "Got it — groceries tonight, I'll remind you at 9.", "action": "add_todo", "data": {"content": "buy groceries", "tags": [], "datetime": "2026-06-05T21:00:00+05:30"}, "confidence": 1.0}
 
 User: renew my parking pass
 {"reply": "Did you just renew your parking pass, or should I add it as a task?", "action": "ask_context", "data": {"content": "renew parking pass"}, "confidence": 0.5}
@@ -1117,7 +1118,7 @@ ${summaryBlock}`;
     if (replyTo) {
       const finalAction = Array.isArray(parsed.actions) ? parsed.actions[0]?.action : parsed.action;
       const finalData = Array.isArray(parsed.actions) ? parsed.actions[0]?.data : parsed.data;
-      if (finalAction === 'add_todo' && finalData?.content) {
+      if (finalAction === 'add_todo' && finalData?.content && !todoReminderAt(finalData, userMessage)) {
         const key = finalData.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
         setTimeout(async () => {
           try {
@@ -1231,7 +1232,7 @@ Rules:
     extractFactsFromExchange(userMessage, replyText)
       .catch(err => console.error('[Facts] Extraction error:', err.message));
 
-    if (replyTo && primaryAction === 'add_todo' && primaryData?.content) {
+    if (replyTo && primaryAction === 'add_todo' && primaryData?.content && !todoReminderAt(primaryData, userMessage)) {
       const key = primaryData.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
       setTimeout(async () => {
         try {
@@ -1369,6 +1370,17 @@ const CRUMB_ITEM_TYPE = {
   add_todo: 'todo', set_reminder: 'todo', add_note: 'note', add_event: 'event',
 };
 
+// When a new todo should remind: the model's datetime if valid and in the future, else the time
+// named in the message itself. `message` defaults to the message being handled.
+function todoReminderAt(data, message) {
+  if (data?.datetime) {
+    const d = new Date(data.datetime);
+    if (!Number.isNaN(d.getTime()) && d > new Date()) return d;
+  }
+  const text = message || currentIncomingMessage() || data?.content;
+  return reminderFromText(text, new Date(), currentTz());
+}
+
 async function executeAction(action, data, defaultReply, replyTo = null) {
   const tags = data?.tags || [];
 
@@ -1453,9 +1465,14 @@ async function executeAction(action, data, defaultReply, replyTo = null) {
 
       case "add_todo":
         if (data?.content) {
+          // A todo that names a time gets a reminder: the model's datetime when it gave one,
+          // otherwise the time read from the words actually sent (timeHints.js).
+          const remindAt = todoReminderAt(data);
           const embedding = await getEmbedding(data.content);
-          await memory.addTodo(data.content, tags, null, embedding);
-          return `Todo added: "${data.content}"`;
+          await memory.addTodo(data.content, tags, remindAt, embedding);
+          if (!remindAt) return `Todo added: "${data.content}"`;
+          const timeStr = remindAt.toLocaleString('en-IN', { timeZone: currentTz(), dateStyle: 'short', timeStyle: 'short' });
+          return `Todo added: "${data.content}" — I'll remind you ${timeStr}`;
         }
         return "No todo content provided.";
 
