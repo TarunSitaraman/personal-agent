@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { getTodos, getUpcoming, getNotes, getMessages, getLearnings, getDoneToday, completeTodo, reviewLearning } from './api';
 import { TOAST_MS } from './components/Toast';
+import { refreshWidget } from './widget/widget';
 
 // A brief from last night is not "from Blu" at 4 am; past this age it stays in the thread only.
 const LATEST_MAX_AGE_MS = 6 * 3600 * 1000;
@@ -35,6 +36,7 @@ export function useBoard() {
       setLatest(m.find(x => x.from !== 'me' && x.kind && x.kind !== 'chat' && new Date(x.created_at).getTime() >= cutoff) || null);
       setLearning(l[0] || null);
       setDoneToday(d);
+      refreshWidget(t.filter(x => !hidden.current.has(x.id)), e); // keep the home-screen widget in step
       setError(null);
     } catch (err) {
       setError(err.message);

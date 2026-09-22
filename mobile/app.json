@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.tarunsitaraman.blumobile",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#1f4fd6",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -45,7 +45,10 @@
       [
         "expo-font",
         {
-          "fonts": ["./assets/fonts/Heros-Regular.otf", "./assets/fonts/Heros-Bold.otf"]
+          "fonts": [
+            "./assets/fonts/Heros-Regular.otf",
+            "./assets/fonts/Heros-Bold.otf"
+          ]
         }
       ],
       [
@@ -59,6 +62,29 @@
         {
           "locationWhenInUsePermission": "Blu can use your location so the sky matches your sunrise, sunset and local weather. You can set a city instead."
         }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "fonts": [
+            "./assets/fonts/Heros-Regular.otf",
+            "./assets/fonts/Heros-Bold.otf"
+          ],
+          "widgets": [
+            {
+              "name": "BluNow",
+              "label": "Blu",
+              "description": "What's next, and Blu's orb to talk to it",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "previewImage": "./assets/widget-preview.png",
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
       ]
     ],
     "extra": {
@@ -66,6 +92,7 @@
         "projectId": "c8781f24-c2b4-4d05-8ffa-11077893c4cc"
       }
     },
-    "owner": "tarunsitaraman"
+    "owner": "tarunsitaraman",
+    "scheme": "blu"
   }
 }

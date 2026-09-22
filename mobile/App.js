@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Platform } from 'react-native';
+import { View, Platform, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -102,6 +102,19 @@ function Home({ sky }) {
       .then(() => { showToast(phrase.startsWith('in ') ? `Snoozed for ${phrase.slice(3)}` : `Reminder set for ${phrase}`); board.refresh(); })
       .catch(() => showToast("Couldn't snooze that"));
   }, [board, showToast]);
+
+  // Widget taps arrive as links: blu://assistant (the orb) opens Blu's input, blu://now the Now
+  // screen. Handled on cold start and while running.
+  useEffect(() => {
+    const route = url => {
+      if (!url) return;
+      if (url.startsWith('blu://assistant')) openAssistant();
+      else if (url.startsWith('blu://now')) setSheet(null);
+    };
+    Linking.getInitialURL().then(route).catch(() => {});
+    const sub = Linking.addEventListener('url', e => route(e.url));
+    return () => sub.remove();
+  }, [openAssistant]);
 
   // Any notification tap opens the conversation, where the full message is.
   useEffect(() => {

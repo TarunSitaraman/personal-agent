@@ -43,16 +43,6 @@ export function Rolling({ text, style }) {
   );
 }
 
-// "in 50m", "15h 20m", "now" — a countdown to `iso`, re-rendered by the caller every minute.
-export function countdown(iso, now) {
-  const m = Math.round((new Date(iso) - now) / 60000);
-  if (m <= 0) return 'now';
-  if (m < 60) return `in ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h ${String(m % 60).padStart(2, '0')}m`;
-  return `${Math.round(h / 24)} days`;
-}
-
 // Shimmering placeholder line for first load.
 export function Skeleton({ width = '80%', height = 12, style }) {
   const o = useSharedValue(0.35);

@@ -11,7 +11,8 @@ import Glass from '../components/Glass';
 import Press from '../components/Press';
 import Orb from '../components/Orb';
 import SwipeRow from '../components/SwipeRow';
-import { Label, Chip, Rolling, countdown, Skeleton } from '../components/kit';
+import { Label, Chip, Rolling, Skeleton } from '../components/kit';
+import { pickNext, countdown } from '../nextUp';
 import { when, clock, ago, plain, restates } from '../format';
 import { C, T } from '../theme';
 
@@ -31,18 +32,6 @@ const SUGGESTIONS = [
 ];
 
 const BRIEF_KIND = { brief: 'Morning brief', evening: 'Evening brief', nudge: 'Nudge', reminder: 'Reminder', event: 'Starting soon', goal: 'One big thing', weekly: 'Weekly review', pulse: 'Tech pulse' };
-
-// NEXT is the next event; with none, the top todo takes the headline (and leaves the list).
-function pickNext(events, todos, now) {
-  const e = events[0];
-  if (e) return { kind: 'event', item: e, label: 'Next', title: e.title, at: e.start_at, sub: when(e.start_at, now) };
-  const t = todos[0];
-  if (t) {
-    const sub = t.remind_at ? 'Reminder ' + when(t.remind_at, now) : 'Open todo';
-    return { kind: 'todo', item: t, label: 'Next up', title: t.content, at: t.remind_at, sub };
-  }
-  return null;
-}
 
 // A line that is true about an empty day, never filler.
 function emptyLine(doneToday, now) {

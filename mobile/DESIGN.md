@@ -22,6 +22,7 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-22 | **Home-screen widget: A2 "Orb and next"** (4×2), chosen from the widget mockups. The orb opens Blu's input (`blu://assistant`); the text opens Now (`blu://now`). Still orb frame from the app's shader; countdown shown only when ≥ 2 h away. | The user's pick. Widgets redraw at most every 30 minutes, so a near countdown would be stale; the app pushes an update on every refresh. |
 | 2026-09-22 | **Voice notes, WhatsApp-style.** The bar's right button is a mic (home and chat); with text typed it becomes send. Recording shows the mockup's Voice panel: live waveform from the mic level, timer, Cancel, white Stop. Blu replies in text — no speech synthesis. | Voice was a key part of the WhatsApp experience; the mic in the mockups never reached the app. |
 | 2026-09-22 | **"Todo added" replies offer Tonight 9pm / Tomorrow 8am chips** when no reminder was set. | Parity with WhatsApp's "Want a reminder for this?" follow-up. The server now also reads times from the message itself. |
 | 2026-09-22 | **Sheets are opaque** (`#0a1024` under the glass). | At 94% the Now screen's big headline showed through and competed with the sheet. |
@@ -42,7 +43,7 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
   labels at 100% / 66% / 40% white; hairline `rgba(255,255,255,.13)`.
   Swipe reveals are muted: Done `#1d6b4a`/`#c9f5dd`, Later `#6b4c1d`/`#f5e3c9`.
 - **Glass** — gradient `rgba(255,255,255,.13) → .04`, rim `.17`, top edge `.32`, shadow
-  `0 10 18 rgba(0,0,0,.45)`. Sheets add a dark base `rgba(8,13,32,.94)` for legibility.
+  `0 10 18 rgba(0,0,0,.45)`. Sheets add an opaque base `#0a1024` so the screen behind never shows through.
 - **Type** (`T`) — hero 42 bold −1.5 (32 for long titles); title 22; headline 17 bold; body 16;
   sub 14; small 12; label 11 bold uppercase +1.3 tracking. Never add `fontWeight`.
 - **Radius** — chip 14, card 18, sheet 30, capsules fully round.
@@ -61,6 +62,7 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 | SwipeRow | `components/SwipeRow.js` | Tap circle → spring fill + tick; swipe right Done, left Later (snooze 1h). |
 | Sheet | `components/Sheet.js` | Glass, inset 6px, springs up, drag/tap-outside/Back to close. |
 | Toast | `components/Toast.js` | Glass capsule; accent bar drains over the 4s Undo window. |
+| Widget | `widget/BluNowWidget.js`, `widget/widget.js` | react-native-android-widget. Headless task handler fetches with the stored key; last snapshot cached for offline. `nextUp.js` decides "next" for both the widget and Now. Preview image and orb frame are rendered from the real shader in CanvasKit. |
 | VoicePanel | `components/VoicePanel.js` | `useVoiceNote()` owns the mic (expo-audio, AAC/m4a, metering on); the panel shows 32 level bars, timer, Cancel, Stop. Auto-stops at 3 minutes; under 0.7 s is ignored as a mis-tap. |
 
 ## Screens
@@ -87,5 +89,5 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 
 ## Open
 
-- Widgets (Now, Quick add, Todos) — need a native build; see the widgets plan when started.
+- More widgets from the mockups (B quick capture, C todos) if wanted — same library, JS-only once the native build is in.
 - Image upload in the assistant (the server route exists and now accepts large bodies).
