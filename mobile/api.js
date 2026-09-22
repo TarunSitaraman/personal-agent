@@ -115,3 +115,40 @@ export async function getDoneToday() {
 export async function sendVoice(base64, mime) {
   return request('/dashboard/chat/voice', { method: 'POST', body: { audio: base64, mime } });
 }
+
+// Sign-in / sign-up with number + PIN. No token yet, and the server's error text is what the user
+// needs to see ("Wrong number or PIN.", "locked for 15 minutes"), so these return it rather than
+// throwing a status code. Resolves to { ok, status, data }.
+async function authPost(path, body) {
+  try {
+    const r = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "Can't reach Blu. Check your connection." } };
+  }
+}
+
+export const pinSignIn = (number, pin) => authPost('/auth/pin/signin', { number, pin });
+export const pinSignUp = (number, pin) => authPost('/auth/pin/signup', { number, pin });
+
+export async function getPinStatus() {
+  return request('/dashboard/api/pin');
+}
+
+// Setting a PIN while signed in. Returns the server's message on a refused PIN.
+export async function setPin(pin) {
+  const t = await getToken();
+  const r = await fetch(`${BASE}/dashboard/api/pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ pin }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "Couldn't save the PIN.");
+  return data;
+}

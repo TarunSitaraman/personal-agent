@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Platform, Linking } from 'react-native';
+import { View, Text, Platform, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import * as Haptics from 'expo-haptics';
@@ -13,9 +13,10 @@ import { useSky } from './sky/useSky';
 import { SettingsProvider, useSettings } from './settings';
 import { useBoard } from './board';
 import { registerPushToken, snoozeTodo } from './api';
-import { getToken, onSignedOut } from './auth';
+import { getToken, onSignedOut, saveNumber } from './auth';
 import NowScreen from './screens/NowScreen';
-import TokenScreen from './screens/TokenScreen';
+import AuthFlow from './screens/AuthFlow';
+import SetPin from './components/SetPin';
 import AssistantBar, { BAR_HEIGHT } from './components/AssistantBar';
 import Sheet from './components/Sheet';
 import Toast from './components/Toast';
@@ -23,7 +24,7 @@ import AssistantSheet from './sheets/AssistantSheet';
 import LibrarySheet from './sheets/LibrarySheet';
 import ItemSheet from './sheets/ItemSheet';
 import SettingsSheet from './sheets/SettingsSheet';
-import { C } from './theme';
+import { C, T } from './theme';
 
 // Show notifications as banners even when the app is foregrounded.
 Notifications.setNotificationHandler({
@@ -170,6 +171,7 @@ function Root() {
   const sky = useSky(settings);
   // 'loading' until secure storage is read; the token screen until a valid token is stored.
   const [authState, setAuthState] = useState('loading');
+  const [askPin, setAskPin] = useState(false); // after a key sign-in: offer a PIN for next time
 
   useEffect(() => {
     getToken().then(t => setAuthState(t ? 'signedIn' : 'signedOut'));
@@ -180,9 +182,25 @@ function Root() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar style="light" />
       <Sky palette={sky.palette} sunX={sky.sunX} reduceMotion={sky.reduceMotion} />
-      {authState === 'signedIn' ? <Home sky={sky} /> : null}
-      {authState === 'signedOut' ? <TokenScreen onSignedIn={() => setAuthState('signedIn')} /> : null}
+      {authState === 'signedIn' && !askPin ? <Home sky={sky} /> : null}
+      {authState === 'signedIn' && askPin ? <PinPrompt onFinish={() => setAskPin(false)} /> : null}
+      {authState === 'signedOut' ? (
+        <AuthFlow onSignedIn={({ askForPin }) => { setAskPin(!!askForPin); setAuthState('signedIn'); }} />
+      ) : null}
     </View>
+  );
+}
+
+// Right after signing in with the long key: set a PIN so it's the last time.
+function PinPrompt({ onFinish }) {
+  return (
+    <SafeAreaView style={{ flex: 1, paddingHorizontal: 24, justifyContent: 'center', gap: 22 }}>
+      <View style={{ gap: 8 }}>
+        <Text style={{ fontFamily: 'Heros-Bold', fontSize: 34, lineHeight: 38, letterSpacing: -1, color: '#fff' }}>Set a PIN</Text>
+        <Text style={T.sub}>Next time, sign in with your number and six digits instead of the key.</Text>
+      </View>
+      <SetPin onDone={number => { if (number) saveNumber(number); onFinish(); }} onSkip={onFinish} />
+    </SafeAreaView>
   );
 }
 

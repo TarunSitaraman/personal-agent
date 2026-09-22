@@ -22,6 +22,8 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-22 | **Sign in with phone number + six-digit PIN**, from a landing page (orb, Sign in, Create account, "Use a key instead"). Sign-up is invite-only. After a key sign-in, a Set PIN step follows; Settings can set or change it. The number is remembered, so usually only the PIN is typed. | The 36-character key was painful to retype after a reinstall. Invite-only because the agent runs on metered LLM and WhatsApp quotas. |
+| 2026-09-22 | **Widget sized from its real dimensions**, not flex; orb edges faded to full transparency; title at most 2 lines (3 when resized taller) with the countdown folded into the subtitle. | On a phone the title ran off the right edge, three corners were pushed out of view, the last line was cut, and a square showed behind the orb. |
 | 2026-09-22 | **Home-screen widget: A2 "Orb and next"** (4×2), chosen from the widget mockups. The orb opens Blu's input (`blu://assistant`); the text opens Now (`blu://now`). Still orb frame from the app's shader; countdown shown only when ≥ 2 h away. | The user's pick. Widgets redraw at most every 30 minutes, so a near countdown would be stale; the app pushes an update on every refresh. |
 | 2026-09-22 | **Voice notes, WhatsApp-style.** The bar's right button is a mic (home and chat); with text typed it becomes send. Recording shows the mockup's Voice panel: live waveform from the mic level, timer, Cancel, white Stop. Blu replies in text — no speech synthesis. | Voice was a key part of the WhatsApp experience; the mic in the mockups never reached the app. |
 | 2026-09-22 | **"Todo added" replies offer Tonight 9pm / Tomorrow 8am chips** when no reminder was set. | Parity with WhatsApp's "Want a reminder for this?" follow-up. The server now also reads times from the message itself. |
@@ -63,6 +65,7 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 | Sheet | `components/Sheet.js` | Glass, inset 6px, springs up, drag/tap-outside/Back to close. |
 | Toast | `components/Toast.js` | Glass capsule; accent bar drains over the 4s Undo window. |
 | Widget | `widget/BluNowWidget.js`, `widget/widget.js` | react-native-android-widget. Headless task handler fetches with the stored key; last snapshot cached for offline. `nextUp.js` decides "next" for both the widget and Now. Preview image and orb frame are rendered from the real shader in CanvasKit. |
+| PinInput / SetPin | `components/PinInput.js`, `components/SetPin.js` | Six glass cells over a hidden number-pad input; the next cell glows accent, a wrong PIN shakes the row with an error buzz, the sixth digit submits. SetPin is choose → confirm → save. |
 | VoicePanel | `components/VoicePanel.js` | `useVoiceNote()` owns the mic (expo-audio, AAC/m4a, metering on); the panel shows 32 level bars, timer, Cancel, Stop. Auto-stops at 3 minutes; under 0.7 s is ignored as a mis-tap. |
 
 ## Screens
@@ -77,7 +80,9 @@ decision, so the reasoning survives. Source mockups: `.superpowers/brainstorm/41
 - **Item** — label, title, details, snooze chips, one accent action.
 - **Settings** — grouped rows: sky location (checkmark), live weather, sky follows sun, reduce
   motion, test notification, sign out.
-- **Sign in** — big "Blu", glowing input, ShinyButton.
+- **Welcome** — large orb, "Blu", one line on what it does; ShinyButton Sign in, Create account chip, Use a key instead.
+- **Sign in / Create account** — phone number (glowing input, remembered), six PIN cells; sign-up asks for the PIN twice.
+- **Key** — the fallback: paste the long key, then Set a PIN.
 
 ## Don'ts
 

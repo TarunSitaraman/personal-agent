@@ -1,6 +1,6 @@
 // Settings, from the mockup ("9 · Settings") in grouped iOS structure: each row a bold name with
 // a quiet explanation, a checkmark for the sky's place, accent switches.
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Switch, StyleSheet } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,8 +9,9 @@ import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { Group, Row, SectionHeader } from '../components/ui';
 import { useSettings, CHENNAI } from '../settings';
-import { sendTestPush } from '../api';
-import { clearToken } from '../auth';
+import { sendTestPush, getPinStatus } from '../api';
+import SetPin from '../components/SetPin';
+import { clearToken, saveNumber } from '../auth';
 import { C, T } from '../theme';
 
 export default function SettingsSheet({ onToast }) {
@@ -18,6 +19,10 @@ export default function SettingsSheet({ onToast }) {
   const insets = useSafeAreaInsets();
   const [locating, setLocating] = useState(false);
   const usingGps = settings.place.name !== CHENNAI.name;
+  const [pin, setPinState] = useState(null); // { hasPin, number } once loaded
+  const [editingPin, setEditingPin] = useState(false);
+
+  useEffect(() => { getPinStatus().then(setPinState).catch(() => {}); }, []);
 
   const useMyLocation = async () => {
     setLocating(true);
@@ -59,6 +64,30 @@ export default function SettingsSheet({ onToast }) {
         <Toggle title="Sky follows the sun" subtitle="Off = fixed blue hour" value={settings.followSun} onChange={v => update({ followSun: v })} />
         <Toggle title="Reduce motion" subtitle="Also follows Android's setting" value={settings.reduceMotion} onChange={v => update({ reduceMotion: v })} />
       </Group>
+
+      <SectionHeader title="Sign-in" style={{ marginTop: 26 }} />
+      <Group>
+        <Row
+          title={pin?.hasPin ? 'Change PIN' : 'Set a sign-in PIN'}
+          subtitle={pin?.hasPin
+            ? `Signed in as +${pin.number}`
+            : 'Sign in with your number and six digits instead of the key'}
+          chevron={!editingPin}
+          onPress={() => setEditingPin(e => !e)}
+        />
+      </Group>
+      {editingPin ? (
+        <View style={{ paddingHorizontal: 4, paddingTop: 16 }}>
+          <SetPin
+            onDone={number => {
+              if (number) saveNumber(number);
+              setEditingPin(false);
+              setPinState(prev => ({ ...(prev || {}), hasPin: true }));
+              onToast('PIN saved');
+            }}
+          />
+        </View>
+      ) : null}
 
       <SectionHeader title="Notifications" style={{ marginTop: 26 }} />
       <Group>

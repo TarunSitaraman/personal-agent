@@ -43,9 +43,10 @@ async function load() {
 }
 
 // Registered in index.js; runs headless when Android asks for the widget.
-export async function widgetTaskHandler({ widgetAction, renderWidget }) {
+// Sized from widgetInfo (dp) so the layout fits whatever size the widget has been given.
+export async function widgetTaskHandler({ widgetInfo, widgetAction, renderWidget }) {
   if (widgetAction === 'WIDGET_DELETED' || widgetAction === 'WIDGET_CLICK') return;
-  renderWidget(<BluNowWidget snapshot={await load()} />);
+  renderWidget(<BluNowWidget snapshot={await load()} width={widgetInfo.width} height={widgetInfo.height} />);
 }
 
 // Called by the app with data it already has; no extra network request.
@@ -54,7 +55,7 @@ export function refreshWidget(todos, events) {
   AsyncStorage.setItem(CACHE, JSON.stringify(snap)).catch(() => {});
   requestWidgetUpdate({
     widgetName: WIDGET_NAME,
-    renderWidget: () => <BluNowWidget snapshot={snap} />,
+    renderWidget: info => <BluNowWidget snapshot={snap} width={info.width} height={info.height} />,
     widgetNotFound: () => {}, // no widget on the home screen: nothing to do
   }).catch(() => {});
 }
