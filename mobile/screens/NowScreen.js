@@ -1,43 +1,40 @@
-// The one screen. The sky is the surface: a quiet status line, open space, then — in thumb reach —
-// what's next as a large headline straight on the sky, and the rest as plain rows with hairlines.
-// No boxes except the one thing asking for an answer. Type, colour and controls follow iOS; every
-// deeper view is a sheet.
+// Now — the one screen, built from the approved mockup (app-screens.html, "1 · Now"): date and a
+// glass gear, the weather, then NEXT as a large headline with a rolling countdown, OPEN todos,
+// what's coming, something to remember, and Blu's latest brief. Everything deeper is a sheet.
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, RefreshControl } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
+import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from '../components/Icon';
+import Glass from '../components/Glass';
+import Press from '../components/Press';
 import SwipeRow from '../components/SwipeRow';
-import { Button } from '../components/ui';
-import { when, relative, ago, plain, restates } from '../format';
-import { C, T, RADIUS, HAIRLINE } from '../theme';
+import { Label, Chip, Rolling, countdown, Halo, Skeleton } from '../components/kit';
+import { when, clock, ago, plain, restates } from '../format';
+import { C, T } from '../theme';
 
 const SHOWN_TODOS = 5;
 const SHOWN_EVENTS = 3;
-const CONDITION = { clear: 'Clear', cloudy: 'Cloudy', haze: 'Haze', rain: 'Rain', storm: 'Thunderstorms' };
+const LONG_BRIEF = 150; // characters; about what three lines hold at this size
+const CONDITION = { clear: 'Clear', cloudy: 'Cloudy', haze: 'Humid haze', rain: 'Rain', storm: 'Thunderstorms' };
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Tapping one opens the assistant with the text in place; `send` ones go straight through.
 const SUGGESTIONS = [
-  { label: 'Remind Me', text: 'Remind me to ' },
-  { label: 'New Note', text: 'Note: ' },
-  { label: "What's Tomorrow?", text: "What's on tomorrow?", send: true },
+  { label: 'Remind me…', text: 'Remind me to ' },
+  { label: 'Note…', text: 'Note: ' },
+  { label: "What's on tomorrow?", text: "What's on tomorrow?", send: true },
 ];
 
-// The next event however far off, else the top reminder. With nothing at all: what got done
-// today, or simply that nothing is scheduled.
-function upNext(events, todos, now, doneToday) {
-  const next = events[0];
-  if (next) {
-    const rel = relative(next.start_at, now);
-    return { kind: 'event', item: next, label: 'Up Next', title: next.title, sub: rel ? `${when(next.start_at, now)} · ${rel}` : when(next.start_at, now) };
-  }
-  if (todos.length) {
-    const t = todos[0];
-    return { kind: 'todo', item: t, label: 'Top Reminder', title: t.content, sub: t.remind_at ? when(t.remind_at, now) : 'No reminder set' };
-  }
-  if (doneToday > 0) return { label: 'Today', title: 'All done.', sub: `${doneToday} completed today` };
+const BRIEF_KIND = { brief: 'Morning brief', evening: 'Evening brief', nudge: 'Nudge', reminder: 'Reminder', event: 'Starting soon', goal: 'One big thing', weekly: 'Weekly review', pulse: 'Tech pulse' };
+
+// A line that is true about an empty day, never filler.
+function emptyLine(doneToday, now) {
+  if (doneToday > 0) return `${doneToday} done today. Nothing else open.`;
   const h = now.getHours();
-  return { label: 'Today', title: h >= 22 || h < 5 ? 'Quiet night.' : 'Nothing open.', sub: "Tell Blu what's next." };
+  return h >= 20 || h < 5 ? 'Quiet night. Nothing open.' : "Nothing open. Tell Blu what's next.";
 }
 
 export default function NowScreen({
@@ -45,11 +42,12 @@ export default function NowScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [pulling, setPulling] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(false);
   const { todos, events, latest, learning, doneToday, loaded } = board;
   const now = sky.now;
-  const next = upNext(events, todos, now, doneToday);
-  const later = (next.kind === 'event' ? events.slice(1) : events).slice(0, SHOWN_EVENTS);
-  const openTodos = next.kind === 'todo' ? todos.slice(1) : todos;
+  const next = events[0];
+  const later = events.slice(1, 1 + SHOWN_EVENTS);
+  const empty = loaded && !next && !todos.length;
 
   const onRefresh = useCallback(async () => {
     setPulling(true);
@@ -57,129 +55,138 @@ export default function NowScreen({
     setPulling(false);
   }, [board]);
 
-  const status = [sky.label, sky.temp != null ? `${sky.temp}°` : null, sky.condition !== 'clear' ? CONDITION[sky.condition] : null]
-    .filter(Boolean).join(' · ');
+  const dateLine = `${DAYS[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]} · ${clock(now)}`;
+  const weather = [CONDITION[sky.condition], sky.temp != null ? `${sky.temp}°` : null].filter(Boolean).join(' · ');
 
   return (
     <ScrollView
       style={StyleSheet.absoluteFill}
-      contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + 10, paddingBottom: bottomInset + 24, paddingHorizontal: 22 }}
+      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: bottomInset + 28, paddingHorizontal: 22 }}
       showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={pulling} onRefresh={onRefresh} tintColor={C.label2} colors={[C.accent]} progressBackgroundColor={C.cell} />}
+      refreshControl={<RefreshControl refreshing={pulling} onRefresh={onRefresh} tintColor={C.accent} colors={[C.accent]} progressBackgroundColor={C.ink} />}
     >
-      <View style={s.topRow}>
-        <Text style={s.status}>{status}</Text>
-        <Pressable onPress={onOpenSettings} hitSlop={8} accessibilityLabel="Settings" style={({ pressed }) => [s.circleBtn, pressed && { opacity: 0.6 }]}>
-          <Icon name="gear" size={19} color={C.label} stroke={1.9} />
-        </Pressable>
+      <View style={s.top}>
+        <Label>{dateLine}</Label>
+        <Press onPress={onOpenSettings} hitSlop={10} accessibilityLabel="Settings">
+          <Glass radius={20} style={s.gear}><Icon name="gear" size={17} color="#fff" stroke={2} /></Glass>
+        </Press>
       </View>
+      <Text style={s.weather}>{weather}</Text>
 
-      {/* Pushes everything below toward the thumb; collapses once content fills the screen. */}
-      <View style={s.spacer} />
-
-      {loaded ? (
-        <Pressable disabled={!next.kind} onPress={() => onOpenItem({ kind: next.kind, item: next.item })} style={({ pressed }) => [s.hero, pressed && { opacity: 0.7 }]}>
-          <Text style={s.kicker}>{next.label}</Text>
-          <Text style={s.headline} numberOfLines={3}>{next.title}</Text>
-          <Text style={s.sub}>{next.sub}</Text>
-        </Pressable>
-      ) : null}
-      {board.error && loaded ? <Text style={[T.footnote, { color: C.red, marginTop: -18, marginBottom: 24 }]}>Can't reach Blu. Pull down to try again.</Text> : null}
-
-      {openTodos.length ? (
-        <View style={s.section}>
-          <Header title="Reminders" action={todos.length > 1 ? 'Show All' : null} onAction={() => onOpenLibrary('todos')} />
-          {openTodos.slice(0, SHOWN_TODOS).map((t, i, arr) => (
-            <SwipeRow
-              key={t.id}
-              plain
-              last={i === arr.length - 1}
-              title={t.content}
-              meta={t.remind_at ? when(t.remind_at, now) : null}
-              overdue={!!t.remind_at && new Date(t.remind_at) < now}
-              onPress={() => onOpenItem({ kind: 'todo', item: t })}
-              onDone={() => onDone(t)}
-              onSnooze={() => onSnooze(t)}
-            />
-          ))}
+      {!loaded ? (
+        <View style={{ marginTop: 40, gap: 14 }}>
+          <Skeleton width="30%" /><Skeleton width="75%" height={34} /><Skeleton width="55%" />
         </View>
+      ) : null}
+
+      {next ? (
+        <Animated.View entering={FadeInDown.duration(380)} style={s.heroBlock}>
+          <Label>Next</Label>
+          <Pressable onPress={() => onOpenItem({ kind: 'event', item: next })}>
+            {({ pressed }) => <Text style={[T.hero, s.hero, pressed && { opacity: 0.7 }]} numberOfLines={3}>{next.title}</Text>}
+          </Pressable>
+          <View style={s.subRow}>
+            <Text style={[T.sub, { flex: 1 }]} numberOfLines={1}>{when(next.start_at, now)}</Text>
+            <Rolling text={countdown(next.start_at, now)} style={s.countdown} />
+          </View>
+        </Animated.View>
+      ) : null}
+
+      {todos.length ? (
+        <View style={[s.section, !next && { marginTop: 44 }]}>
+          <Pressable onPress={() => onOpenLibrary('todos')} hitSlop={8}><Label link>{`Open · ${todos.length}`}</Label></Pressable>
+          <View style={{ marginTop: 4 }}>
+            {todos.slice(0, SHOWN_TODOS).map((t, i, arr) => (
+              <SwipeRow
+                key={t.id}
+                index={i}
+                last={i === arr.length - 1}
+                title={t.content}
+                meta={t.remind_at ? when(t.remind_at, now) : null}
+                overdue={!!t.remind_at && new Date(t.remind_at) < now}
+                onPress={() => onOpenItem({ kind: 'todo', item: t })}
+                onDone={() => onDone(t)}
+                onSnooze={() => onSnooze(t)}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {empty ? (
+        <Animated.View entering={FadeInDown.duration(420)} style={s.empty}>
+          <Halo still={sky.reduceMotion} />
+          <Text style={[T.title, { marginTop: 16 }]}>{doneToday > 0 ? 'All done.' : 'Nothing open.'}</Text>
+          <Text style={[T.sub, { marginTop: 6, textAlign: 'center' }]}>{emptyLine(doneToday, now)}</Text>
+        </Animated.View>
       ) : null}
 
       {later.length ? (
         <View style={s.section}>
-          <Header title="Coming Up" action="Show All" onAction={() => onOpenLibrary('upcoming')} />
+          <Pressable onPress={() => onOpenLibrary('upcoming')} hitSlop={8}><Label link>Coming up</Label></Pressable>
           {later.map((e, i) => (
-            <Pressable
-              key={e.id}
-              onPress={() => onOpenItem({ kind: 'event', item: e })}
-              style={({ pressed }) => [s.eventRow, i === later.length - 1 && { borderBottomWidth: 0 }, pressed && { opacity: 0.6 }]}
-            >
-              <Text style={s.eventTime}>{when(e.start_at, now)}</Text>
-              <Text style={[T.body, { flex: 1 }]} numberOfLines={1}>{e.title}</Text>
-            </Pressable>
+            <Animated.View key={e.id} entering={FadeInDown.delay(i * 60).duration(320)}>
+              <Pressable onPress={() => onOpenItem({ kind: 'event', item: e })} style={({ pressed }) => [s.ev, i === later.length - 1 && { borderBottomWidth: 0 }, pressed && { opacity: 0.6 }]}>
+                <Text style={s.evTime}>{when(e.start_at, now)}</Text>
+                <Text style={[T.headline, { flex: 1 }]} numberOfLines={1}>{e.title}</Text>
+              </Pressable>
+            </Animated.View>
           ))}
         </View>
       ) : null}
 
       {learning ? (
-        <View style={s.section}>
-          <Header title="Worth Remembering" />
-          <View style={s.card}>
-            {learning.topic && !restates(learning.topic, learning.content) ? <Text style={[T.footnote, { marginBottom: 4 }]}>{learning.topic}</Text> : null}
-            <Text style={T.body} numberOfLines={6}>{learning.content}</Text>
-            <View style={s.cardActions}>
-              <Button title="Got It" onPress={() => onReview(learning, true)} />
-              <Button title="Review Again" kind="gray" onPress={() => onReview(learning, false)} />
+        <Animated.View entering={FadeInDown.duration(380)} style={s.section}>
+          <Label>Worth remembering</Label>
+          <Glass radius={18} style={s.card}>
+            {learning.topic && !restates(learning.topic, learning.content) ? <Label color={C.accent} style={{ marginBottom: 6 }}>{learning.topic}</Label> : null}
+            <Text style={[T.headline, { lineHeight: 23 }]} numberOfLines={6}>{learning.content}</Text>
+            <View style={s.chips}>
+              <Chip title="Got it" kind="accent" onPress={() => onReview(learning, true)} />
+              <Chip title="Again" onPress={() => onReview(learning, false)} />
             </View>
-          </View>
-        </View>
+          </Glass>
+        </Animated.View>
       ) : null}
 
       {latest ? (
-        <Pressable onPress={onOpenAssistant} style={({ pressed }) => [s.section, pressed && { opacity: 0.6 }]}>
-          <Header title={`From Blu · ${ago(latest.created_at, now)}`} />
-          <Text style={T.callout} numberOfLines={4}>{plain(latest.text)}</Text>
-        </Pressable>
+        <Animated.View layout={LinearTransition.springify().damping(20)} style={s.section}>
+          <Pressable onPress={onOpenAssistant} hitSlop={8}>
+            <Label link>{`${BRIEF_KIND[latest.kind] || 'From Blu'} · ${ago(latest.created_at, now)}`}</Label>
+          </Pressable>
+          <Pressable onPress={() => setBriefOpen(o => !o)}>
+            <Text style={[T.body, s.brief]} numberOfLines={briefOpen ? undefined : 3}>{plain(latest.text)}</Text>
+            {!briefOpen && plain(latest.text).length > LONG_BRIEF ? <Text style={[T.small, { marginTop: 4 }]}>Tap to read more</Text> : null}
+          </Pressable>
+        </Animated.View>
       ) : null}
 
       {loaded && !todos.length && !hideSuggestions ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipScroll} contentContainerStyle={s.chips}>
-          {SUGGESTIONS.map(sg => <Button key={sg.label} title={sg.label} kind="tinted" onPress={() => onSuggest(sg)} />)}
-        </ScrollView>
+        <Animated.View entering={FadeInDown.delay(120).duration(320)}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipScroll} contentContainerStyle={s.chipRow}>
+            {SUGGESTIONS.map(sg => <Chip key={sg.label} title={sg.label} kind={sg.send ? 'line' : 'default'} onPress={() => onSuggest(sg)} />)}
+          </ScrollView>
+        </Animated.View>
       ) : null}
     </ScrollView>
   );
 }
 
-// Small uppercase section label, with an optional blue action on the right.
-function Header({ title, action, onAction }) {
-  return (
-    <View style={s.header}>
-      <Text style={T.groupHeader}>{title}</Text>
-      {action ? (
-        <Pressable onPress={onAction} hitSlop={10}>
-          {({ pressed }) => <Text style={[T.subhead, { color: C.accent }, pressed && { opacity: 0.4 }]}>{action}</Text>}
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 const s = StyleSheet.create({
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  status: { ...T.subhead, fontFamily: 'Heros-Bold' },
-  circleBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.fill, alignItems: 'center', justifyContent: 'center' },
-  spacer: { flexGrow: 1, minHeight: 40 },
-  hero: { marginBottom: 34 },
-  kicker: { ...T.groupHeader, fontFamily: 'Heros-Bold', paddingHorizontal: 0, marginBottom: 8 },
-  headline: { fontFamily: 'Heros-Bold', fontSize: 36, lineHeight: 41, letterSpacing: -0.9, color: C.label },
-  sub: { ...T.body, color: C.label2, marginTop: 8 },
-  section: { marginBottom: 30 },
-  header: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 2 },
-  eventRow: { flexDirection: 'row', alignItems: 'baseline', gap: 14, paddingVertical: 13, borderBottomWidth: HAIRLINE, borderBottomColor: 'rgba(255,255,255,0.12)' },
-  eventTime: { ...T.subhead, width: 128 },
-  card: { backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: RADIUS.card, padding: 16, marginTop: 8 },
-  cardActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  chipScroll: { marginHorizontal: -22, flexGrow: 0 },
-  chips: { flexDirection: 'row', gap: 8, paddingHorizontal: 22 },
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  gear: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  weather: { fontFamily: 'Heros-Bold', fontSize: 14, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  heroBlock: { marginTop: 44 },
+  hero: { marginTop: 8, marginBottom: 8 },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  countdown: { fontFamily: 'Heros-Bold', fontSize: 15, lineHeight: 19, color: C.accent },
+  section: { marginTop: 32 },
+  ev: { flexDirection: 'row', alignItems: 'baseline', gap: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
+  evTime: { fontFamily: 'Heros-Bold', fontSize: 13, color: C.accent, width: 124 },
+  card: { padding: 18, marginTop: 10 },
+  chips: { flexDirection: 'row', gap: 8, marginTop: 14 },
+  brief: { color: 'rgba(255,255,255,0.82)', marginTop: 8 },
+  empty: { alignItems: 'center', marginTop: 56, marginBottom: 8 },
+  chipScroll: { marginHorizontal: -22, marginTop: 28, flexGrow: 0 },
+  chipRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 22 },
 });

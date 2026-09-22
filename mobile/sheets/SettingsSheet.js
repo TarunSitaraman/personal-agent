@@ -1,5 +1,5 @@
-// Settings, laid out like the iOS Settings app: grouped rows, a checkmark for the chosen place,
-// green switches, footers that explain, the version at the bottom.
+// Settings, from the mockup ("9 · Settings") in grouped iOS structure: each row a bold name with
+// a quiet explanation, a checkmark for the sky's place, accent switches.
 import React, { useState } from 'react';
 import { View, Text, Switch, StyleSheet } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
@@ -38,64 +38,60 @@ export default function SettingsSheet({ onToast }) {
     catch { onToast("Couldn't send a test notification"); }
   };
 
-  const version = [Constants.expoConfig?.version, Updates.updateId ? `(${Updates.updateId.slice(0, 8)})` : null].filter(Boolean).join(' ');
+  const version = [Constants.expoConfig?.version, Updates.updateId ? `· ${Updates.updateId.slice(0, 8)}` : null].filter(Boolean).join(' ');
 
   return (
-    <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 40 }}>
-      <SectionHeader title="Sky Location" small />
+    <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 44 }}>
+      <SectionHeader title="Sky" />
       <Group>
-        <Row title="Chennai" check={!usingGps} onPress={() => update({ place: CHENNAI })} />
+        <Row title="Chennai" subtitle="13.08°N, 80.27°E" check={!usingGps} onPress={() => update({ place: CHENNAI })} />
         <Row
-          title={locating ? 'Locating…' : 'Current Location'}
-          subtitle={usingGps ? `${settings.place.lat}°, ${settings.place.lon}°` : null}
+          title={locating ? 'Locating…' : 'Current location'}
+          subtitle={usingGps ? `${settings.place.lat}°, ${settings.place.lon}°` : 'Use GPS for sunrise, sunset and weather'}
           check={usingGps}
           onPress={useMyLocation}
         />
       </Group>
-      <Footer text="Sunrise, sunset and weather are calculated for this place." />
 
-      <SectionHeader title="Appearance" small />
+      <SectionHeader title="Look" style={{ marginTop: 26 }} />
       <Group>
-        <Toggle title="Live Weather" value={settings.liveWeather} onChange={v => update({ liveWeather: v })} />
-        <Toggle title="Sky Follows the Sun" value={settings.followSun} onChange={v => update({ followSun: v })} />
-        <Toggle title="Reduce Motion" value={settings.reduceMotion} onChange={v => update({ reduceMotion: v })} />
+        <Toggle title="Live weather" subtitle="Open-Meteo, every 15 minutes" value={settings.liveWeather} onChange={v => update({ liveWeather: v })} />
+        <Toggle title="Sky follows the sun" subtitle="Off = fixed blue hour" value={settings.followSun} onChange={v => update({ followSun: v })} />
+        <Toggle title="Reduce motion" subtitle="Also follows Android's setting" value={settings.reduceMotion} onChange={v => update({ reduceMotion: v })} />
       </Group>
-      <Footer text="With Sky Follows the Sun off, the background stays at blue hour." />
 
-      <SectionHeader title="Notifications" small />
+      <SectionHeader title="Notifications" style={{ marginTop: 26 }} />
       <Group>
-        <Row title="Send Test Notification" tint onPress={testPush} />
+        <Row title="Send a test notification" subtitle="Reminders, briefs and nudges arrive here first" tint onPress={testPush} />
       </Group>
 
-      <Group style={{ marginTop: 32 }}>
-        <Row title="Sign Out" destructive onPress={() => clearToken()} />
+      <Group style={{ marginTop: 26 }}>
+        <Row title="Sign out" destructive onPress={() => clearToken()} />
       </Group>
 
-      <Text style={[T.footnote, s.version]}>Blu {version}</Text>
+      <Text style={[T.small, s.version]}>Blu {version}</Text>
     </ScrollView>
   );
 }
 
-function Toggle({ title, value, onChange, last }) {
+function Toggle({ title, subtitle, value, onChange, last }) {
   return (
-    <Row title={title} last={last}>
-      <View style={s.toggleRow}>
-        <Text style={T.body}>{title}</Text>
+    <Row
+      title={title}
+      subtitle={subtitle}
+      last={last}
+      right={(
         <Switch
           value={value}
           onValueChange={onChange}
-          trackColor={{ false: 'rgba(120,120,128,0.32)', true: C.green }}
-          thumbColor="#FFFFFF"
+          trackColor={{ false: 'rgba(255,255,255,0.14)', true: C.accent }}
+          thumbColor={value ? C.ink : '#c9d3ea'}
         />
-      </View>
-    </Row>
+      )}
+    />
   );
 }
 
-const Footer = ({ text }) => <Text style={[T.footnote, s.footer]}>{text}</Text>;
-
 const s = StyleSheet.create({
-  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  footer: { paddingHorizontal: 16, marginTop: 8, marginBottom: 28 },
-  version: { textAlign: 'center', marginTop: 28, color: C.label3 },
+  version: { textAlign: 'center', marginTop: 28 },
 });

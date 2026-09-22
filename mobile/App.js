@@ -63,8 +63,6 @@ async function setupPushNotifications() {
   }
 }
 
-const ITEM_TITLE = { todo: 'Reminder', event: 'Event', note: 'Note' };
-
 function Home({ sky }) {
   const insets = useSafeAreaInsets();
   const board = useBoard();
@@ -84,7 +82,7 @@ function Home({ sky }) {
 
   const onReview = useCallback((item, gotRight) => {
     board.review(item, gotRight)
-      .then(() => showToast(gotRight ? 'Next review in a few days' : 'Back tomorrow'))
+      .then(() => showToast(gotRight ? 'Nice. Back in a few days.' : 'Back tomorrow.'))
       .catch(() => showToast("Couldn't save that review"));
   }, [board, showToast]);
   const openLibrary = useCallback(tab => { setLibraryTab(tab); setSheet('library'); }, []);
@@ -93,7 +91,7 @@ function Home({ sky }) {
   const onDone = useCallback(todo => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     const undo = board.complete(todo, () => showToast("Couldn't mark that done"));
-    showToast(`Completed “${todo.content}”`, undo);
+    showToast('Marked done', undo);
     setSheet(s => (s === 'item' ? null : s));
   }, [board, showToast]);
 
@@ -136,7 +134,7 @@ function Home({ sky }) {
       <Sheet open={sheet === 'library'} onClose={close} title="Library" heightRatio={0.92}>
         <LibrarySheet tab={libraryTab} onTab={setLibraryTab} board={board} onOpenItem={openItem} onDone={onDone} onSnooze={onSnooze} />
       </Sheet>
-      <Sheet open={sheet === 'item'} onClose={close} title={ITEM_TITLE[entry?.kind] || ''} heightRatio={0.7}>
+      <Sheet open={sheet === 'item'} onClose={close} title="" heightRatio={0.7}>
         <ItemSheet
           entry={entry}
           onDone={onDone}

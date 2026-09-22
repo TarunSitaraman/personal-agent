@@ -1,11 +1,14 @@
-// iOS building blocks: inset grouped lists, rows, section headers, buttons, segmented control.
-// Every screen composes these, so spacing, separators and press states stay identical everywhere.
+// Structure, iOS-style — grouped lists, rows, a segmented control, a sheet header with Done — in
+// the mockups' glass. Every sheet composes these, so spacing, hairlines and press states match.
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import Icon from './Icon';
-import { C, T, RADIUS, HAIRLINE } from '../theme';
+import Press from './Press';
+import { Label } from './kit';
+import { C, T, RADIUS } from '../theme';
 
-// Inset grouped container; children are Rows. Separators are drawn by the rows themselves.
+// A grouped list in a faint glass container. Rows draw their own hairlines; Group tells each
+// whether it is last.
 export function Group({ children, style }) {
   const items = React.Children.toArray(children).filter(Boolean);
   return (
@@ -15,67 +18,39 @@ export function Group({ children, style }) {
   );
 }
 
-// A list row. `inset` is where the separator starts (after a leading control, like Reminders).
-export function Row({ title, subtitle, value, chevron, check, destructive, tint, leading, onPress, last, inset = 16, numberOfLines = 2, children }) {
+// A row: bold title, optional regular subtitle, and on the right a value, a check or a chevron.
+export function Row({ title, subtitle, value, chevron, check, destructive, tint, onPress, last, numberOfLines = 2, right }) {
   const body = (
-    <View style={s.rowInner}>
-      {leading ? <View style={s.leading}>{leading}</View> : null}
-      <View style={[s.rowMain, !last && { borderBottomWidth: HAIRLINE, borderBottomColor: C.separator }]}>
-        <View style={{ flex: 1 }}>
-          {children || (
-            <>
-              <Text style={[T.body, destructive && { color: C.red }, tint && { color: C.accent }]} numberOfLines={numberOfLines}>{title}</Text>
-              {subtitle ? <Text style={[T.subhead, s.subtitle]} numberOfLines={2}>{subtitle}</Text> : null}
-            </>
-          )}
-        </View>
-        {value != null ? <Text style={[T.body, { color: C.label2 }]} numberOfLines={1}>{value}</Text> : null}
-        {check ? <Icon name="check" size={18} color={C.accent} stroke={2.4} /> : null}
-        {chevron ? <Icon name="chevronRight" size={16} color={C.label3} stroke={2.4} /> : null}
+    <View style={[s.rowMain, !last && s.hairline]}>
+      <View style={{ flex: 1 }}>
+        <Text style={[T.headline, destructive && { color: C.red }, tint && { color: C.accent }]} numberOfLines={numberOfLines}>{title}</Text>
+        {subtitle ? <Text style={[T.sub, { marginTop: 2 }]} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
+      {right}
+      {value != null ? <Text style={[T.headline, { color: C.label2, fontSize: 15 }]} numberOfLines={1}>{value}</Text> : null}
+      {check ? <Icon name="check" size={18} color={C.accent} stroke={2.6} /> : null}
+      {chevron ? <Icon name="chevronRight" size={16} color={C.label3} stroke={2.4} /> : null}
     </View>
   );
-  const pad = { paddingLeft: leading ? 12 : inset };
-  if (!onPress) return <View style={[s.row, pad]}>{body}</View>;
+  if (!onPress) return <View style={s.row}>{body}</View>;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [s.row, pad, pressed && s.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [s.row, pressed && s.pressed]}>
       {body}
     </Pressable>
   );
 }
 
-// A section title above a group, with an optional trailing action ("Show All").
-export function SectionHeader({ title, action, onAction, small }) {
+// Label above a group or list, with an optional action on the right.
+export function SectionHeader({ title, action, onAction, style }) {
   return (
-    <View style={[s.header, small && s.headerSmall]}>
-      <Text style={small ? T.groupHeader : T.title3}>{title}</Text>
+    <View style={[s.header, style]}>
+      <Label>{title}</Label>
       {action ? (
         <Pressable onPress={onAction} hitSlop={10}>
-          {({ pressed }) => <Text style={[T.body, { color: C.accent }, pressed && { opacity: 0.4 }]}>{action}</Text>}
+          {({ pressed }) => <Label color={C.accent} style={pressed && { opacity: 0.5 }}>{action}</Label>}
         </Pressable>
       ) : null}
     </View>
-  );
-}
-
-// filled: solid blue, white label. tinted: blue-tinted fill, blue label. gray: grey fill, white label.
-export function Button({ title, onPress, kind = 'filled', size = 'medium', style, disabled }) {
-  const big = size === 'large';
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [
-        s.btn, big ? s.btnLarge : s.btnMedium,
-        kind === 'filled' && { backgroundColor: C.accent },
-        kind === 'tinted' && { backgroundColor: C.tinted },
-        kind === 'gray' && { backgroundColor: C.fill },
-        (pressed || disabled) && { opacity: disabled ? 0.35 : 0.7 },
-        style,
-      ]}
-    >
-      <Text style={[big ? T.headline : [T.subhead, { fontFamily: 'Heros-Bold' }], { color: kind === 'tinted' ? C.accent : C.label }]}>{title}</Text>
-    </Pressable>
   );
 }
 
@@ -85,16 +60,16 @@ export function Segmented({ options, value, onChange }) {
       {options.map(([key, label]) => {
         const on = key === value;
         return (
-          <Pressable key={key} onPress={() => onChange(key)} style={[s.segItem, on && s.segOn]}>
-            <Text style={[T.footnote, { color: C.label, fontFamily: on ? 'Heros-Bold' : 'Heros-Regular' }]}>{label}</Text>
-          </Pressable>
+          <Press key={key} scaleTo={0.97} onPress={() => onChange(key)} style={[s.segItem, on && s.segOn]}>
+            <Text style={[T.headline, { fontSize: 13, color: on ? C.label : C.label2 }]}>{label}</Text>
+          </Press>
         );
       })}
     </View>
   );
 }
 
-// Sheet navigation bar: centred title, Done on the right, as in an iOS page sheet.
+// Sheet navigation bar: centred title, Done on the right.
 export function SheetHeader({ title, onDone }) {
   return (
     <View style={s.sheetHeader}>
@@ -109,21 +84,15 @@ export function SheetHeader({ title, onDone }) {
 }
 
 const s = StyleSheet.create({
-  group: { backgroundColor: C.cell, borderRadius: RADIUS.cell, overflow: 'hidden' },
-  row: { backgroundColor: C.cell },
-  rowInner: { flexDirection: 'row', alignItems: 'center' },
-  leading: { width: 40, alignItems: 'center', justifyContent: 'center', paddingRight: 4 },
-  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 50, paddingVertical: 11, paddingRight: 16 },
-  subtitle: { marginTop: 2 },
-  pressed: { backgroundColor: '#1d2233' },
-  header: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 },
-  headerSmall: { paddingHorizontal: 16, marginBottom: 6 },
-  btn: { alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
-  btnMedium: { paddingHorizontal: 16, height: 34 },
-  btnLarge: { height: 50, borderRadius: RADIUS.button, paddingHorizontal: 20 },
-  seg: { flexDirection: 'row', backgroundColor: C.fill, borderRadius: 9, padding: 2 },
-  segItem: { flex: 1, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 7 },
-  segOn: { backgroundColor: '#636366' },
-  sheetHeader: { height: 44, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  done: { position: 'absolute', right: 16, top: 0, bottom: 0, justifyContent: 'center' },
+  group: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: RADIUS.group, borderWidth: 1, borderColor: 'rgba(255,255,255,0.09)', overflow: 'hidden' },
+  row: { paddingLeft: 16 },
+  rowMain: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 54, paddingVertical: 12, paddingRight: 16 },
+  hairline: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
+  pressed: { backgroundColor: 'rgba(255,255,255,0.06)' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 },
+  seg: { flexDirection: 'row', padding: 3, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.07)' },
+  segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  segOn: { backgroundColor: 'rgba(255,255,255,0.14)' },
+  sheetHeader: { height: 44, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  done: { position: 'absolute', right: 18, top: 0, bottom: 0, justifyContent: 'center' },
 });

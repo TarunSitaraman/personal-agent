@@ -1,5 +1,5 @@
-// An iOS-style page sheet: rises over a dimmed screen, grabber on top, drag down (or tap outside,
-// or Back) to close. Rendered in the root view rather than a Modal so the sky stays behind it.
+// A glass sheet: springs up over a dimmed screen, grabber on top, title and Done, drag down (or
+// tap outside, or Back) to close. Rendered in the root view rather than a Modal so the sky stays behind it.
 import React, { useEffect, useState } from 'react';
 import { View, Pressable, StyleSheet, useWindowDimensions, BackHandler } from 'react-native';
 import Animated, {
@@ -7,9 +7,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { SheetHeader } from './ui';
+import Glass from './Glass';
 import { C, RADIUS } from '../theme';
 
-const SPRING = { damping: 26, stiffness: 260, mass: 0.9 };
+const SPRING = { damping: 22, stiffness: 240, mass: 0.9 }; // a touch of overshoot, as in the mockups
 
 export default function Sheet({ open, onClose, title, heightRatio = 0.9, children }) {
   const { height: H } = useWindowDimensions();
@@ -49,10 +50,11 @@ export default function Sheet({ open, onClose, title, heightRatio = 0.9, childre
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View style={[s.sheet, { height: h }, sheetStyle]}>
+        <Glass radius={RADIUS.sheet} base={C.sheet} shadow={false} style={StyleSheet.absoluteFill} />
         <GestureDetector gesture={drag}>
           <View>
             <View style={s.grabberZone}><View style={s.grabber} /></View>
-            {title ? <SheetHeader title={title} onDone={onClose} /> : null}
+            {title != null ? <SheetHeader title={title} onDone={onClose} /> : null}
           </View>
         </GestureDetector>
         <View style={{ flex: 1 }}>{children}</View>
@@ -62,11 +64,11 @@ export default function Sheet({ open, onClose, title, heightRatio = 0.9, childre
 }
 
 const s = StyleSheet.create({
-  backdrop: { backgroundColor: 'rgba(0,0,0,0.45)' },
+  backdrop: { backgroundColor: 'rgba(2,3,10,0.5)' },
   sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: C.sheet,
-    borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, overflow: 'hidden',
+    position: 'absolute', left: 6, right: 6, bottom: -RADIUS.sheet,
+    borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, overflow: 'hidden', paddingBottom: RADIUS.sheet,
   },
-  grabberZone: { alignItems: 'center', paddingTop: 6, paddingBottom: 2 },
-  grabber: { width: 36, height: 5, borderRadius: 3, backgroundColor: 'rgba(235,235,245,0.3)' },
+  grabberZone: { alignItems: 'center', paddingTop: 10, paddingBottom: 2 },
+  grabber: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)' },
 });

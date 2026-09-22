@@ -1,34 +1,29 @@
-// The pinned field at the bottom: the one way in to talk to Blu or add something. Styled as an
-// iOS search field on a floating material, with no glow.
+// The pinned glass bar: the one way in to talk to Blu or add something.
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import Glass from './Glass';
 import Icon from './Icon';
-import { C, T } from '../theme';
+import Press from './Press';
+import { C } from '../theme';
 
-export const BAR_HEIGHT = 52;
+export const BAR_HEIGHT = 56;
 
 export default function AssistantBar({ onPress, bottom }) {
   return (
     <View style={[s.wrap, { bottom }]} pointerEvents="box-none">
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel="Ask Blu"
-        style={({ pressed }) => [s.bar, pressed && { opacity: 0.85 }]}
-      >
-        <Text style={[T.body, { flex: 1, color: C.label3 }]}>Ask Blu or add a reminder</Text>
-        <View style={s.send}><Icon name="arrowUp" size={16} color="#fff" stroke={2.8} /></View>
-      </Pressable>
+      <Press onPress={onPress} scaleTo={0.97} accessibilityRole="button" accessibilityLabel="Ask Blu">
+        <Glass radius={BAR_HEIGHT / 2} base="rgba(8,13,32,0.55)" style={s.bar}>
+          <Text style={s.placeholder}>Remind, note, ask…</Text>
+          <View style={s.go}><Icon name="arrowUp" size={17} color={C.ink} stroke={2.8} /></View>
+        </Glass>
+      </Press>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  wrap: { position: 'absolute', left: 16, right: 16 },
-  bar: {
-    height: BAR_HEIGHT, borderRadius: BAR_HEIGHT / 2, flexDirection: 'row', alignItems: 'center',
-    paddingLeft: 20, paddingRight: 8, backgroundColor: C.material,
-    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 10,
-  },
-  send: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  wrap: { position: 'absolute', left: 14, right: 14 },
+  bar: { height: BAR_HEIGHT, flexDirection: 'row', alignItems: 'center', paddingLeft: 22, paddingRight: 8 },
+  placeholder: { flex: 1, fontFamily: 'Heros-Bold', fontSize: 15, color: 'rgba(235,238,250,0.78)' },
+  go: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
 });

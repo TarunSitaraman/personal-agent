@@ -1,26 +1,29 @@
-// Blu design tokens, modelled on iOS dark-mode semantics: label/secondary/tertiary text, grey
-// fills, grouped cells, system blue. Type is Heros (Helvetica) — Regular and Bold are the only
-// weights, embedded by the expo-font plugin; never add fontWeight on top (Android fakes a bolder
-// bold). Colour means something: blue acts, red warns, everything else is a shade of label.
+// Blu design tokens. The look is the approved mockups (dark glass over a live sky, one pastel
+// accent taken from the sky's blue); the structure borrows iOS conventions (text styles, sheets
+// with Done, grouped settings). Type is Heros (Helvetica), Regular and Bold only, embedded by the
+// expo-font plugin — never add fontWeight on top (Android fakes a bolder bold).
 export const C = {
   bg: '#04060f',
-  ink: '#050d2c',
-  accent: '#0A84FF', // iOS system blue (dark)
-  green: '#30D158',
-  orange: '#FF9F0A',
-  red: '#FF453A',
+  ink: '#07122e', // text on accent and on white
+  accent: '#82a9ff',
+  accentGlow: 'rgba(130,169,255,0.45)',
+  red: '#ff9b9b',
+  doneBg: '#1d6b4a', doneInk: '#c9f5dd', // swipe reveals, muted so they sit in the night palette
+  laterBg: '#6b4c1d', laterInk: '#f5e3c9',
 
   label: '#FFFFFF',
-  label2: 'rgba(235,235,245,0.62)',
-  label3: 'rgba(235,235,245,0.32)',
+  label2: 'rgba(235,238,250,0.66)',
+  label3: 'rgba(235,238,250,0.40)',
+  hairline: 'rgba(255,255,255,0.13)',
 
-  separator: 'rgba(84,84,88,0.55)',
-  fill: 'rgba(118,118,128,0.24)', // buttons, fields, segmented track
-  tinted: 'rgba(10,132,255,0.16)', // "bordered" buttons: tinted fill, blue label
-
-  cell: '#131725', // grouped cell, navy-shifted secondarySystemGroupedBackground
-  sheet: '#0c0f1a', // sheet background
-  material: 'rgba(19,23,37,0.92)', // floating bar and toast over moving content
+  // Glass: a top-lit gradient, a thin rim and a brighter top edge, as in the mockups' .glass.
+  glassTop: 'rgba(255,255,255,0.13)',
+  glassBottom: 'rgba(255,255,255,0.04)',
+  glassRim: 'rgba(255,255,255,0.17)',
+  glassEdge: 'rgba(255,255,255,0.32)',
+  sheet: 'rgba(8,13,32,0.94)', // under a sheet's glass, so text stays readable over the sky
+  chip: 'rgba(255,255,255,0.07)',
+  chipRim: 'rgba(255,255,255,0.15)',
 };
 
 const R = 'Heros-Regular';
@@ -28,20 +31,18 @@ const B = 'Heros-Bold';
 
 export const F = { regular: { fontFamily: R }, bold: { fontFamily: B } };
 
-// The iOS text styles, with tracking tightened for Helvetica's wider set.
+// Text styles. Primary lines are bold (the mockups' voice); descriptive text is regular.
 export const T = {
-  largeTitle: { fontFamily: B, fontSize: 34, lineHeight: 41, letterSpacing: -0.7, color: C.label },
-  title2: { fontFamily: B, fontSize: 22, lineHeight: 28, letterSpacing: -0.35, color: C.label },
-  title3: { fontFamily: B, fontSize: 20, lineHeight: 25, letterSpacing: -0.25, color: C.label },
+  hero: { fontFamily: B, fontSize: 42, lineHeight: 44, letterSpacing: -1.5, color: C.label },
+  title: { fontFamily: B, fontSize: 22, lineHeight: 27, letterSpacing: -0.4, color: C.label },
   headline: { fontFamily: B, fontSize: 17, lineHeight: 22, letterSpacing: -0.2, color: C.label },
-  body: { fontFamily: R, fontSize: 17, lineHeight: 22, letterSpacing: -0.2, color: C.label },
-  callout: { fontFamily: R, fontSize: 16, lineHeight: 21, letterSpacing: -0.15, color: C.label },
-  subhead: { fontFamily: R, fontSize: 15, lineHeight: 20, letterSpacing: -0.1, color: C.label2 },
-  footnote: { fontFamily: R, fontSize: 13, lineHeight: 18, color: C.label2 },
-  caption: { fontFamily: R, fontSize: 12, lineHeight: 16, color: C.label2 },
-  // Small uppercase group header, as in Settings.
-  groupHeader: { fontFamily: R, fontSize: 13, lineHeight: 18, color: C.label2, textTransform: 'uppercase', letterSpacing: 0.2 },
+  body: { fontFamily: R, fontSize: 16, lineHeight: 23, color: C.label },
+  sub: { fontFamily: R, fontSize: 14, lineHeight: 19, color: C.label2 },
+  small: { fontFamily: R, fontSize: 12, lineHeight: 16, color: C.label3 },
+  // The mockups' .lab: small bold uppercase, widely tracked.
+  label: { fontFamily: B, fontSize: 11, lineHeight: 14, letterSpacing: 1.3, textTransform: 'uppercase', color: C.label2 },
 };
 
-export const RADIUS = { cell: 12, card: 16, sheet: 16, button: 14 };
-export const HAIRLINE = 0.5;
+export const RADIUS = { chip: 14, card: 18, group: 18, sheet: 30, button: 999 };
+export const HAIRLINE = 1;
+export const SPRING = { damping: 18, stiffness: 260, mass: 0.8 };
