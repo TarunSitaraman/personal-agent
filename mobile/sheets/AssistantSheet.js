@@ -1,6 +1,6 @@
 // The conversation, built from the approved mockup ("3 · Assistant"): your messages as white
 // bubbles, Blu's replies as cards with a glowing accent edge, briefs and reminders as dashed cards
-// in the same thread, action chips under the newest reply, and bobbing dots while Blu thinks.
+// in the same thread, action chips under the newest reply, and Blu's orb spinning up while it thinks.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, FlatList, StyleSheet } from 'react-native';
 import Animated, { useAnimatedKeyboard, useAnimatedStyle, FadeInDown } from 'react-native-reanimated';
@@ -8,7 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from '../components/Icon';
 import Glass from '../components/Glass';
 import Press from '../components/Press';
-import { Label, Chip, Dots } from '../components/kit';
+import { Label, Chip } from '../components/kit';
+import Orb from '../components/Orb';
 import { chat, getMessages } from '../api';
 import { when, plain } from '../format';
 import { C, T } from '../theme';
@@ -118,8 +119,13 @@ export default function AssistantSheet({ open, seed, onChanged }) {
         renderItem={render}
         contentContainerStyle={s.list}
         keyboardShouldPersistTaps="handled"
-        ListHeaderComponent={busy ? <View style={{ paddingLeft: 6, paddingTop: 6 }}><Dots /></View> : null}
-        ListEmptyComponent={<Text style={s.empty}>Ask anything, or just say what needs doing.</Text>}
+        ListHeaderComponent={busy ? <View style={{ paddingTop: 4 }}><Orb size={46} thinking /></View> : null}
+        ListEmptyComponent={(
+          <View style={s.emptyWrap}>
+            <Orb size={120} />
+            <Text style={s.empty}>Ask anything, or just say what needs doing.</Text>
+          </View>
+        )}
       />
       {!input && !busy ? (
         <View style={s.quick}>
@@ -147,7 +153,9 @@ export default function AssistantSheet({ open, seed, onChanged }) {
 
 const s = StyleSheet.create({
   list: { paddingHorizontal: 14, paddingVertical: 10, gap: 9 },
-  empty: { ...T.sub, textAlign: 'center', marginTop: 40, transform: [{ scaleY: -1 }] },
+  // Inverted lists flip their empty component too; flip it back.
+  emptyWrap: { alignItems: 'center', marginTop: 30, transform: [{ scaleY: -1 }] },
+  empty: { ...T.sub, textAlign: 'center', marginTop: 4 },
   time: { ...T.small, textAlign: 'center', marginVertical: 8 },
   me: { alignSelf: 'flex-end', maxWidth: '80%', backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 5 },
   meText: { fontFamily: 'Heros-Bold', fontSize: 15, lineHeight: 20, color: '#0b0b0e' },

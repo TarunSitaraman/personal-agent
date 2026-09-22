@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import Animated, {
-  useSharedValue, useAnimatedStyle, withRepeat, withTiming, withDelay, withSequence, Easing,
+  useSharedValue, useAnimatedStyle, withRepeat, withTiming,
   SlideInDown, SlideOutUp, useDerivedValue,
 } from 'react-native-reanimated';
 import { Canvas, RoundedRect, SweepGradient, vec, useClock } from '@shopify/react-native-skia';
@@ -51,37 +51,6 @@ export function countdown(iso, now) {
   const h = Math.floor(m / 60);
   if (h < 48) return `${h}h ${String(m % 60).padStart(2, '0')}m`;
   return `${Math.round(h / 24)} days`;
-}
-
-// A soft orb that breathes — the empty state, instead of an illustration.
-export function Halo({ size = 74, still }) {
-  const k = useSharedValue(1);
-  useEffect(() => {
-    if (!still) k.value = withRepeat(withTiming(1.07, { duration: 2500, easing: Easing.inOut(Easing.sin) }), -1, true);
-  }, [still]);
-  const anim = useAnimatedStyle(() => ({ transform: [{ scale: k.value }], opacity: 0.75 + (k.value - 1) * 3 }));
-  return (
-    <Animated.View style={[{ width: size, height: size, borderRadius: size / 2 }, s.halo, anim]}>
-      <View style={[s.haloCore, { width: size * 0.55, height: size * 0.55, borderRadius: size }]} />
-    </Animated.View>
-  );
-}
-
-// Three dots bobbing: Blu is thinking.
-export function Dots() {
-  return (
-    <View style={s.dots}>
-      {[0, 1, 2].map(i => <Dot key={i} delay={i * 150} />)}
-    </View>
-  );
-}
-function Dot({ delay }) {
-  const y = useSharedValue(0);
-  useEffect(() => {
-    y.value = withDelay(delay, withRepeat(withSequence(withTiming(-4, { duration: 300 }), withTiming(0, { duration: 300 }), withTiming(0, { duration: 600 })), -1));
-  }, []);
-  const anim = useAnimatedStyle(() => ({ transform: [{ translateY: y.value }], opacity: 1 + y.value * 0.12 }));
-  return <Animated.View style={[s.dot, anim]} />;
 }
 
 // Shimmering placeholder line for first load.
@@ -141,11 +110,6 @@ const s = StyleSheet.create({
   chipText: { fontFamily: 'Heros-Bold', fontSize: 13, color: '#e2e6f5' },
   rollRow: { flexDirection: 'row', overflow: 'hidden' },
   rollCell: { overflow: 'hidden' },
-  halo: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(130,169,255,0.10)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)',
-    shadowColor: C.accent, shadowOpacity: 0.5, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } },
-  haloCore: { backgroundColor: 'rgba(200,215,255,0.22)', position: 'absolute', top: '16%', left: '18%' },
-  dots: { flexDirection: 'row', gap: 4, paddingVertical: 6 },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#aab' },
   shiny: { height: 52, borderRadius: 26, backgroundColor: '#060b1c', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   input: {
     height: 52, borderRadius: 14, paddingHorizontal: 16, color: C.label, fontSize: 16, fontFamily: 'Heros-Bold',

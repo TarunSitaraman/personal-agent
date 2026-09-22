@@ -7,7 +7,8 @@ import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SwipeRow from '../components/SwipeRow';
 import { Segmented } from '../components/ui';
-import { Label, Halo } from '../components/kit';
+import { Label } from '../components/kit';
+import Orb from '../components/Orb';
 import { when, ago, clock, dayTitle } from '../format';
 import { C, T } from '../theme';
 
@@ -77,7 +78,7 @@ export default function LibrarySheet({ tab, onTab, board, onOpenItem, onDone, on
 function Empty({ title, body }) {
   return (
     <View style={s.empty}>
-      <Halo size={60} />
+      <Orb size={96} />
       <Text style={[T.title, { marginTop: 14 }]}>{title}</Text>
       <Text style={[T.sub, { textAlign: 'center', marginTop: 6 }]}>{body}</Text>
     </View>

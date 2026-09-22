@@ -61,11 +61,12 @@ export default function SwipeRow({ title, meta, overdue, onPress, onDone, onSnoo
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(320)} style={s.wrap}>
-      <Animated.View style={[s.strip, { left: 0, backgroundColor: C.doneBg, justifyContent: 'flex-start' }, doneStrip]}>
-        <Text style={[s.stripText, { color: C.doneInk }]}>Done</Text>
+      {/* Zero width at rest: no padding on the strip itself, or it would always show. */}
+      <Animated.View style={[s.strip, { left: 0, backgroundColor: C.doneBg }, doneStrip]}>
+        <Text style={[s.stripText, { left: 16, color: C.doneInk }]}>Done</Text>
       </Animated.View>
-      <Animated.View style={[s.strip, { right: 0, backgroundColor: C.laterBg, justifyContent: 'flex-end' }, laterStrip]}>
-        <Text style={[s.stripText, { color: C.laterInk }]}>Later</Text>
+      <Animated.View style={[s.strip, { right: 0, backgroundColor: C.laterBg }, laterStrip]}>
+        <Text style={[s.stripText, { right: 16, textAlign: 'right', color: C.laterInk }]}>Later</Text>
       </Animated.View>
 
       <GestureDetector gesture={pan}>
@@ -87,8 +88,8 @@ export default function SwipeRow({ title, meta, overdue, onPress, onDone, onSnoo
 
 const s = StyleSheet.create({
   wrap: { overflow: 'hidden' },
-  strip: { position: 'absolute', top: 0, bottom: 0, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
-  stripText: { fontFamily: 'Heros-Bold', fontSize: 13 },
+  strip: { position: 'absolute', top: 0, bottom: 0, width: 0, overflow: 'hidden', justifyContent: 'center' },
+  stripText: { position: 'absolute', fontFamily: 'Heros-Bold', fontSize: 13, width: 60 },
   row: { flexDirection: 'row', alignItems: 'flex-start' },
   hairline: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
   circleHit: { width: 34, paddingTop: 14 },

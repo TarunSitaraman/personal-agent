@@ -30,7 +30,9 @@ export function useBoard() {
       setEvents(e);
       setNotes(n);
       const cutoff = Date.now() - LATEST_MAX_AGE_MS;
-      setLatest(m.find(x => x.from !== 'me' && new Date(x.created_at).getTime() >= cutoff) || null);
+      // Only what Blu sent on its own (briefs, nudges, reminders). A reply to your own message just
+      // repeats what you did ("Todo added: …"), and the list above already shows it.
+      setLatest(m.find(x => x.from !== 'me' && x.kind && x.kind !== 'chat' && new Date(x.created_at).getTime() >= cutoff) || null);
       setLearning(l[0] || null);
       setDoneToday(d);
       setError(null);
