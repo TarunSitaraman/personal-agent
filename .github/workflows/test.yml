@@ -9,6 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # recurrence.test.js walks local Date methods against India-offset timestamps (see its
+      # header comment) — without this the runner's default UTC shifts every hour-of-day
+      # assertion and two tests fail.
+      TZ: Asia/Kolkata
 
     steps:
       - uses: actions/checkout@v4
