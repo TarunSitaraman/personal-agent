@@ -121,6 +121,9 @@ TZ=Asia/Kolkata
   in commit messages or PR descriptions. Conventional-commit format only.
 - Run `npm test` before committing. Tests use the built-in `node --test` runner — deliberately
   no test framework dependency.
+- **Branch naming:** `feat/` or `fix/` prefix for feature/fix branches (not `claude/`). Once merged
+  to master, delete the branch immediately. Keep only master in long-term storage. Short-lived
+  feature branches only, merged and removed within the same session when possible.
 
 ## Known issues / in flight (2026-09-17)
 
