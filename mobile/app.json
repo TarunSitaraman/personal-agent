@@ -1,22 +1,20 @@
 {
   "expo": {
-    "name": "blu-mobile",
+    "name": "Blu",
     "slug": "blu-mobile",
     "version": "1.0.0",
-    "extra": {
-      "eas": {
-        "projectId": "blu-mobile-local"
-      }
-    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#050d2c",
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.tarunsitaraman.blumobile",
+      "versionCode": 3,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1f4fd6",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -24,6 +22,77 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c8781f24-c2b4-4d05-8ffa-11077893c4cc",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 96,
+          "backgroundColor": "#050d2c",
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Heros-Regular.otf",
+            "./assets/fonts/Heros-Bold.otf"
+          ]
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Blu uses the microphone when you hold the mic button to speak a note or reminder."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Blu can use your location so the sky matches your sunrise, sunset and local weather. You can set a city instead."
+        }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "fonts": [
+            "./assets/fonts/Heros-Regular.otf",
+            "./assets/fonts/Heros-Bold.otf"
+          ],
+          "widgets": [
+            {
+              "name": "BluNow",
+              "label": "Blu",
+              "description": "What's next, and Blu's orb to talk to it",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "previewImage": "./assets/widget-preview.png",
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c8781f24-c2b4-4d05-8ffa-11077893c4cc"
+      }
+    },
+    "owner": "tarunsitaraman",
+    "scheme": "blu"
   }
 }

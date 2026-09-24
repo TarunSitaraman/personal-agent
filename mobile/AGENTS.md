@@ -9,8 +9,31 @@ Check `mobile/package.json` before trusting this link — if the pin moves, this
 
 ## Configuration
 
-`mobile/api.js` reads `EXPO_PUBLIC_API_BASE` and `EXPO_PUBLIC_API_TOKEN` from `mobile/.env`
-(gitignored — copy `mobile/.env.example`). Never hardcode either: both were previously literals in
-a public repository, which published the token guarding every `/api` route.
+`mobile/api.js` reads only `EXPO_PUBLIC_API_BASE` from `mobile/.env` (gitignored — copy
+`mobile/.env.example`). Cloud builds get it from `mobile/eas.json` instead, because EAS does not
+upload gitignored files.
 
-Expo inlines `EXPO_PUBLIC_*` at build time, so restart the dev server after changing them.
+**The dashboard token is not an environment variable.** Expo inlines `EXPO_PUBLIC_*` at build
+time, so a token there ships inside the APK — the same mistake as the literal that was once
+committed to this public repository. It is entered on first launch (`screens/TokenScreen.js`),
+validated against `/dashboard/api/auth/verify`, and stored with `expo-secure-store` (`auth.js`).
+Every request sends it as `Authorization: Bearer`, never as a `?token=` query parameter, which
+access logs would record.
+
+Restart the dev server after changing `.env`.
+
+## Server API
+
+The app talks only to the `/dashboard` Express router, which Vercel serves as part of the main
+function. Routes under `/api/*` belong to the `api/` directory's serverless functions and are a
+different auth surface — do not point the app at them.
+
+## Builds
+
+Native code is required for push notifications and widgets, so Expo Go is not enough:
+
+    eas build --profile preview --platform android   # installable APK
+    eas build --profile development --platform android   # dev client, for iterating
+
+`mobile/google-services.json` (Firebase) is gitignored; EAS builds receive it as the
+`GOOGLE_SERVICES_JSON` file environment variable, wired up in `app.config.js`.

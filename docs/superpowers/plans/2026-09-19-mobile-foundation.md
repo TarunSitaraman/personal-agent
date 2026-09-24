@@ -1510,7 +1510,7 @@ Expected: `messages 200 3`, and `register(bad token) 400`.
 
 **Interfaces:**
 - Consumes: nothing from server tasks.
-- Produces: an EAS project whose `projectId` is in `app.json` (`expo.extra.eas.projectId`, written by `eas init`), readable at runtime as `Constants.expoConfig.extra.eas.projectId` (Task 9); Android package `com.tarunsitaraman.blu`; build profiles `development` and `preview`.
+- Produces: an EAS project whose `projectId` is in `app.json` (`expo.extra.eas.projectId`, written by `eas init`), readable at runtime as `Constants.expoConfig.extra.eas.projectId` (Task 9); Android package `com.tarunsitaraman.blumobile`; build profiles `development` and `preview`.
 
 - [ ] **Step 1: Install the native dependencies**
 
@@ -1529,7 +1529,7 @@ In `mobile/app.json`, delete the whole placeholder block (`eas init` writes the 
     },
 ```
 
-and add `"package": "com.tarunsitaraman.blu",` as the first key inside `"android": { ... }`.
+and add `"package": "com.tarunsitaraman.blumobile",` as the first key inside `"android": { ... }`.
 
 - [ ] **Step 3: Keep `google-services.json` out of the public repo**
 
@@ -1591,12 +1591,12 @@ Ask Tarun to run these himself with the `!` prefix, so the browser sign-in happe
 Then verify:
 
 Run: `cd mobile && npx expo config --type public`
-Expected: the output shows `package: 'com.tarunsitaraman.blu'`, a UUID `projectId` under `extra.eas`, and `googleServicesFile`.
+Expected: the output shows `package: 'com.tarunsitaraman.blumobile'`, a UUID `projectId` under `extra.eas`, and `googleServicesFile`.
 
 - [ ] **Step 6: CHECKPOINT (Tarun): Firebase for push**
 
 Ask Tarun to:
-1. At console.firebase.google.com, create a project, then *Add app → Android* with package `com.tarunsitaraman.blu`, and download `google-services.json` into `mobile/`.
+1. At console.firebase.google.com, create a project, then *Add app → Android* with package `com.tarunsitaraman.blumobile`, and download `google-services.json` into `mobile/`.
 2. `! cd mobile && eas env:create --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json --visibility secret --environment preview --environment development`
 3. In Firebase: *Project settings → Service accounts → Generate new private key*. Then `! cd mobile && eas credentials`, choose *Android → Google Service Account → Manage your Google Service Account Key for Push Notifications (FCM V1)*, and upload that JSON. Keep the key file out of the repo (it's gitignored by pattern), and ideally delete it afterwards.
 

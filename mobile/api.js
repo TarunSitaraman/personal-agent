@@ -1,122 +1,154 @@
-// Never hardcode these. Both were previously literals committed to a public repository — a weak
-// shared token and a Render URL abandoned when the project moved to Vercel — so the credential
-// guarding every dashboard and /api route was readable by anyone, and the app had been pointing at
-// a host that no longer exists. The token has since been rotated.
-//
-// Expo inlines EXPO_PUBLIC_* at build time from mobile/.env, which is gitignored. Note that these
-// end up in the shipped bundle: that is acceptable for a single-user personal app, but it is the
-// reason the token must be rotatable and must never live in git.
-const BASE = process.env.EXPO_PUBLIC_API_BASE;
-const TOKEN = process.env.EXPO_PUBLIC_API_TOKEN;
+// Every request goes to the /dashboard router with the token in an Authorization header — never
+// in the URL, where access logs record it. The token comes from secure storage (./auth), not from
+// the build. EXPO_PUBLIC_API_BASE is only the server address, which is not a secret.
+import { getToken, clearToken } from './auth';
 
-if (!BASE || !TOKEN) {
-  // Fail loudly at import rather than sending unauthenticated requests that 401 one screen at a
-  // time and look like a server problem.
-  throw new Error(
-    'Missing EXPO_PUBLIC_API_BASE or EXPO_PUBLIC_API_TOKEN. Copy mobile/.env.example to ' +
-    'mobile/.env and fill both in, then restart the Expo dev server.'
-  );
+const BASE = process.env.EXPO_PUBLIC_API_BASE;
+
+if (!BASE) {
+  // Fail loudly at import rather than sending requests to "undefined/dashboard/..." that look
+  // like a server problem. Set it in mobile/.env locally; eas.json sets it for cloud builds.
+  throw new Error('Missing EXPO_PUBLIC_API_BASE. Set it in mobile/.env (see mobile/.env.example).');
 }
 
-// Dashboard endpoints (existing screens use these)
-const api = (path) => `${BASE}${path}?token=${TOKEN}`;
-// New /api/* endpoints use Bearer auth
-const authHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
+// `token` is passed explicitly only when checking a candidate on the token screen; then a 401
+// just means "wrong token" and must not sign anyone out.
+async function request(path, { method = 'GET', body, token } = {}) {
+  const t = token || await getToken();
+  const r = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(t ? { Authorization: `Bearer ${t}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401 && !token) {
+    await clearToken();
+    throw new Error('Signed out — the token was rejected');
+  }
+  if (!r.ok) throw new Error(`${method} ${path} failed (${r.status})`);
+  return r.json();
+}
+
+const withContext = (path, context) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
+
+export async function verifyToken(token) {
+  return request('/dashboard/api/auth/verify', { token });
+}
 
 export async function getStatus() {
-  const r = await fetch(api('/dashboard/api/status'));
-  if (!r.ok) throw new Error('Failed to fetch status');
-  return r.json();
+  return request('/dashboard/api/status');
 }
 
 export async function getTodos(context = null) {
-  const url = context
-    ? api('/dashboard/api/todos') + `&context=${context}`
-    : api('/dashboard/api/todos');
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Failed to fetch todos');
-  const d = await r.json();
-  if (Array.isArray(d)) return d;
-  return d.pending || [];
+  const d = await request(withContext('/dashboard/api/todos', context));
+  return Array.isArray(d) ? d : (d.pending || []);
 }
 
 export async function completeTodo(content) {
-  const r = await fetch(api('/dashboard/api/complete-todo'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  if (!r.ok) throw new Error('Failed to complete todo');
-  return r.json();
+  return request('/dashboard/api/complete-todo', { method: 'POST', body: { content } });
 }
 
 export async function getEvents(context = null) {
-  const url = context
-    ? api('/dashboard/api/events') + `&context=${context}`
-    : api('/dashboard/api/events');
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Failed to fetch events');
-  return r.json();
+  return request(withContext('/dashboard/api/events', context));
 }
 
 export async function getNotes(context = null) {
-  const url = context
-    ? api('/dashboard/api/notes') + `&context=${context}`
-    : api('/dashboard/api/notes');
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Failed to fetch notes');
-  return r.json();
+  return request(withContext('/dashboard/api/notes', context));
 }
 
 export async function getLearnings() {
-  const r = await fetch(api('/dashboard/api/learnings'));
-  if (!r.ok) throw new Error('Failed to fetch learnings');
-  return r.json();
+  return request('/dashboard/api/learnings');
 }
 
-// Chat via the new /api/chat endpoint
 export async function chat(message) {
-  const r = await fetch(`${BASE}/api/chat`, {
-    method: 'POST',
-    headers: authHeaders,
-    body: JSON.stringify({ message }),
-  });
-  if (!r.ok) throw new Error('Failed to send message');
-  return r.json();
+  return request('/dashboard/chat', { method: 'POST', body: { message } });
 }
 
-// Register this device's Expo push token with the server
+// The chat thread, newest first: conversation plus proactive messages (briefs, reminders…).
+export async function getMessages(before = null) {
+  const d = await request(before
+    ? `/dashboard/api/messages?before=${encodeURIComponent(before)}`
+    : '/dashboard/api/messages');
+  return d.messages || [];
+}
+
 export async function registerPushToken(token) {
-  const r = await fetch(`${BASE}/api/push/register`, {
+  return request('/dashboard/api/push/register', { method: 'POST', body: { token } });
+}
+
+// Snoozing goes through the assistant: "remind me about X …" matches the existing todo and moves
+// its reminder (set_reminder looks up by content before inserting), so there is no second row.
+export async function snoozeTodo(content, when = 'in 1 hour') {
+  return chat(`remind me about "${content}" ${when}`);
+}
+
+export async function sendTestPush() {
+  return request('/dashboard/api/push/test', { method: 'POST' });
+}
+
+// Calendar events from now on. The server list also includes past events and todo reminders,
+// so filter here: events only, anything that started in the last half hour still counts as "now".
+export async function getUpcoming() {
+  const rows = await request('/dashboard/api/events?limit=50');
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  return rows
+    .filter(r => r.type === 'event' && r.start_at && new Date(r.start_at).getTime() >= cutoff)
+    .sort((a, b) => new Date(a.start_at) - new Date(b.start_at));
+}
+
+export async function reviewLearning(id, gotRight) {
+  return request(`/dashboard/api/learnings/${encodeURIComponent(id)}/review`, { method: 'POST', body: { gotRight } });
+}
+
+// Todos finished since the phone's local midnight — "today" is your day, not the server's.
+export async function getDoneToday() {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const d = await request(`/dashboard/api/done?since=${encodeURIComponent(midnight.toISOString())}`);
+  return d.count || 0;
+}
+
+// A voice note: the server transcribes it (Whisper, as for WhatsApp) and replies as if typed.
+// Resolves to { transcript, reply }.
+export async function sendVoice(base64, mime) {
+  return request('/dashboard/chat/voice', { method: 'POST', body: { audio: base64, mime } });
+}
+
+// Sign-in / sign-up with number + PIN. No token yet, and the server's error text is what the user
+// needs to see ("Wrong number or PIN.", "locked for 15 minutes"), so these return it rather than
+// throwing a status code. Resolves to { ok, status, data }.
+async function authPost(path, body) {
+  try {
+    const r = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "Can't reach Blu. Check your connection." } };
+  }
+}
+
+export const pinSignIn = (number, pin) => authPost('/auth/pin/signin', { number, pin });
+export const pinSignUp = (number, pin) => authPost('/auth/pin/signup', { number, pin });
+
+export async function getPinStatus() {
+  return request('/dashboard/api/pin');
+}
+
+// Setting a PIN while signed in. Returns the server's message on a refused PIN.
+export async function setPin(pin) {
+  const t = await getToken();
+  const r = await fetch(`${BASE}/dashboard/api/pin`, {
     method: 'POST',
-    headers: authHeaders,
-    body: JSON.stringify({ token }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ pin }),
   });
-  if (!r.ok) throw new Error('Failed to register push token');
-  return r.json();
-}
-
-export const CTX_COLOR = {
-  default: '#4f8ef7',
-  fallback: '#4f8ef7',
-  personal: '#a78bfa',
-};
-
-export function fmtTime(iso) {
-  return new Date(iso).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
-}
-
-export function relTime(iso) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const h = Math.floor(diff / 3.6e6);
-  const d = Math.floor(diff / 8.64e7);
-  if (d > 6) return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-  if (d >= 1) return d === 1 ? 'yesterday' : `${d}d ago`;
-  if (h >= 1) return `${h}h ago`;
-  return 'just now';
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "Couldn't save the PIN.");
+  return data;
 }
